@@ -82,6 +82,7 @@
 <span id="cb1-12"><a href="#cb1-12" tabindex="-1"></a><span class="at">      </span><span class="fu">BLOCKR_PAT</span><span class="kw">:</span><span class="at"> ${{ secrets.BLOCKR_PAT }}</span></span>
 <span id="cb1-13"><a href="#cb1-13" tabindex="-1"></a><span class="at">    </span><span class="fu">permissions</span><span class="kw">:</span></span>
 <span id="cb1-14"><a href="#cb1-14" tabindex="-1"></a><span class="at">      </span><span class="fu">contents</span><span class="kw">:</span><span class="at"> write</span></span></code></pre></div>
+<p>Leave the <code>pull_request:</code> trigger unfiltered. Adding <code>branches: main</code> silently disables CI for stacked PRs (PRs whose base is another feature branch) — they get no lint, no smoke, no signal at all until the base is retargeted to <code>main</code>.</p>
 </div>
 <div class="section level3">
 <h3 id="githubworkflowsdeps-rerunyaml">
@@ -105,11 +106,27 @@
 <div class="section level2">
 <h2 id="pipeline">Pipeline<a class="anchor" aria-label="anchor" href="#pipeline"></a>
 </h2>
-<pre><code>lint → smoke → check       (multi-platform, merge queue + push)
-             → coverage
-             → revdep      (if configured)
-             → pkgdown</code></pre>
+<pre><code>lint → smoke → check       (merge queue + push to main)
+             → coverage    (merge queue + push to main)
+             → revdep      (pull request, if configured)
+             → pkgdown     (merge queue + push to main; deploys on push)</code></pre>
+<p><code>lint</code> and <code>smoke</code> run on every event (pull request, merge queue, push to main). The remaining jobs only run where listed — pull requests are deliberately kept to the cheap gate.</p>
 <p>All steps are mandatory — a consumer gets the full pipeline or none of it.</p>
+<div class="section level3">
+<h3 id="merge-queue">Merge queue<a class="anchor" aria-label="anchor" href="#merge-queue"></a>
+</h3>
+<p>Without GitHub’s merge queue enabled, <code>merge_group</code> events never fire, and the expensive jobs (<code>check</code>, <code>coverage</code>, <code>pkgdown</code>) only run on the <code>push</code> event — that is, <em>after</em> the PR has merged into <code>main</code>. A green PR can then produce a red <code>main</code> when one of the matrix platforms fails. Enabling the merge queue closes that gap: the queue runs the full pipeline against the would-be merge commit and blocks the merge on failure.</p>
+<p>To enable, in the consumer repo’s branch protection settings for <code>main</code>:</p>
+<ol style="list-style-type: decimal">
+<li>
+<strong>Require a pull request before merging</strong>.</li>
+<li>
+<strong>Require status checks to pass</strong> — mark <code>lint</code>, <code>smoke</code>, <code>check</code>, <code>coverage</code>, and (if configured) <code>pkgdown</code> as required.</li>
+<li>
+<strong>Require merge queue</strong> — leave the merge method as <strong>merge commit</strong> (squash and rebase strip the merge metadata downstream branches use to stay aligned).</li>
+</ol>
+<p>Stacked PRs (PRs whose base is not <code>main</code>) still merge as plain pushes to the parent feature branch and bypass the queue — that is intentional; the queue is reserved for <code>main</code>.</p>
+</div>
 </div>
 <div class="section level2">
 <h2 id="inputs">Inputs<a class="anchor" aria-label="anchor" href="#inputs"></a>
@@ -179,9 +196,9 @@
 <li>
 <strong>Full check</strong> — 4-platform matrix (macOS, Windows, Ubuntu devel, Ubuntu oldrel), merge queue + push</li>
 <li>
-<strong>Coverage</strong> via covr + codecov</li>
+<strong>Coverage</strong> via covr + codecov, merge queue + push (not PR)</li>
 <li>
-<strong>Reverse-dependency checks</strong> against configurable downstream packages</li>
+<strong>Reverse-dependency checks</strong> against configurable downstream packages (PR only)</li>
 <li>
 <strong>pkgdown</strong> site build + deploy to gh-pages</li>
 <li>
