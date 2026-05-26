@@ -1,0 +1,180 @@
+# Reverse-dependency CI for blockr.* packages
+#
+# Runs on merge_group only — reverse-dependency checks are expensive and
+# should gate the merge, not every PR push.  The merge_group trigger
+# fires when branch protection has the merge queue enabled.
+#
+# Usage — consumer repo .github/workflows/ci.yaml, alongside the ci.yaml call:
+#
+#   jobs:
+#     ci:
+#       uses: cynkra/blockr.ci/.github/workflows/ci.yaml@main
+#       secrets:
+#         CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+#         BLOCKR_PAT: ${{ secrets.BLOCKR_PAT }}
+#     revdep:
+#       if: github.event_name == 'merge_group'
+#       uses: cynkra/blockr.ci/.github/workflows/revdep.yaml@main
+#       with:
+#         revdep-packages: |
+#           BristolMyersSquibb/blockr.dock
+#       secrets:
+#         BLOCKR_PAT: ${{ secrets.BLOCKR_PAT }}
+#
+# The `if:` on the revdep job entry keeps the PR check list clean (a
+# single "revdep" skipped row instead of one per matrix entry).  The
+# workflow body also gates on merge_group as a safety net, so dropping
+# the `if:` still prevents the expensive checks from running — it only
+# adds skipped rows to the UI.
+#
+# Pass secrets by name. `secrets: inherit` does not forward secrets
+# across organisations — the inherited values silently arrive blank in
+# the called job.
+
+on:
+  workflow_call:
+    inputs:
+
+      revdep-packages:
+        description: >
+          Newline-separated list of downstream packages to reverse-dependency
+          check.
+        type: string
+        required: true
+
+    secrets:
+
+      BLOCKR_PAT:
+        description: >
+          PAT used for cross-repository checkouts and for authenticated
+          GitHub API calls in dependency resolution.  Falls back to
+          github.token when not provided.
+        required: false
+
+name: revdep
+
+jobs:
+
+  # ── Build the per-package matrix from revdep-packages ─────────────────
+
+  matrix:
+
+    if: github.event_name == 'merge_group'
+
+    runs-on: ubuntu-latest
+
+    outputs:
+      packages: ${{ steps.build.outputs.packages }}
+      has-packages: ${{ steps.build.outputs.has-packages }}
+
+    steps:
+      - name: Build revdep matrix
+        id: build
+        env:
+          INPUT: ${{ inputs.revdep-packages }}
+        run: |
+          pkgs=$(echo "$INPUT" | tr -d '\r' | sed '/^[[:space:]]*$/d' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+          json=$(echo "$pkgs" | jq -R -s -c 'split("\n") | map(select(length > 0))')
+          echo "packages=${json}" >> "$GITHUB_OUTPUT"
+          if [ "$json" = "[]" ]; then
+            echo "has-packages=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "has-packages=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ── Reverse-dependency checks ────────────────────────────────────────
+
+  revdep:
+
+    needs: matrix
+
+    if: needs.matrix.outputs.has-packages == 'true'
+
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        pkg: ${{ fromJson(needs.matrix.outputs.packages) }}
+
+    env:
+      GITHUB_PAT: ${{ secrets.BLOCKR_PAT || github.token }}
+      R_KEEP_PKG_SOURCE: yes
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          path: pkg
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+
+      - uses: cynkra/blockr.ci/.github/actions/parse-deps@main
+        id: deps
+        with:
+          pr-body: ${{ github.event.pull_request.body }}
+          pr-number: ${{ github.event.pull_request.number }}
+          pkg: ${{ matrix.pkg }}
+          base-packages: |
+            any::rcmdcheck
+
+      - uses: actions/checkout@v5
+        with:
+          repository: ${{ matrix.pkg }}
+          ref: ${{ steps.deps.outputs.ref }}
+          token: ${{ secrets.BLOCKR_PAT || github.token }}
+          path: revdep
+
+      - uses: r-lib/actions/setup-pandoc@v2
+
+      - uses: quarto-dev/quarto-actions/setup@v2
+
+      # Two-pass install lets pkg's and revdep's Remotes both get followed
+      # while keeping their dependency closures separate. Walking pkg's deps
+      # at top level (e.g. via `deps::pkg` with default `dependencies = "all"`)
+      # would also pull in pkg's Suggests and the Suggests of their transitive
+      # deps — observed to leak `uuid` (via blockr.core's Suggests on `ids`)
+      # into the install, which flips httpuv/shiny to non-deterministic
+      # session nonces and breaks unrelated snapshot tests in the revdep.
+      #
+      # Pass 1: install pkg's hard deps (no Suggests) with pkg's Remotes
+      # resolved.
+      - name: Install pkg hard deps with Remotes resolved
+        shell: bash
+        run: |
+          # Use the already-installed pkgdepends (placed by parse-deps) rather
+          # than installing pak fresh. This avoids leaving an extra package in
+          # libPaths position [1] for the test run, which has been observed
+          # to perturb shiny session state in unrelated snapshot tests.
+          Rscript -e '
+            prop <- pkgdepends::new_pkg_installation_proposal(
+              c("deps::pkg", "local::pkg"),
+              config = list(dependencies = "hard")
+            )
+            prop$solve()
+            prop$download()
+            prop$install()
+          '
+
+      # Pass 2: install revdep's full deps with revdep's Remotes followed via
+      # working-directory. `dependencies: c("all", "hard")` walks Suggests for
+      # direct refs (so the test runner gets testthat / shinytest2 / etc.) but
+      # only hard deps for transitives — so e.g. blockr.core's Suggests don't
+      # expand into ids -> uuid. (`NA` here doesn't have the desired effect:
+      # pkgdepends treats it as "soft" applied to both direct and indirect.)
+      # Hard deps already installed in pass 1 are reused.
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          extra-packages: ${{ steps.deps.outputs.extra-packages }}
+          working-directory: revdep
+          dependencies: 'c("all", "hard")'
+          # Bumped to invalidate caches built before the two-pass install
+          # landed — those caches contain Suggests-tree leftovers (e.g. `uuid`)
+          # that pak's resolver no longer pulls in but doesn't remove either.
+          cache-version: 2
+
+      - uses: r-lib/actions/check-r-package@v2
+        with:
+          working-directory: revdep
+          build_args: 'c("--no-manual","--compact-vignettes=gs+qpdf")'

@@ -1,4 +1,7 @@
-# Re-run smoke/revdep jobs when the ```deps block in a PR body changes
+# Re-run deps-affected jobs when the ```deps block in a PR body changes
+#
+# Re-runs lint/smoke jobs from ci.yaml and the revdep job from revdep.yaml
+# (the latter is a no-op for consumers without a revdep.yaml workflow).
 #
 # Usage — consumer repo .github/workflows/deps-rerun.yaml:
 #
@@ -45,10 +48,21 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: cynkra/blockr.ci/.github/actions/rerun-deps@main
+      - name: Re-run ci.yaml jobs
+        uses: cynkra/blockr.ci/.github/actions/rerun-deps@main
         with:
           old-body: ${{ github.event.changes.body.from }}
           new-body: ${{ github.event.pull_request.body }}
           sha: ${{ github.event.pull_request.head.sha }}
           repo: ${{ github.repository }}
           token: ${{ secrets.BLOCKR_PAT || github.token }}
+
+      - name: Re-run revdep.yaml jobs
+        uses: cynkra/blockr.ci/.github/actions/rerun-deps@main
+        with:
+          old-body: ${{ github.event.changes.body.from }}
+          new-body: ${{ github.event.pull_request.body }}
+          sha: ${{ github.event.pull_request.head.sha }}
+          repo: ${{ github.repository }}
+          token: ${{ secrets.BLOCKR_PAT || github.token }}
+          workflow: revdep.yaml
