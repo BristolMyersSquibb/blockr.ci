@@ -1,8 +1,10 @@
 name: Re-run deps-affected jobs
 description: >
   Compares the ```deps block between two PR body versions and, if it
-  changed, re-runs all jobs in the most recent CI run for the given
-  SHA whose names match job-pattern.
+  changed, re-runs all jobs in the most recent run of the given workflow
+  for the given SHA whose names match job-pattern.  If no matching
+  workflow run exists for the SHA (e.g. a consumer doesn't opt into the
+  revdep workflow), the action exits cleanly without re-running anything.
 
 inputs:
   old-body:
@@ -20,6 +22,10 @@ inputs:
   token:
     description: GitHub token with actions:write permission.
     required: true
+  workflow:
+    description: Reusable workflow file name to look up runs from.
+    required: false
+    default: ci.yaml
   job-pattern:
     description: Extended-regex pattern matched against job names.
     required: false
@@ -43,29 +49,30 @@ runs:
         GH_TOKEN: ${{ inputs.token }}
         SHA: ${{ inputs.sha }}
         REPO: ${{ inputs.repo }}
+        WORKFLOW: ${{ inputs.workflow }}
         JOB_PATTERN: ${{ inputs.job-pattern }}
       run: |
         RUN_ID=$(gh run list \
           --repo "$REPO" \
-          --workflow ci.yaml \
+          --workflow "$WORKFLOW" \
           --json databaseId,headSha,createdAt \
           --jq "[.[] | select(.headSha == \"$SHA\")] | sort_by(.createdAt) | last | .databaseId")
 
         if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
-          echo "No CI run found for SHA $SHA"
-          exit 1
+          echo "No $WORKFLOW run found for SHA $SHA, nothing to re-run"
+          exit 0
         fi
 
-        echo "Looking for jobs matching '$JOB_PATTERN' in run $RUN_ID"
+        echo "Looking for jobs matching '$JOB_PATTERN' in $WORKFLOW run $RUN_ID"
 
         JOBS=$(gh api "repos/$REPO/actions/runs/$RUN_ID/jobs" --paginate \
           --jq ".jobs[] | select(.name | test(\"$JOB_PATTERN\")) | \"\(.id) \(.name)\"")
 
         if [ -z "$JOBS" ]; then
-          echo "No matching jobs found. Available jobs:"
+          echo "No matching jobs found in $WORKFLOW. Available jobs:"
           gh api "repos/$REPO/actions/runs/$RUN_ID/jobs" --paginate \
             --jq '.jobs[] | "  \(.name)"'
-          exit 1
+          exit 0
         fi
 
         echo "$JOBS" | while read -r JOB_ID JOB_NAME; do

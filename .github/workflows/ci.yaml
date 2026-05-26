@@ -13,9 +13,6 @@
 #   jobs:
 #     ci:
 #       uses: cynkra/blockr.ci/.github/workflows/ci.yaml@main
-#       with:
-#         revdep-packages: |
-#           BristolMyersSquibb/blockr.dock
 #       secrets:
 #         CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 #         BLOCKR_PAT: ${{ secrets.BLOCKR_PAT }}
@@ -26,6 +23,10 @@
 # across organisations (e.g. BristolMyersSquibb/* calling this workflow
 # in cynkra/blockr.ci) — the inherited values silently arrive blank in
 # the called job.
+#
+# Reverse-dependency checks live in a separate reusable workflow
+# (revdep.yaml).  Consumers with downstream packages to check add a second
+# jobs: entry — see revdep.yaml for usage.
 
 on:
   push:
@@ -34,14 +35,6 @@ on:
   merge_group:
   workflow_call:
     inputs:
-
-      revdep-packages:
-        description: >
-          Newline-separated list of downstream packages to reverse-dependency
-          check.  Omit or leave empty to skip the revdep job.
-        type: string
-        default: ''
-        required: false
 
       lintr-exclusions:
         description: >
@@ -58,6 +51,15 @@ on:
         default: false
         required: false
 
+      revdep-packages:
+        description: >
+          DEPRECATED.  Reverse-dependency checks moved to revdep.yaml;
+          this input is now a no-op and will be removed once all
+          consumers have migrated.  See revdep.yaml for the new usage.
+        type: string
+        default: ''
+        required: false
+
     secrets:
 
       CODECOV_TOKEN:
@@ -69,9 +71,8 @@ on:
 
       BLOCKR_PAT:
         description: >
-          PAT used for cross-repository checkouts (revdep) and for
-          authenticated GitHub API calls in dependency resolution.
-          Falls back to github.token when not provided.
+          PAT used for authenticated GitHub API calls in dependency
+          resolution.  Falls back to github.token when not provided.
         required: false
 
 name: ci
@@ -88,6 +89,11 @@ jobs:
       GITHUB_PAT: ${{ secrets.BLOCKR_PAT || github.token }}
 
     steps:
+      - name: Warn on deprecated revdep-packages input
+        if: inputs.revdep-packages != ''
+        run: |
+          echo "::warning::The 'revdep-packages' input on ci.yaml is deprecated and no longer triggers reverse-dependency checks. Migrate by dropping it from the ci.yaml call and adding a second jobs entry pointing at revdep.yaml (gated with 'if: github.event_name == \"merge_group\"'). See cynkra/blockr.ci#9."
+
       - uses: actions/checkout@v5
 
       - uses: r-lib/actions/setup-r@v2
@@ -139,10 +145,6 @@ jobs:
 
     runs-on: ubuntu-latest
 
-    outputs:
-      revdep-packages: ${{ steps.revdep-matrix.outputs.packages }}
-      has-revdep-packages: ${{ steps.revdep-matrix.outputs.has-packages }}
-
     env:
       GITHUB_PAT: ${{ secrets.BLOCKR_PAT || github.token }}
       R_KEEP_PKG_SOURCE: yes
@@ -176,20 +178,6 @@ jobs:
       - uses: r-lib/actions/check-r-package@v2
         with:
           upload-snapshots: true
-
-      - name: Build revdep matrix
-        id: revdep-matrix
-        env:
-          INPUT: ${{ inputs.revdep-packages }}
-        run: |
-          pkgs=$(echo "$INPUT" | tr -d '\r' | sed '/^[[:space:]]*$/d' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-          json=$(echo "$pkgs" | jq -R -s -c 'split("\n") | map(select(length > 0))')
-          echo "packages=${json}" >> "$GITHUB_OUTPUT"
-          if [ "$json" = "[]" ]; then
-            echo "has-packages=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "has-packages=true" >> "$GITHUB_OUTPUT"
-          fi
 
   # ── Full R CMD check (multi-platform, merge queue + push) ─────────────
 
@@ -301,105 +289,6 @@ jobs:
         with:
           name: coverage-test-failures
           path: ${{ runner.temp }}/package
-
-  # ── Reverse-dependency checks ────────────────────────────────────────
-
-  revdep:
-
-    needs: smoke
-
-    if: >-
-      needs.smoke.outputs.has-revdep-packages == 'true' &&
-      github.event_name == 'pull_request'
-
-    runs-on: ubuntu-latest
-
-    strategy:
-      fail-fast: false
-      matrix:
-        pkg: ${{ fromJson(needs.smoke.outputs.revdep-packages) }}
-
-    env:
-      GITHUB_PAT: ${{ secrets.BLOCKR_PAT || github.token }}
-      R_KEEP_PKG_SOURCE: yes
-
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          path: pkg
-
-      - uses: r-lib/actions/setup-r@v2
-        with:
-          use-public-rspm: true
-
-      - uses: cynkra/blockr.ci/.github/actions/parse-deps@main
-        id: deps
-        with:
-          pr-body: ${{ github.event.pull_request.body }}
-          pr-number: ${{ github.event.pull_request.number }}
-          pkg: ${{ matrix.pkg }}
-          base-packages: |
-            any::rcmdcheck
-
-      - uses: actions/checkout@v5
-        with:
-          repository: ${{ matrix.pkg }}
-          ref: ${{ steps.deps.outputs.ref }}
-          token: ${{ secrets.BLOCKR_PAT || github.token }}
-          path: revdep
-
-      - uses: r-lib/actions/setup-pandoc@v2
-
-      - uses: quarto-dev/quarto-actions/setup@v2
-
-      # Two-pass install lets pkg's and revdep's Remotes both get followed
-      # while keeping their dependency closures separate. Walking pkg's deps
-      # at top level (e.g. via `deps::pkg` with default `dependencies = "all"`)
-      # would also pull in pkg's Suggests and the Suggests of their transitive
-      # deps — observed to leak `uuid` (via blockr.core's Suggests on `ids`)
-      # into the install, which flips httpuv/shiny to non-deterministic
-      # session nonces and breaks unrelated snapshot tests in the revdep.
-      #
-      # Pass 1: install pkg's hard deps (no Suggests) with pkg's Remotes
-      # resolved.
-      - name: Install pkg hard deps with Remotes resolved
-        shell: bash
-        run: |
-          # Use the already-installed pkgdepends (placed by parse-deps) rather
-          # than installing pak fresh. This avoids leaving an extra package in
-          # libPaths position [1] for the test run, which has been observed
-          # to perturb shiny session state in unrelated snapshot tests.
-          Rscript -e '
-            prop <- pkgdepends::new_pkg_installation_proposal(
-              c("deps::pkg", "local::pkg"),
-              config = list(dependencies = "hard")
-            )
-            prop$solve()
-            prop$download()
-            prop$install()
-          '
-
-      # Pass 2: install revdep's full deps with revdep's Remotes followed via
-      # working-directory. `dependencies: c("all", "hard")` walks Suggests for
-      # direct refs (so the test runner gets testthat / shinytest2 / etc.) but
-      # only hard deps for transitives — so e.g. blockr.core's Suggests don't
-      # expand into ids -> uuid. (`NA` here doesn't have the desired effect:
-      # pkgdepends treats it as "soft" applied to both direct and indirect.)
-      # Hard deps already installed in pass 1 are reused.
-      - uses: r-lib/actions/setup-r-dependencies@v2
-        with:
-          extra-packages: ${{ steps.deps.outputs.extra-packages }}
-          working-directory: revdep
-          dependencies: 'c("all", "hard")'
-          # Bumped to invalidate caches built before the two-pass install
-          # landed — those caches contain Suggests-tree leftovers (e.g. `uuid`)
-          # that pak's resolver no longer pulls in but doesn't remove either.
-          cache-version: 2
-
-      - uses: r-lib/actions/check-r-package@v2
-        with:
-          working-directory: revdep
-          build_args: 'c("--no-manual","--compact-vignettes=gs+qpdf")'
 
   # ── pkgdown site ─────────────────────────────────────────────────────
 
