@@ -3,8 +3,6 @@
 # Usage — consumer repo .github/workflows/ci.yaml:
 #
 #   on:
-#     push:
-#       branches: main
 #     pull_request:
 #     merge_group:
 #
@@ -16,21 +14,35 @@
 #       secrets:
 #         CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 #         BLOCKR_PAT: ${{ secrets.BLOCKR_PAT }}
-#       permissions:
-#         contents: write
 #
 # Pass secrets by name. `secrets: inherit` does not forward secrets
 # across organisations (e.g. BristolMyersSquibb/* calling this workflow
 # in cynkra/blockr.ci) — the inherited values silently arrive blank in
 # the called job.
 #
-# Reverse-dependency checks live in a separate reusable workflow
-# (revdep.yaml).  Consumers with downstream packages to check add a second
-# jobs: entry — see revdep.yaml for usage.
+# PR jobs (lint, smoke, pkgdown-dev, coverage) run in parallel and gate
+# the PR.  The merge-queue gate is `check-all`, which aggregates the
+# multi-platform `check` matrix; the queue runs only the check matrix
+# and skips the PR-side jobs.  Required-status-checks list:
+#
+#   ci / lint
+#   ci / smoke
+#   ci / pkgdown-dev
+#   ci / coverage
+#   ci / check-all
+#
+# Skipped jobs satisfy required checks, so the queue accepts the PR-only
+# rows as skipped on merge_group refs.
+#
+# pkgdown site deploy lives in a separate reusable workflow
+# (pkgdown.yaml).  Consumers that want a deployed site add a second
+# workflow file calling pkgdown.yaml on `push: branches: main`.
+#
+# Reverse-dependency checks also live in a separate reusable workflow
+# (revdep.yaml).  Consumers with downstream packages to check add a
+# second jobs: entry — see revdep.yaml for usage.
 
 on:
-  push:
-    branches: main
   pull_request:
   merge_group:
   workflow_call:
@@ -43,10 +55,22 @@ on:
         default: ''
         required: false
 
+      coverage-threshold:
+        description: >
+          Minimum coverage percentage required for the coverage job to
+          pass.  Default 0 disables the gate; coverage is still computed
+          and uploaded to Codecov.
+        type: number
+        default: 0
+        required: false
+
       skip-pkgdown:
         description: >
-          Set to true to skip the pkgdown job.  Useful for packages that
-          build their site differently (e.g. Quarto).
+          DEPRECATED.  The pkgdown job moved out of ci.yaml into a
+          separate pkgdown.yaml reusable workflow; this input is now a
+          no-op and will be removed once all consumers have migrated.
+          Consumers opt in by adding a pkgdown.yaml workflow rather
+          than by gating ci.yaml.
         type: boolean
         default: false
         required: false
@@ -79,9 +103,11 @@ name: ci
 
 jobs:
 
-  # ── Lint ──────────────────────────────────────────────────────────────
+  # ── Lint (PR gate) ───────────────────────────────────────────────────
 
   lint:
+
+    if: github.event_name == 'pull_request'
 
     runs-on: ubuntu-latest
 
@@ -93,6 +119,11 @@ jobs:
         if: inputs.revdep-packages != ''
         run: |
           echo "::warning::The 'revdep-packages' input on ci.yaml is deprecated and no longer triggers reverse-dependency checks. Migrate by dropping it from the ci.yaml call and adding a second jobs entry pointing at revdep.yaml (gated with 'if: github.event_name == \"merge_group\"'). See cynkra/blockr.ci#9."
+
+      - name: Warn on deprecated skip-pkgdown input
+        if: inputs.skip-pkgdown
+        run: |
+          echo "::warning::The 'skip-pkgdown' input on ci.yaml is deprecated. The pkgdown job moved into pkgdown.yaml; consumers opt in by adding a pkgdown.yaml workflow rather than gating ci.yaml. See cynkra/blockr.ci#17."
 
       - uses: actions/checkout@v5
 
@@ -141,7 +172,7 @@ jobs:
 
   smoke:
 
-    needs: lint
+    if: github.event_name == 'pull_request'
 
     runs-on: ubuntu-latest
 
@@ -179,11 +210,126 @@ jobs:
         with:
           upload-snapshots: true
 
-  # ── Full R CMD check (multi-platform, merge queue + push) ─────────────
+  # ── pkgdown dev build (PR gate, no deploy) ───────────────────────────
+
+  pkgdown-dev:
+
+    if: github.event_name == 'pull_request'
+
+    runs-on: ubuntu-latest
+
+    env:
+      GITHUB_PAT: ${{ secrets.BLOCKR_PAT || github.token }}
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: r-lib/actions/setup-pandoc@v2
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+
+      - uses: cynkra/blockr.ci/.github/actions/parse-deps@main
+        id: deps
+        with:
+          pr-body: ${{ github.event.pull_request.body }}
+          pr-number: ${{ github.event.pull_request.number }}
+          base-packages: |
+            any::pkgdown
+            local::.
+
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          extra-packages: ${{ steps.deps.outputs.extra-packages }}
+          needs: website
+
+      - name: Remove mermaid config for CI
+        run: Rscript -e 'unlink("vignettes/_metadata.yml")'
+
+      - name: Build site (devel)
+        run: pkgdown::build_site(devel = TRUE, new_process = FALSE, install = FALSE)
+        shell: Rscript {0}
+
+      - name: Upload built site
+        uses: actions/upload-artifact@v6
+        with:
+          name: pkgdown-site
+          path: docs/
+          if-no-files-found: error
+
+  # ── Test coverage (PR gate, optional threshold) ──────────────────────
+
+  coverage:
+
+    if: github.event_name == 'pull_request'
+
+    runs-on: ubuntu-latest
+
+    env:
+      GITHUB_PAT: ${{ secrets.BLOCKR_PAT || github.token }}
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+
+      - uses: cynkra/blockr.ci/.github/actions/parse-deps@main
+        id: deps
+        with:
+          pr-body: ${{ github.event.pull_request.body }}
+          pr-number: ${{ github.event.pull_request.number }}
+          base-packages: |
+            any::covr
+
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          extra-packages: ${{ steps.deps.outputs.extra-packages }}
+          needs: coverage
+
+      - name: Compute, upload and gate coverage
+        shell: Rscript {0}
+        env:
+          COVERAGE_THRESHOLD: ${{ inputs.coverage-threshold }}
+        run: |
+          cov <- covr::package_coverage(
+            quiet = FALSE,
+            clean = FALSE,
+            install_path = file.path(Sys.getenv("RUNNER_TEMP"), "package")
+          )
+
+          pct <- covr::percent_coverage(cov)
+          cat(sprintf("Coverage: %.2f%%\n", pct))
+
+          covr::codecov(coverage = cov)
+
+          threshold <- as.numeric(Sys.getenv("COVERAGE_THRESHOLD", "0"))
+          if (pct < threshold) {
+            stop(sprintf(
+              "Coverage %.2f%% below threshold %.2f%%",
+              pct, threshold
+            ))
+          }
+
+      - name: Show testthat output
+        if: always()
+        run: |
+          find ${{ runner.temp }}/package -name 'testthat.Rout*' -exec cat '{}' \; || true
+        shell: bash
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: coverage-test-failures
+          path: ${{ runner.temp }}/package
+
+  # ── Full R CMD check (multi-platform, merge queue gate) ──────────────
 
   check:
-
-    needs: smoke
 
     if: github.event_name != 'pull_request'
 
@@ -234,117 +380,27 @@ jobs:
         with:
           upload-snapshots: true
 
-  # ── Test coverage ────────────────────────────────────────────────────
+  # ── Aggregate check-matrix result for the required-checks list ───────
+  #
+  # `check-all` shields the merge-queue gate from changes to the matrix
+  # shape: required_status_checks lists this name instead of each
+  # platform/R-version entry.  Treats `skipped` (PR runs, where the
+  # matrix doesn't fire) as success.
 
-  coverage:
+  check-all:
 
-    needs: smoke
-
-    if: github.event_name != 'pull_request'
-
-    runs-on: ubuntu-latest
-
-    env:
-      GITHUB_PAT: ${{ secrets.BLOCKR_PAT || github.token }}
-      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: r-lib/actions/setup-r@v2
-        with:
-          use-public-rspm: true
-
-      - uses: cynkra/blockr.ci/.github/actions/parse-deps@main
-        id: deps
-        with:
-          pr-body: ${{ github.event.pull_request.body }}
-          pr-number: ${{ github.event.pull_request.number }}
-          base-packages: |
-            any::covr
-
-      - uses: r-lib/actions/setup-r-dependencies@v2
-        with:
-          extra-packages: ${{ steps.deps.outputs.extra-packages }}
-          needs: coverage
-
-      - name: Test coverage
-        run: |
-          covr::codecov(
-            quiet = FALSE,
-            clean = FALSE,
-            install_path = file.path(Sys.getenv("RUNNER_TEMP"), "package")
-          )
-        shell: Rscript {0}
-
-      - name: Show testthat output
-        if: always()
-        run: |
-          find ${{ runner.temp }}/package -name 'testthat.Rout*' -exec cat '{}' \; || true
-        shell: bash
-
-      - name: Upload test results
-        if: failure()
-        uses: actions/upload-artifact@v6
-        with:
-          name: coverage-test-failures
-          path: ${{ runner.temp }}/package
-
-  # ── pkgdown site ─────────────────────────────────────────────────────
-
-  pkgdown:
-
-    needs: smoke
-
-    if: >-
-      !inputs.skip-pkgdown &&
-      github.event_name != 'pull_request'
+    needs: check
+    if: always()
 
     runs-on: ubuntu-latest
 
-    concurrency:
-      group: pkgdown-${{ github.event_name != 'pull_request' || github.run_id }}
-
-    env:
-      GITHUB_PAT: ${{ secrets.BLOCKR_PAT || github.token }}
-
-    permissions:
-      contents: write
-
     steps:
-      - uses: actions/checkout@v5
-
-      - uses: r-lib/actions/setup-pandoc@v2
-
-      - uses: r-lib/actions/setup-r@v2
-        with:
-          use-public-rspm: true
-
-      - uses: cynkra/blockr.ci/.github/actions/parse-deps@main
-        id: deps
-        with:
-          pr-body: ${{ github.event.pull_request.body }}
-          pr-number: ${{ github.event.pull_request.number }}
-          base-packages: |
-            any::pkgdown
-            local::.
-
-      - uses: r-lib/actions/setup-r-dependencies@v2
-        with:
-          extra-packages: ${{ steps.deps.outputs.extra-packages }}
-          needs: website
-
-      - name: Remove mermaid config for CI
-        run: Rscript -e 'unlink("vignettes/_metadata.yml")'
-
-      - name: Build site
-        run: pkgdown::build_site_github_pages(new_process = FALSE, install = FALSE)
-        shell: Rscript {0}
-
-      - name: Deploy to GitHub pages
-        if: github.event_name == 'push'
-        uses: JamesIves/github-pages-deploy-action@v4.8.0
-        with:
-          clean: false
-          branch: gh-pages
-          folder: docs
+      - name: Aggregate check matrix
+        env:
+          CHECK_RESULT: ${{ needs.check.result }}
+        run: |
+          echo "check matrix result: $CHECK_RESULT"
+          case "$CHECK_RESULT" in
+            success|skipped) exit 0 ;;
+            *) exit 1 ;;
+          esac

@@ -178,3 +178,28 @@ jobs:
         with:
           working-directory: revdep
           build_args: 'c("--no-manual","--compact-vignettes=gs+qpdf")'
+
+  # ── Aggregate revdep-matrix result for the required-checks list ──────
+  #
+  # `revdep-all` shields the merge-queue gate from changes to the matrix
+  # shape: required_status_checks lists this name instead of one row per
+  # downstream package.  Treats `skipped` (no revdep packages configured,
+  # or matrix gated out by event) as success.
+
+  revdep-all:
+
+    needs: revdep
+    if: always()
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Aggregate revdep matrix
+        env:
+          REVDEP_RESULT: ${{ needs.revdep.result }}
+        run: |
+          echo "revdep matrix result: $REVDEP_RESULT"
+          case "$REVDEP_RESULT" in
+            success|skipped) exit 0 ;;
+            *) exit 1 ;;
+          esac

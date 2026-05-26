@@ -29,7 +29,7 @@ inputs:
   job-pattern:
     description: Extended-regex pattern matched against job names.
     required: false
-    default: (lint|smoke|revdep)
+    default: (lint|smoke|pkgdown-dev|coverage|revdep)
 
 runs:
   using: composite
