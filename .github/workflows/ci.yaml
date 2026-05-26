@@ -306,7 +306,8 @@ jobs:
 
           covr::codecov(coverage = cov)
 
-          threshold <- as.numeric(Sys.getenv("COVERAGE_THRESHOLD", "0"))
+          threshold_env <- Sys.getenv("COVERAGE_THRESHOLD")
+          threshold <- if (nzchar(threshold_env)) as.numeric(threshold_env) else 0
           if (pct < threshold) {
             stop(sprintf(
               "Coverage %.2f%% below threshold %.2f%%",
