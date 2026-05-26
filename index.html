@@ -77,9 +77,11 @@
 <span id="cb1-7"><a href="#cb1-7" tabindex="-1"></a><span class="fu">jobs</span><span class="kw">:</span></span>
 <span id="cb1-8"><a href="#cb1-8" tabindex="-1"></a><span class="at">  </span><span class="fu">ci</span><span class="kw">:</span></span>
 <span id="cb1-9"><a href="#cb1-9" tabindex="-1"></a><span class="at">    </span><span class="fu">uses</span><span class="kw">:</span><span class="at"> cynkra/blockr.ci/.github/workflows/ci.yaml@main</span></span>
-<span id="cb1-10"><a href="#cb1-10" tabindex="-1"></a><span class="at">    </span><span class="fu">secrets</span><span class="kw">:</span><span class="at"> inherit</span></span>
-<span id="cb1-11"><a href="#cb1-11" tabindex="-1"></a><span class="at">    </span><span class="fu">permissions</span><span class="kw">:</span></span>
-<span id="cb1-12"><a href="#cb1-12" tabindex="-1"></a><span class="at">      </span><span class="fu">contents</span><span class="kw">:</span><span class="at"> write</span></span></code></pre></div>
+<span id="cb1-10"><a href="#cb1-10" tabindex="-1"></a><span class="at">    </span><span class="fu">secrets</span><span class="kw">:</span></span>
+<span id="cb1-11"><a href="#cb1-11" tabindex="-1"></a><span class="at">      </span><span class="fu">CODECOV_TOKEN</span><span class="kw">:</span><span class="at"> ${{ secrets.CODECOV_TOKEN }}</span></span>
+<span id="cb1-12"><a href="#cb1-12" tabindex="-1"></a><span class="at">      </span><span class="fu">BLOCKR_PAT</span><span class="kw">:</span><span class="at"> ${{ secrets.BLOCKR_PAT }}</span></span>
+<span id="cb1-13"><a href="#cb1-13" tabindex="-1"></a><span class="at">    </span><span class="fu">permissions</span><span class="kw">:</span></span>
+<span id="cb1-14"><a href="#cb1-14" tabindex="-1"></a><span class="at">      </span><span class="fu">contents</span><span class="kw">:</span><span class="at"> write</span></span></code></pre></div>
 </div>
 <div class="section level3">
 <h3 id="githubworkflowsdeps-rerunyaml">
@@ -95,7 +97,9 @@
 <span id="cb2-8"><a href="#cb2-8" tabindex="-1"></a><span class="fu">jobs</span><span class="kw">:</span></span>
 <span id="cb2-9"><a href="#cb2-9" tabindex="-1"></a><span class="at">  </span><span class="fu">rerun</span><span class="kw">:</span></span>
 <span id="cb2-10"><a href="#cb2-10" tabindex="-1"></a><span class="at">    </span><span class="fu">uses</span><span class="kw">:</span><span class="at"> cynkra/blockr.ci/.github/workflows/deps-rerun.yaml@main</span></span>
-<span id="cb2-11"><a href="#cb2-11" tabindex="-1"></a><span class="at">    </span><span class="fu">secrets</span><span class="kw">:</span><span class="at"> inherit</span></span></code></pre></div>
+<span id="cb2-11"><a href="#cb2-11" tabindex="-1"></a><span class="at">    </span><span class="fu">secrets</span><span class="kw">:</span></span>
+<span id="cb2-12"><a href="#cb2-12" tabindex="-1"></a><span class="at">      </span><span class="fu">BLOCKR_PAT</span><span class="kw">:</span><span class="at"> ${{ secrets.BLOCKR_PAT }}</span></span></code></pre></div>
+<p>Pass secrets by name. <code>secrets: inherit</code> does not forward secrets across organisations — the inherited values silently arrive blank in the called job.</p>
 </div>
 </div>
 <div class="section level2">
@@ -117,26 +121,26 @@
 <col width="25%">
 <col width="25%">
 </colgroup>
-<thead><tr class="header">
+<thead><tr>
 <th>Input</th>
 <th>Type</th>
 <th>Default</th>
 <th>Purpose</th>
 </tr></thead>
 <tbody>
-<tr class="odd">
+<tr>
 <td><code>revdep-packages</code></td>
 <td>newline-separated list</td>
 <td><code>''</code></td>
 <td>Downstream packages to reverse-dep check. Empty skips the job.</td>
 </tr>
-<tr class="even">
+<tr>
 <td><code>lintr-exclusions</code></td>
 <td>newline-separated list</td>
 <td><code>''</code></td>
 <td>File paths to exclude from linting</td>
 </tr>
-<tr class="odd">
+<tr>
 <td><code>skip-pkgdown</code></td>
 <td>boolean</td>
 <td><code>false</code></td>
@@ -157,9 +161,11 @@
 <span id="cb4-8"><a href="#cb4-8" tabindex="-1"></a><span class="fu">      lintr-exclusions</span><span class="kw">: </span><span class="ch">|</span></span>
 <span id="cb4-9"><a href="#cb4-9" tabindex="-1"></a>        vignettes/foo.qmd</span>
 <span id="cb4-10"><a href="#cb4-10" tabindex="-1"></a>        vignettes/bar.qmd</span>
-<span id="cb4-11"><a href="#cb4-11" tabindex="-1"></a><span class="at">    </span><span class="fu">secrets</span><span class="kw">:</span><span class="at"> inherit</span></span>
-<span id="cb4-12"><a href="#cb4-12" tabindex="-1"></a><span class="at">    </span><span class="fu">permissions</span><span class="kw">:</span></span>
-<span id="cb4-13"><a href="#cb4-13" tabindex="-1"></a><span class="at">      </span><span class="fu">contents</span><span class="kw">:</span><span class="at"> write</span></span></code></pre></div>
+<span id="cb4-11"><a href="#cb4-11" tabindex="-1"></a><span class="at">    </span><span class="fu">secrets</span><span class="kw">:</span></span>
+<span id="cb4-12"><a href="#cb4-12" tabindex="-1"></a><span class="at">      </span><span class="fu">CODECOV_TOKEN</span><span class="kw">:</span><span class="at"> ${{ secrets.CODECOV_TOKEN }}</span></span>
+<span id="cb4-13"><a href="#cb4-13" tabindex="-1"></a><span class="at">      </span><span class="fu">BLOCKR_PAT</span><span class="kw">:</span><span class="at"> ${{ secrets.BLOCKR_PAT }}</span></span>
+<span id="cb4-14"><a href="#cb4-14" tabindex="-1"></a><span class="at">    </span><span class="fu">permissions</span><span class="kw">:</span></span>
+<span id="cb4-15"><a href="#cb4-15" tabindex="-1"></a><span class="at">      </span><span class="fu">contents</span><span class="kw">:</span><span class="at"> write</span></span></code></pre></div>
 </div>
 </div>
 <div class="section level2">
