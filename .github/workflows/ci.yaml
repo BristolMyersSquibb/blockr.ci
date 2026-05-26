@@ -16,9 +16,16 @@
 #       with:
 #         revdep-packages: |
 #           BristolMyersSquibb/blockr.dock
-#       secrets: inherit
+#       secrets:
+#         CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+#         BLOCKR_PAT: ${{ secrets.BLOCKR_PAT }}
 #       permissions:
 #         contents: write
+#
+# Pass secrets by name. `secrets: inherit` does not forward secrets
+# across organisations (e.g. BristolMyersSquibb/* calling this workflow
+# in cynkra/blockr.ci) — the inherited values silently arrive blank in
+# the called job.
 
 on:
   push:
@@ -49,6 +56,22 @@ on:
           build their site differently (e.g. Quarto).
         type: boolean
         default: false
+        required: false
+
+    secrets:
+
+      CODECOV_TOKEN:
+        description: >
+          Codecov upload token.  Required for authenticated coverage
+          uploads; without it Codecov falls back to tokenless uploads
+          which are subject to aggressive rate-limiting.
+        required: false
+
+      BLOCKR_PAT:
+        description: >
+          PAT used for cross-repository checkouts (revdep) and for
+          authenticated GitHub API calls in dependency resolution.
+          Falls back to github.token when not provided.
         required: false
 
 name: ci

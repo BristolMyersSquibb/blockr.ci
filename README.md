@@ -20,7 +20,9 @@ on:
 jobs:
   ci:
     uses: cynkra/blockr.ci/.github/workflows/ci.yaml@main
-    secrets: inherit
+    secrets:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+      BLOCKR_PAT: ${{ secrets.BLOCKR_PAT }}
     permissions:
       contents: write
 ```
@@ -38,8 +40,13 @@ name: deps-rerun
 jobs:
   rerun:
     uses: cynkra/blockr.ci/.github/workflows/deps-rerun.yaml@main
-    secrets: inherit
+    secrets:
+      BLOCKR_PAT: ${{ secrets.BLOCKR_PAT }}
 ```
+
+Pass secrets by name. `secrets: inherit` does not forward secrets
+across organisations — the inherited values silently arrive blank in
+the called job.
 
 ## Pipeline
 
@@ -73,7 +80,9 @@ jobs:
       lintr-exclusions: |
         vignettes/foo.qmd
         vignettes/bar.qmd
-    secrets: inherit
+    secrets:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+      BLOCKR_PAT: ${{ secrets.BLOCKR_PAT }}
     permissions:
       contents: write
 ```
