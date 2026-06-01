@@ -237,6 +237,7 @@ jobs:
           pr-number: ${{ github.event.pull_request.number }}
           base-packages: |
             any::pkgdown
+            any::pkgload
             local::.
 
       - uses: r-lib/actions/setup-r-dependencies@v2
