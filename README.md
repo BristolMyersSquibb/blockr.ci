@@ -72,23 +72,6 @@ jobs:
       BLOCKR_PAT: ${{ secrets.BLOCKR_PAT }}
 ```
 
-### `deps-rerun.yaml` — re-run deps-affected jobs on PR-body edit
-
-```yaml
-on:
-  pull_request:
-    branches: main
-    types: [edited]
-
-name: deps-rerun
-
-jobs:
-  rerun:
-    uses: cynkra/blockr.ci/.github/workflows/deps-rerun.yaml@main
-    secrets:
-      BLOCKR_PAT: ${{ secrets.BLOCKR_PAT }}
-```
-
 Pass secrets by name. `secrets: inherit` does not forward secrets
 across organisations — the inherited values silently arrive blank in
 the called job.
@@ -185,8 +168,7 @@ jobs:
 - **Full check** — 4-platform matrix (macOS, Windows, Ubuntu devel, Ubuntu oldrel) — merge-queue gate
 - **Reverse-dependency checks** against configurable downstream packages — merge-queue gate
 - **pkgdown deploy** — site build + deploy to `gh-pages` on push to `main`
-- **parse-deps** — override dependency versions via a `` ```deps `` block in the PR body
-- **deps-rerun** — automatically re-run affected jobs when the deps block changes
+- **parse-deps** — pin a downstream revdep ref via a `` ```deps `` block in the PR body, read fresh when the merge queue runs revdep
 
 ## Dependency resolution
 
@@ -219,7 +201,7 @@ Each line is `owner/repo@branch` or `owner/repo#PR-number`. The matching revdep 
 
 `parse-deps` validates each entry against the package's `DESCRIPTION`: if a deps-block entry's package name appears in `Imports`/`Depends`/`LinkingTo`/`Suggests`/`Remotes`, parse-deps fails with a pointer to `Remotes:`. This catches the common mistake of trying to use the deps block to swap in a dev branch of a forward dep.
 
-When the deps block changes, the **deps-rerun** workflow re-runs the deps-affected jobs (lint, smoke, pkgdown-dev, coverage, revdep) without needing a new push.
+The revdep job runs only in the merge queue, and it reads the deps block fresh from the PR body each time the queue runs. To change which ref gets checked out, edit the block and re-enqueue — there is no separate re-run trigger.
 
 ### Example
 
@@ -234,8 +216,8 @@ You're working on `blockr.dock` and need the revdep job to test against an in-pr
    ```
    ````
 
-3. The revdep job checks out `blockr.dag` PR #111 head instead.
-4. If you later change the deps block (e.g., point to a different PR), the affected jobs re-run automatically.
+3. When the PR is enqueued, the merge-queue revdep job reads the block and checks out `blockr.dag` PR #111 head instead of the default branch.
+4. To point at a different PR later, edit the block and re-enqueue.
 
 To override a forward dep (e.g. test against an in-progress `blockr.core` branch), edit `Remotes:` in `DESCRIPTION` instead:
 
