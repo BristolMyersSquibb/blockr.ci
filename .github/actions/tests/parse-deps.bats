@@ -243,6 +243,39 @@ owner/glue@x
   assert_output --partial "glue"
 }
 
+@test "merge_group queue ref: PR number recovered, fresh body fetched" {
+  write_description
+
+  mkdir -p bin
+  cat > bin/gh <<'STUB'
+#!/usr/bin/env bash
+echo "$@" >> "$GH_CALLS"
+cat <<'BODY'
+```deps
+owner/repo@queued-branch
+```
+BODY
+STUB
+  chmod +x bin/gh
+  export PATH="$PWD/bin:$PATH"
+  export GH_CALLS="$BATS_TEST_TMPDIR/gh_calls"
+  > "$GH_CALLS"
+
+  export PR_BODY=""
+  export PR_NUMBER=""
+  export GH_TOKEN="x"
+  export GITHUB_REPOSITORY="owner/repo"
+  export GITHUB_REF="refs/heads/gh-readonly-queue/main/pr-19-deadbeef"
+  export PKG="owner/repo"
+  export BASE_PACKAGES="any::rcmdcheck"
+
+  run bash "$SCRIPT"
+  assert_success
+
+  assert_equal "$(get_output ref)" "queued-branch"
+  assert [ -n "$(grep 'pulls/19' "$GH_CALLS")" ]
+}
+
 @test "no DESCRIPTION present: warns, skips validation, still excludes from extra" {
   # No write_description / mkdir pkg — empty cwd
   export PR_BODY='```deps
