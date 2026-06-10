@@ -131,7 +131,7 @@ jobs:
         with:
           use-public-rspm: true
 
-      - uses: cynkra/blockr.ci/.github/actions/parse-deps@17-pr-gates
+      - uses: cynkra/blockr.ci/.github/actions/parse-deps@main
         id: deps
         with:
           pr-body: ${{ github.event.pull_request.body }}
@@ -189,7 +189,7 @@ jobs:
         with:
           use-public-rspm: true
 
-      - uses: cynkra/blockr.ci/.github/actions/parse-deps@17-pr-gates
+      - uses: cynkra/blockr.ci/.github/actions/parse-deps@main
         id: deps
         with:
           pr-body: ${{ github.event.pull_request.body }}
@@ -230,7 +230,7 @@ jobs:
         with:
           use-public-rspm: true
 
-      - uses: cynkra/blockr.ci/.github/actions/parse-deps@17-pr-gates
+      - uses: cynkra/blockr.ci/.github/actions/parse-deps@main
         id: deps
         with:
           pr-body: ${{ github.event.pull_request.body }}
@@ -278,7 +278,7 @@ jobs:
         with:
           use-public-rspm: true
 
-      - uses: cynkra/blockr.ci/.github/actions/parse-deps@17-pr-gates
+      - uses: cynkra/blockr.ci/.github/actions/parse-deps@main
         id: deps
         with:
           pr-body: ${{ github.event.pull_request.body }}
@@ -361,7 +361,7 @@ jobs:
           http-user-agent: ${{ matrix.config.http-user-agent }}
           use-public-rspm: true
 
-      - uses: cynkra/blockr.ci/.github/actions/parse-deps@17-pr-gates
+      - uses: cynkra/blockr.ci/.github/actions/parse-deps@main
         id: deps
         with:
           pr-body: ${{ github.event.pull_request.body }}
