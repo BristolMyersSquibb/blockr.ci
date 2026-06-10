@@ -63,65 +63,116 @@
 <div class="section level2">
 <h2 id="usage">Usage<a class="anchor" aria-label="anchor" href="#usage"></a>
 </h2>
-<p>Replace your repo’s <code>.github/workflows/</code> contents with two files:</p>
+<p>Consumer repo <code>.github/workflows/</code>:</p>
 <div class="section level3">
-<h3 id="githubworkflowsciyaml">
-<code>.github/workflows/ci.yaml</code><a class="anchor" aria-label="anchor" href="#githubworkflowsciyaml"></a>
+<h3 id="ciyaml--pr--merge-queue-gate">
+<code>ci.yaml</code> — PR + merge-queue gate<a class="anchor" aria-label="anchor" href="#ciyaml--pr--merge-queue-gate"></a>
 </h3>
 <div class="sourceCode" id="cb1"><pre class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb1-1"><a href="#cb1-1" tabindex="-1"></a><span class="fu">on</span><span class="kw">:</span></span>
-<span id="cb1-2"><a href="#cb1-2" tabindex="-1"></a><span class="at">  </span><span class="fu">push</span><span class="kw">:</span></span>
-<span id="cb1-3"><a href="#cb1-3" tabindex="-1"></a><span class="at">    </span><span class="fu">branches</span><span class="kw">:</span><span class="at"> main</span></span>
-<span id="cb1-4"><a href="#cb1-4" tabindex="-1"></a><span class="at">  </span><span class="fu">pull_request</span><span class="kw">:</span></span>
-<span id="cb1-5"><a href="#cb1-5" tabindex="-1"></a><span class="at">  </span><span class="fu">merge_group</span><span class="kw">:</span></span>
-<span id="cb1-6"><a href="#cb1-6" tabindex="-1"></a></span>
-<span id="cb1-7"><a href="#cb1-7" tabindex="-1"></a><span class="fu">jobs</span><span class="kw">:</span></span>
-<span id="cb1-8"><a href="#cb1-8" tabindex="-1"></a><span class="at">  </span><span class="fu">ci</span><span class="kw">:</span></span>
-<span id="cb1-9"><a href="#cb1-9" tabindex="-1"></a><span class="at">    </span><span class="fu">uses</span><span class="kw">:</span><span class="at"> cynkra/blockr.ci/.github/workflows/ci.yaml@main</span></span>
-<span id="cb1-10"><a href="#cb1-10" tabindex="-1"></a><span class="at">    </span><span class="fu">secrets</span><span class="kw">:</span></span>
-<span id="cb1-11"><a href="#cb1-11" tabindex="-1"></a><span class="at">      </span><span class="fu">CODECOV_TOKEN</span><span class="kw">:</span><span class="at"> ${{ secrets.CODECOV_TOKEN }}</span></span>
-<span id="cb1-12"><a href="#cb1-12" tabindex="-1"></a><span class="at">      </span><span class="fu">BLOCKR_PAT</span><span class="kw">:</span><span class="at"> ${{ secrets.BLOCKR_PAT }}</span></span>
-<span id="cb1-13"><a href="#cb1-13" tabindex="-1"></a><span class="at">    </span><span class="fu">permissions</span><span class="kw">:</span></span>
-<span id="cb1-14"><a href="#cb1-14" tabindex="-1"></a><span class="at">      </span><span class="fu">contents</span><span class="kw">:</span><span class="at"> write</span></span></code></pre></div>
+<span id="cb1-2"><a href="#cb1-2" tabindex="-1"></a><span class="at">  </span><span class="fu">pull_request</span><span class="kw">:</span></span>
+<span id="cb1-3"><a href="#cb1-3" tabindex="-1"></a><span class="at">  </span><span class="fu">merge_group</span><span class="kw">:</span></span>
+<span id="cb1-4"><a href="#cb1-4" tabindex="-1"></a></span>
+<span id="cb1-5"><a href="#cb1-5" tabindex="-1"></a><span class="fu">jobs</span><span class="kw">:</span></span>
+<span id="cb1-6"><a href="#cb1-6" tabindex="-1"></a><span class="at">  </span><span class="fu">ci</span><span class="kw">:</span></span>
+<span id="cb1-7"><a href="#cb1-7" tabindex="-1"></a><span class="at">    </span><span class="fu">uses</span><span class="kw">:</span><span class="at"> cynkra/blockr.ci/.github/workflows/ci.yaml@main</span></span>
+<span id="cb1-8"><a href="#cb1-8" tabindex="-1"></a><span class="at">    </span><span class="fu">secrets</span><span class="kw">:</span></span>
+<span id="cb1-9"><a href="#cb1-9" tabindex="-1"></a><span class="at">      </span><span class="fu">CODECOV_TOKEN</span><span class="kw">:</span><span class="at"> ${{ secrets.CODECOV_TOKEN }}</span></span>
+<span id="cb1-10"><a href="#cb1-10" tabindex="-1"></a><span class="at">      </span><span class="fu">BLOCKR_PAT</span><span class="kw">:</span><span class="at"> ${{ secrets.BLOCKR_PAT }}</span></span></code></pre></div>
 <p>Leave the <code>pull_request:</code> trigger unfiltered. Adding <code>branches: main</code> silently disables CI for stacked PRs (PRs whose base is another feature branch) — they get no lint, no smoke, no signal at all until the base is retargeted to <code>main</code>.</p>
 </div>
 <div class="section level3">
-<h3 id="githubworkflowsdeps-rerunyaml">
-<code>.github/workflows/deps-rerun.yaml</code><a class="anchor" aria-label="anchor" href="#githubworkflowsdeps-rerunyaml"></a>
+<h3 id="pkgdownyaml--site-deploy-on-merge-to-main">
+<code>pkgdown.yaml</code> — site deploy on merge to main<a class="anchor" aria-label="anchor" href="#pkgdownyaml--site-deploy-on-merge-to-main"></a>
 </h3>
 <div class="sourceCode" id="cb2"><pre class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb2-1"><a href="#cb2-1" tabindex="-1"></a><span class="fu">on</span><span class="kw">:</span></span>
-<span id="cb2-2"><a href="#cb2-2" tabindex="-1"></a><span class="at">  </span><span class="fu">pull_request</span><span class="kw">:</span></span>
+<span id="cb2-2"><a href="#cb2-2" tabindex="-1"></a><span class="at">  </span><span class="fu">push</span><span class="kw">:</span></span>
 <span id="cb2-3"><a href="#cb2-3" tabindex="-1"></a><span class="at">    </span><span class="fu">branches</span><span class="kw">:</span><span class="at"> main</span></span>
-<span id="cb2-4"><a href="#cb2-4" tabindex="-1"></a><span class="at">    </span><span class="fu">types</span><span class="kw">:</span><span class="at"> </span><span class="kw">[</span><span class="at">edited</span><span class="kw">]</span></span>
-<span id="cb2-5"><a href="#cb2-5" tabindex="-1"></a></span>
-<span id="cb2-6"><a href="#cb2-6" tabindex="-1"></a><span class="fu">name</span><span class="kw">:</span><span class="at"> deps-rerun</span></span>
-<span id="cb2-7"><a href="#cb2-7" tabindex="-1"></a></span>
-<span id="cb2-8"><a href="#cb2-8" tabindex="-1"></a><span class="fu">jobs</span><span class="kw">:</span></span>
-<span id="cb2-9"><a href="#cb2-9" tabindex="-1"></a><span class="at">  </span><span class="fu">rerun</span><span class="kw">:</span></span>
-<span id="cb2-10"><a href="#cb2-10" tabindex="-1"></a><span class="at">    </span><span class="fu">uses</span><span class="kw">:</span><span class="at"> cynkra/blockr.ci/.github/workflows/deps-rerun.yaml@main</span></span>
-<span id="cb2-11"><a href="#cb2-11" tabindex="-1"></a><span class="at">    </span><span class="fu">secrets</span><span class="kw">:</span></span>
-<span id="cb2-12"><a href="#cb2-12" tabindex="-1"></a><span class="at">      </span><span class="fu">BLOCKR_PAT</span><span class="kw">:</span><span class="at"> ${{ secrets.BLOCKR_PAT }}</span></span></code></pre></div>
+<span id="cb2-4"><a href="#cb2-4" tabindex="-1"></a></span>
+<span id="cb2-5"><a href="#cb2-5" tabindex="-1"></a><span class="fu">name</span><span class="kw">:</span><span class="at"> pkgdown</span></span>
+<span id="cb2-6"><a href="#cb2-6" tabindex="-1"></a></span>
+<span id="cb2-7"><a href="#cb2-7" tabindex="-1"></a><span class="fu">jobs</span><span class="kw">:</span></span>
+<span id="cb2-8"><a href="#cb2-8" tabindex="-1"></a><span class="at">  </span><span class="fu">pkgdown</span><span class="kw">:</span></span>
+<span id="cb2-9"><a href="#cb2-9" tabindex="-1"></a><span class="at">    </span><span class="fu">uses</span><span class="kw">:</span><span class="at"> cynkra/blockr.ci/.github/workflows/pkgdown.yaml@main</span></span>
+<span id="cb2-10"><a href="#cb2-10" tabindex="-1"></a><span class="at">    </span><span class="fu">secrets</span><span class="kw">:</span></span>
+<span id="cb2-11"><a href="#cb2-11" tabindex="-1"></a><span class="at">      </span><span class="fu">BLOCKR_PAT</span><span class="kw">:</span><span class="at"> ${{ secrets.BLOCKR_PAT }}</span></span>
+<span id="cb2-12"><a href="#cb2-12" tabindex="-1"></a><span class="at">    </span><span class="fu">permissions</span><span class="kw">:</span></span>
+<span id="cb2-13"><a href="#cb2-13" tabindex="-1"></a><span class="at">      </span><span class="fu">contents</span><span class="kw">:</span><span class="at"> write</span></span></code></pre></div>
+<p>PR-side pkgdown sanity checks live in <code>ci.yaml</code>’s <code>pkgdown-dev</code> job; <code>pkgdown.yaml</code> only deploys. Consumers without a deployed site (e.g. packages with Quarto-based docs) simply omit this workflow file.</p>
+</div>
+<div class="section level3">
+<h3 id="revdepyaml--reverse-dependency-checks-optional">
+<code>revdep.yaml</code> — reverse-dependency checks (optional)<a class="anchor" aria-label="anchor" href="#revdepyaml--reverse-dependency-checks-optional"></a>
+</h3>
+<p>Add a second <code>jobs:</code> entry alongside the <code>ci</code> entry, gated on <code>merge_group</code>:</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb3-1"><a href="#cb3-1" tabindex="-1"></a><span class="fu">jobs</span><span class="kw">:</span></span>
+<span id="cb3-2"><a href="#cb3-2" tabindex="-1"></a><span class="at">  </span><span class="fu">ci</span><span class="kw">:</span></span>
+<span id="cb3-3"><a href="#cb3-3" tabindex="-1"></a><span class="at">    </span><span class="fu">uses</span><span class="kw">:</span><span class="at"> cynkra/blockr.ci/.github/workflows/ci.yaml@main</span></span>
+<span id="cb3-4"><a href="#cb3-4" tabindex="-1"></a><span class="at">    </span><span class="fu">secrets</span><span class="kw">:</span></span>
+<span id="cb3-5"><a href="#cb3-5" tabindex="-1"></a><span class="at">      </span><span class="fu">CODECOV_TOKEN</span><span class="kw">:</span><span class="at"> ${{ secrets.CODECOV_TOKEN }}</span></span>
+<span id="cb3-6"><a href="#cb3-6" tabindex="-1"></a><span class="at">      </span><span class="fu">BLOCKR_PAT</span><span class="kw">:</span><span class="at"> ${{ secrets.BLOCKR_PAT }}</span></span>
+<span id="cb3-7"><a href="#cb3-7" tabindex="-1"></a><span class="at">  </span><span class="fu">revdep</span><span class="kw">:</span></span>
+<span id="cb3-8"><a href="#cb3-8" tabindex="-1"></a><span class="at">    </span><span class="fu">if</span><span class="kw">:</span><span class="at"> github.event_name == 'merge_group'</span></span>
+<span id="cb3-9"><a href="#cb3-9" tabindex="-1"></a><span class="at">    </span><span class="fu">uses</span><span class="kw">:</span><span class="at"> cynkra/blockr.ci/.github/workflows/revdep.yaml@main</span></span>
+<span id="cb3-10"><a href="#cb3-10" tabindex="-1"></a><span class="at">    </span><span class="fu">with</span><span class="kw">:</span></span>
+<span id="cb3-11"><a href="#cb3-11" tabindex="-1"></a><span class="fu">      revdep-packages</span><span class="kw">: </span><span class="ch">|</span></span>
+<span id="cb3-12"><a href="#cb3-12" tabindex="-1"></a>        BristolMyersSquibb/blockr.dock</span>
+<span id="cb3-13"><a href="#cb3-13" tabindex="-1"></a><span class="at">    </span><span class="fu">secrets</span><span class="kw">:</span></span>
+<span id="cb3-14"><a href="#cb3-14" tabindex="-1"></a><span class="at">      </span><span class="fu">BLOCKR_PAT</span><span class="kw">:</span><span class="at"> ${{ secrets.BLOCKR_PAT }}</span></span></code></pre></div>
 <p>Pass secrets by name. <code>secrets: inherit</code> does not forward secrets across organisations — the inherited values silently arrive blank in the called job.</p>
 </div>
 </div>
 <div class="section level2">
 <h2 id="pipeline">Pipeline<a class="anchor" aria-label="anchor" href="#pipeline"></a>
 </h2>
-<pre><code>lint → smoke → check       (merge queue + push to main)
-             → coverage    (merge queue + push to main)
-             → revdep      (pull request, if configured)
-             → pkgdown     (merge queue + push to main; deploys on push)</code></pre>
-<p><code>lint</code> and <code>smoke</code> run on every event (pull request, merge queue, push to main). The remaining jobs only run where listed — pull requests are deliberately kept to the cheap gate.</p>
-<p>All steps are mandatory — a consumer gets the full pipeline or none of it.</p>
+<table class="table">
+<colgroup>
+<col width="50%">
+<col width="50%">
+</colgroup>
+<thead><tr>
+<th>Trigger</th>
+<th>Jobs</th>
+</tr></thead>
+<tbody>
+<tr>
+<td><code>pull_request</code></td>
+<td>
+<code>lint</code>, <code>smoke</code>, <code>pkgdown-dev</code>, <code>coverage</code> (parallel)</td>
+</tr>
+<tr>
+<td><code>merge_group</code></td>
+<td>
+<code>check</code> matrix → <code>check-all</code>; <code>revdep</code> matrix → <code>revdep-all</code> (if configured)</td>
+</tr>
+<tr>
+<td><code>push: main</code></td>
+<td>
+<code>pkgdown.yaml</code> deploy (if configured)</td>
+</tr>
+</tbody>
+</table>
+<p>PR jobs run in parallel for fast feedback. The expensive multi-platform <code>check</code> matrix and reverse-dependency checks are reserved for the merge queue — they gate the merge but never block PR iteration.</p>
+<p><code>check-all</code> and <code>revdep-all</code> aggregate their respective matrices into a single stable name, so adding/removing a platform or revdep package doesn’t churn the required-checks list.</p>
 <div class="section level3">
 <h3 id="merge-queue">Merge queue<a class="anchor" aria-label="anchor" href="#merge-queue"></a>
 </h3>
-<p>Without GitHub’s merge queue enabled, <code>merge_group</code> events never fire, and the expensive jobs (<code>check</code>, <code>coverage</code>, <code>pkgdown</code>) only run on the <code>push</code> event — that is, <em>after</em> the PR has merged into <code>main</code>. A green PR can then produce a red <code>main</code> when one of the matrix platforms fails. Enabling the merge queue closes that gap: the queue runs the full pipeline against the would-be merge commit and blocks the merge on failure.</p>
+<p>Without GitHub’s merge queue enabled, <code>merge_group</code> events never fire and the multi-platform <code>check</code> matrix never runs — a green PR can then produce a red <code>main</code> when one of the matrix platforms fails. Enabling the merge queue closes that gap: the queue runs the full pipeline against the would-be merge commit and blocks the merge on failure.</p>
 <p>To enable, in the consumer repo’s branch protection settings for <code>main</code>:</p>
 <ol style="list-style-type: decimal">
 <li>
 <strong>Require a pull request before merging</strong>.</li>
 <li>
-<strong>Require status checks to pass</strong> — mark <code>lint</code>, <code>smoke</code>, <code>check</code>, <code>coverage</code>, and (if configured) <code>pkgdown</code> as required.</li>
+<strong>Require status checks to pass</strong> — list these stable names:
+<ul>
+<li><code>ci / lint</code></li>
+<li><code>ci / smoke</code></li>
+<li><code>ci / pkgdown-dev</code></li>
+<li><code>ci / coverage</code></li>
+<li><code>ci / check-all</code></li>
+<li>
+<code>revdep / revdep-all</code> (if <code>revdep.yaml</code> is configured)</li>
+</ul>
+Skipped jobs satisfy required checks, so the queue accepts the PR-only jobs as <code>skipped</code> on <code>merge_group</code> refs (and vice versa for <code>check-all</code> / <code>revdep-all</code> on PR refs).</li>
 <li>
 <strong>Require merge queue</strong> — leave the merge method as <strong>merge commit</strong> (squash and rebase strip the merge metadata downstream branches use to stay aligned).</li>
 </ol>
@@ -131,6 +182,10 @@
 <div class="section level2">
 <h2 id="inputs">Inputs<a class="anchor" aria-label="anchor" href="#inputs"></a>
 </h2>
+<div class="section level3">
+<h3 id="ciyaml">
+<code>ci.yaml</code><a class="anchor" aria-label="anchor" href="#ciyaml"></a>
+</h3>
 <table class="table">
 <colgroup>
 <col width="25%">
@@ -146,43 +201,77 @@
 </tr></thead>
 <tbody>
 <tr>
-<td><code>revdep-packages</code></td>
-<td>newline-separated list</td>
-<td><code>''</code></td>
-<td>Downstream packages to reverse-dep check. Empty skips the job.</td>
-</tr>
-<tr>
 <td><code>lintr-exclusions</code></td>
 <td>newline-separated list</td>
 <td><code>''</code></td>
 <td>File paths to exclude from linting</td>
 </tr>
 <tr>
+<td><code>coverage-threshold</code></td>
+<td>number</td>
+<td><code>0</code></td>
+<td>Minimum coverage percent for the <code>coverage</code> job to pass. <code>0</code> disables the gate; coverage is still uploaded to Codecov.</td>
+</tr>
+<tr>
 <td><code>skip-pkgdown</code></td>
 <td>boolean</td>
 <td><code>false</code></td>
-<td>Skip pkgdown for repos with custom site builds</td>
+<td>DEPRECATED — pkgdown moved to <code>pkgdown.yaml</code>. No-op.</td>
+</tr>
+<tr>
+<td><code>revdep-packages</code></td>
+<td>newline-separated list</td>
+<td><code>''</code></td>
+<td>DEPRECATED — moved to <code>revdep.yaml</code>. No-op.</td>
 </tr>
 </tbody>
 </table>
+</div>
 <div class="section level3">
-<h3 id="example-with-all-inputs">Example with all inputs<a class="anchor" aria-label="anchor" href="#example-with-all-inputs"></a>
+<h3 id="revdepyaml">
+<code>revdep.yaml</code><a class="anchor" aria-label="anchor" href="#revdepyaml"></a>
+</h3>
+<table class="table">
+<colgroup>
+<col width="25%">
+<col width="25%">
+<col width="25%">
+<col width="25%">
+</colgroup>
+<thead><tr>
+<th>Input</th>
+<th>Type</th>
+<th>Default</th>
+<th>Purpose</th>
+</tr></thead>
+<tbody><tr>
+<td><code>revdep-packages</code></td>
+<td>newline-separated list</td>
+<td><em>(required)</em></td>
+<td>Downstream packages to reverse-dep check.</td>
+</tr></tbody>
+</table>
+</div>
+<div class="section level3">
+<h3 id="pkgdownyaml">
+<code>pkgdown.yaml</code><a class="anchor" aria-label="anchor" href="#pkgdownyaml"></a>
+</h3>
+<p>No inputs.</p>
+</div>
+<div class="section level3">
+<h3 id="example-with-inputs">Example with inputs<a class="anchor" aria-label="anchor" href="#example-with-inputs"></a>
 </h3>
 <div class="sourceCode" id="cb4"><pre class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb4-1"><a href="#cb4-1" tabindex="-1"></a><span class="fu">jobs</span><span class="kw">:</span></span>
 <span id="cb4-2"><a href="#cb4-2" tabindex="-1"></a><span class="at">  </span><span class="fu">ci</span><span class="kw">:</span></span>
 <span id="cb4-3"><a href="#cb4-3" tabindex="-1"></a><span class="at">    </span><span class="fu">uses</span><span class="kw">:</span><span class="at"> cynkra/blockr.ci/.github/workflows/ci.yaml@main</span></span>
 <span id="cb4-4"><a href="#cb4-4" tabindex="-1"></a><span class="at">    </span><span class="fu">with</span><span class="kw">:</span></span>
-<span id="cb4-5"><a href="#cb4-5" tabindex="-1"></a><span class="fu">      revdep-packages</span><span class="kw">: </span><span class="ch">|</span></span>
-<span id="cb4-6"><a href="#cb4-6" tabindex="-1"></a>        cynkra/blockr.dock</span>
-<span id="cb4-7"><a href="#cb4-7" tabindex="-1"></a>        cynkra/blockr.dag</span>
-<span id="cb4-8"><a href="#cb4-8" tabindex="-1"></a><span class="fu">      lintr-exclusions</span><span class="kw">: </span><span class="ch">|</span></span>
-<span id="cb4-9"><a href="#cb4-9" tabindex="-1"></a>        vignettes/foo.qmd</span>
-<span id="cb4-10"><a href="#cb4-10" tabindex="-1"></a>        vignettes/bar.qmd</span>
-<span id="cb4-11"><a href="#cb4-11" tabindex="-1"></a><span class="at">    </span><span class="fu">secrets</span><span class="kw">:</span></span>
-<span id="cb4-12"><a href="#cb4-12" tabindex="-1"></a><span class="at">      </span><span class="fu">CODECOV_TOKEN</span><span class="kw">:</span><span class="at"> ${{ secrets.CODECOV_TOKEN }}</span></span>
-<span id="cb4-13"><a href="#cb4-13" tabindex="-1"></a><span class="at">      </span><span class="fu">BLOCKR_PAT</span><span class="kw">:</span><span class="at"> ${{ secrets.BLOCKR_PAT }}</span></span>
-<span id="cb4-14"><a href="#cb4-14" tabindex="-1"></a><span class="at">    </span><span class="fu">permissions</span><span class="kw">:</span></span>
-<span id="cb4-15"><a href="#cb4-15" tabindex="-1"></a><span class="at">      </span><span class="fu">contents</span><span class="kw">:</span><span class="at"> write</span></span></code></pre></div>
+<span id="cb4-5"><a href="#cb4-5" tabindex="-1"></a><span class="at">      </span><span class="fu">coverage-threshold</span><span class="kw">:</span><span class="at"> </span><span class="dv">80</span></span>
+<span id="cb4-6"><a href="#cb4-6" tabindex="-1"></a><span class="fu">      lintr-exclusions</span><span class="kw">: </span><span class="ch">|</span></span>
+<span id="cb4-7"><a href="#cb4-7" tabindex="-1"></a>        vignettes/foo.qmd</span>
+<span id="cb4-8"><a href="#cb4-8" tabindex="-1"></a>        vignettes/bar.qmd</span>
+<span id="cb4-9"><a href="#cb4-9" tabindex="-1"></a><span class="at">    </span><span class="fu">secrets</span><span class="kw">:</span></span>
+<span id="cb4-10"><a href="#cb4-10" tabindex="-1"></a><span class="at">      </span><span class="fu">CODECOV_TOKEN</span><span class="kw">:</span><span class="at"> ${{ secrets.CODECOV_TOKEN }}</span></span>
+<span id="cb4-11"><a href="#cb4-11" tabindex="-1"></a><span class="at">      </span><span class="fu">BLOCKR_PAT</span><span class="kw">:</span><span class="at"> ${{ secrets.BLOCKR_PAT }}</span></span></code></pre></div>
 </div>
 </div>
 <div class="section level2">
@@ -190,21 +279,22 @@
 </h2>
 <ul>
 <li>
-<strong>Lint</strong> with a canonical lintr config (<code>object_name_linter = NULL</code>)</li>
+<strong>Lint</strong> with a canonical lintr config (<code>object_name_linter = NULL</code>) — PR gate</li>
 <li>
-<strong>Smoke test</strong> — single-platform R CMD check (PR gate)</li>
+<strong>Smoke test</strong> — single-platform R CMD check — PR gate</li>
 <li>
-<strong>Full check</strong> — 4-platform matrix (macOS, Windows, Ubuntu devel, Ubuntu oldrel), merge queue + push</li>
+<strong>pkgdown-dev</strong> — <code>pkgdown::build_site(devel = TRUE)</code>, artifact upload, no deploy — PR gate</li>
 <li>
-<strong>Coverage</strong> via covr + codecov, merge queue + push (not PR)</li>
+<strong>Coverage</strong> via <code>covr::package_coverage()</code> + codecov, optional threshold — PR gate</li>
 <li>
-<strong>Reverse-dependency checks</strong> against configurable downstream packages (PR only)</li>
+<strong>Full check</strong> — 4-platform matrix (macOS, Windows, Ubuntu devel, Ubuntu oldrel) — merge-queue gate</li>
 <li>
-<strong>pkgdown</strong> site build + deploy to gh-pages</li>
+<strong>Reverse-dependency checks</strong> against configurable downstream packages — merge-queue gate</li>
 <li>
-<strong>parse-deps</strong> — override dependency versions via a <code>```deps</code> block in the PR body</li>
+<strong>pkgdown deploy</strong> — site build + deploy to <code>gh-pages</code> on push to <code>main</code>
+</li>
 <li>
-<strong>deps-rerun</strong> — automatically re-run affected jobs when the deps block changes</li>
+<strong>parse-deps</strong> — pin a downstream revdep ref via a <code>```deps</code> block in the PR body, read fresh when the merge queue runs revdep</li>
 </ul>
 </div>
 <div class="section level2">
@@ -229,7 +319,7 @@ Remotes:
 <span id="cb6-4"><a href="#cb6-4" tabindex="-1"></a><span class="in">```</span></span></code></pre></div>
 <p>Each line is <code>owner/repo@branch</code> or <code>owner/repo#PR-number</code>. The matching revdep job checks out that ref instead of the default branch.</p>
 <p><code>parse-deps</code> validates each entry against the package’s <code>DESCRIPTION</code>: if a deps-block entry’s package name appears in <code>Imports</code>/<code>Depends</code>/<code>LinkingTo</code>/<code>Suggests</code>/<code>Remotes</code>, parse-deps fails with a pointer to <code>Remotes:</code>. This catches the common mistake of trying to use the deps block to swap in a dev branch of a forward dep.</p>
-<p>When the deps block changes, the <strong>deps-rerun</strong> workflow re-runs the smoke and revdep jobs without needing a new push.</p>
+<p>The revdep job runs only in the merge queue, and it reads the deps block fresh from the PR body each time the queue runs. To change which ref gets checked out, edit the block and re-enqueue — there is no separate re-run trigger.</p>
 </div>
 <div class="section level3">
 <h3 id="example">Example<a class="anchor" aria-label="anchor" href="#example"></a>
@@ -243,8 +333,8 @@ Remotes:
 <span id="cb7-2"><a href="#cb7-2" tabindex="-1"></a><span class="in">BristolMyersSquibb/blockr.dag#111</span></span>
 <span id="cb7-3"><a href="#cb7-3" tabindex="-1"></a><span class="in">```</span></span></code></pre></div>
 </li>
-<li><p>The revdep job checks out <code>blockr.dag</code> PR #111 head instead.</p></li>
-<li><p>If you later change the deps block (e.g., point to a different PR), the affected jobs re-run automatically.</p></li>
+<li><p>When the PR is enqueued, the merge-queue revdep job reads the block and checks out <code>blockr.dag</code> PR #111 head instead of the default branch.</p></li>
+<li><p>To point at a different PR later, edit the block and re-enqueue.</p></li>
 </ol>
 <p>To override a forward dep (e.g. test against an in-progress <code>blockr.core</code> branch), edit <code>Remotes:</code> in <code>DESCRIPTION</code> instead:</p>
 <pre><code><span><span class="va">Remotes</span><span class="op">:</span></span>
