@@ -110,7 +110,7 @@ jobs:
         with:
           use-public-rspm: true
 
-      - uses: cynkra/blockr.ci/.github/actions/parse-deps@17-pr-gates
+      - uses: cynkra/blockr.ci/.github/actions/parse-deps@main
         id: deps
         with:
           pr-body: ${{ github.event.pull_request.body }}
