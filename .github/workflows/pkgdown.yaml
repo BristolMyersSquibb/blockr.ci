@@ -1,0 +1,90 @@
+# pkgdown site build + deploy for blockr.* packages
+#
+# Reserved for `push: branches: main` runs.  PR-side pkgdown sanity
+# checks live in ci.yaml's pkgdown-dev job; this workflow has no gating
+# role and exists only to ship the rendered site to gh-pages.
+#
+# Usage — consumer repo .github/workflows/pkgdown.yaml:
+#
+#   on:
+#     push:
+#       branches: main
+#
+#   name: pkgdown
+#
+#   jobs:
+#     pkgdown:
+#       uses: cynkra/blockr.ci/.github/workflows/pkgdown.yaml@main
+#       secrets:
+#         BLOCKR_PAT: ${{ secrets.BLOCKR_PAT }}
+#       permissions:
+#         contents: write
+#
+# Pass secrets by name. `secrets: inherit` does not forward secrets
+# across organisations — the inherited values silently arrive blank in
+# the called job.
+
+on:
+  push:
+    branches: main
+  workflow_call:
+    secrets:
+
+      BLOCKR_PAT:
+        description: >
+          PAT used for authenticated GitHub API calls in dependency
+          resolution.  Falls back to github.token when not provided.
+        required: false
+
+name: pkgdown
+
+jobs:
+
+  pkgdown:
+
+    runs-on: ubuntu-latest
+
+    concurrency:
+      group: pkgdown-${{ github.run_id }}
+
+    env:
+      GITHUB_PAT: ${{ secrets.BLOCKR_PAT || github.token }}
+
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: r-lib/actions/setup-pandoc@v2
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+
+      - uses: cynkra/blockr.ci/.github/actions/parse-deps@17-pr-gates
+        id: deps
+        with:
+          pr-body: ''
+          base-packages: |
+            any::pkgdown
+            local::.
+
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          extra-packages: ${{ steps.deps.outputs.extra-packages }}
+          needs: website
+
+      - name: Remove mermaid config for CI
+        run: Rscript -e 'unlink("vignettes/_metadata.yml")'
+
+      - name: Build site
+        run: pkgdown::build_site_github_pages(new_process = FALSE, install = FALSE)
+        shell: Rscript {0}
+
+      - name: Deploy to GitHub pages
+        uses: JamesIves/github-pages-deploy-action@v4.8.0
+        with:
+          clean: false
+          branch: gh-pages
+          folder: docs
