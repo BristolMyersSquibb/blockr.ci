@@ -1,0 +1,181 @@
+# Pull-mode Posit Connect deploys via merge-queue manifest publishing.
+#
+# Connect sits on an internal network a runner cannot reach, so deployment is
+# inverted: Connect polls a branch and redeploys when it advances. This
+# workflow regenerates the per-deploy manifest.json and commits it — from
+# inside the merge queue — to a derived `connect-<base>` branch Connect
+# watches. Source branches (main, test) stay manifest-free.
+#
+# The single `deploy` job is a no-op on pull_request (every step gated to
+# merge_group) so the required check stays green and queueable, and the real
+# publisher on merge_group. Writing from the queue serialises the connect-*
+# writes and makes "PR ejected" equivalent to "the commit failed".
+#
+# See the README "connect-deploy" section for the consumer-side setup: caller
+# workflow, connect-* ruleset, GitHub App, and environment scoping.
+
+on:
+  workflow_call:
+
+    inputs:
+
+      r-version:
+        description: >
+          R version passed to setup-r; becomes `platform` in the manifest, so
+          it must be an R version Connect offers.
+        type: string
+        default: "4.4.2"
+        required: false
+
+      runs-on:
+        description: >
+          Runner image. Noble so PPM serves native binaries.
+        type: string
+        default: "ubuntu-24.04"
+        required: false
+
+      repos:
+        description: >
+          Empty (default) lets setup-r's use-public-rspm derive the PPM binary
+          URL from the runner OS. Set to a dated PPM snapshot
+          (.../__linux__/noble/2026-06-01) to freeze versions, or an internal
+          mirror. Whatever packages install from is what Connect restores from.
+        type: string
+        default: ""
+        required: false
+
+      content-dir:
+        description: >
+          Directory holding the app and receiving the manifest.
+        type: string
+        default: "."
+        required: false
+
+      connect-branch-prefix:
+        description: >
+          Target branch is `<prefix><base>` (e.g. connect-main).
+        type: string
+        default: "connect-"
+        required: false
+
+      environment:
+        description: >
+          Consumer-side protected environment holding the App credentials.
+          Referenced only on merge_group.
+        type: string
+        default: "connect"
+        required: false
+
+    secrets:
+
+      APP_ID:
+        description: GitHub App id of the deploy identity.
+        required: true
+
+      APP_PRIVATE_KEY:
+        description: GitHub App private key of the deploy identity.
+        required: true
+
+name: connect-deploy
+
+# The workflow's own token stays read-only; all writes use the App token.
+permissions:
+  contents: read
+
+jobs:
+
+  deploy:
+
+    runs-on: ${{ inputs.runs-on }}
+
+    # Environment only on merge_group: the PR leg is a no-op and must not reach
+    # the gh-readonly-queue-scoped environment that holds the App key. If an
+    # empty environment name is ever rejected, split into two jobs (a
+    # pull_request no-op gate and a merge_group deploy job).
+    environment: ${{ github.event_name == 'merge_group' && inputs.environment || '' }}
+
+    outputs:
+      published: ${{ steps.push.outputs.published }}
+
+    steps:
+
+      - if: github.event_name == 'merge_group'
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - if: github.event_name == 'merge_group'
+        uses: actions/checkout@v5
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          fetch-depth: 0
+
+      - if: github.event_name == 'merge_group'
+        uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: ${{ inputs.r-version }}
+          use-public-rspm: ${{ inputs.repos == '' }}
+          cran: ${{ inputs.repos }}
+
+      - if: github.event_name == 'merge_group'
+        uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          working-directory: ${{ inputs.content-dir }}
+          extra-packages: any::rsconnect
+
+      - if: github.event_name == 'merge_group'
+        working-directory: ${{ inputs.content-dir }}
+        run: Rscript -e 'rsconnect::writeManifest(appDir = ".")'
+
+      # Fail the deploy if a deploy-optional Suggests is installed but missing
+      # from the manifest, so it can't silently never reach Connect.
+      - if: github.event_name == 'merge_group'
+        uses: cynkra/blockr.ci/.github/actions/check-suggests@main
+        with:
+          content-dir: ${{ inputs.content-dir }}
+
+      - if: github.event_name == 'merge_group'
+        id: push
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          base="${{ github.event.merge_group.base_ref }}"; base="${base#refs/heads/}"
+          target="${{ inputs.connect-branch-prefix }}${base}"
+          git config user.name  "connect-deploy[bot]"
+          git config user.email "connect-deploy[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Deploy ${base}: regenerate manifest"
+          git push --force-with-lease origin "HEAD:${target}"
+          echo "published=true" >> "$GITHUB_OUTPUT"
+
+  # Aggregator gate. A green connect-deploy must mean the manifest was actually
+  # published: a mis-gated publish step leaves `deploy` green (skipped steps
+  # don't fail a job) and a skipped required check counts as passed, so without
+  # this gate a queue could merge having deployed nothing. List THIS job —
+  # `connect-deploy / guard` — in the consumer's required checks, not `deploy`.
+  guard:
+
+    needs: deploy
+    if: always()
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Assert the publish ran on merge_group
+        env:
+          EVENT: ${{ github.event_name }}
+          DEPLOY_RESULT: ${{ needs.deploy.result }}
+          PUBLISHED: ${{ needs.deploy.outputs.published }}
+        run: |
+          if [ "$DEPLOY_RESULT" != "success" ] && [ "$DEPLOY_RESULT" != "skipped" ]; then
+            echo "::error::connect-deploy: deploy job concluded '$DEPLOY_RESULT'"
+            exit 1
+          fi
+          if [ "$EVENT" = "merge_group" ] && [ "$PUBLISHED" != "true" ]; then
+            echo "::error::connect-deploy ran on merge_group but published nothing (the publish step did not run). Refusing to report success."
+            exit 1
+          fi
+          echo "connect-deploy guard OK (event=$EVENT, deploy=$DEPLOY_RESULT, published=${PUBLISHED:-<none>})"

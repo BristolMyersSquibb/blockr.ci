@@ -1,0 +1,73 @@
+# Smoke test for the connect-deploy pipeline. Mirrors the deploy job's
+# install + manifest steps against the fixture app (minus the git push), then
+# runs the working-tree check-suggests and asserts the manifest. Proves the
+# workflow installs declared deps and produces a manifest, and exercises both
+# manifest-inclusion paths the fixture demonstrates (a Suggests dep named in
+# app code, and one named only in the scan-only dependencies.R helper).
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/connect-deploy.yaml'
+      - '.github/workflows/connect-smoke.yaml'
+      - '.github/actions/check-suggests/**'
+      - '.github/actions/tests/fixtures/connect-app/**'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/connect-deploy.yaml'
+      - '.github/workflows/connect-smoke.yaml'
+      - '.github/actions/check-suggests/**'
+      - '.github/actions/tests/fixtures/connect-app/**'
+
+name: connect-smoke
+
+permissions:
+  contents: read
+
+jobs:
+
+  smoke:
+
+    runs-on: ubuntu-24.04
+
+    env:
+      FIXTURE: .github/actions/tests/fixtures/connect-app
+
+    steps:
+
+      - uses: actions/checkout@v5
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          working-directory: .github/actions/tests/fixtures/connect-app
+          extra-packages: any::rsconnect
+
+      - name: Generate manifest
+        working-directory: .github/actions/tests/fixtures/connect-app
+        run: Rscript -e 'rsconnect::writeManifest(appDir = ".")'
+
+      - name: Check suggests
+        uses: ./.github/actions/check-suggests
+        with:
+          content-dir: .github/actions/tests/fixtures/connect-app
+
+      - name: Assert manifest contents
+        working-directory: .github/actions/tests/fixtures/connect-app
+        shell: Rscript {0}
+        run: |
+          stopifnot(file.exists("manifest.json"))
+
+          m <- jsonlite::fromJSON("manifest.json", simplifyVector = FALSE)
+          pkgs <- names(m$packages)
+          cat("manifest packages:", paste(sort(pkgs), collapse = ", "), "\n")
+
+          missing <- setdiff(c("shiny", "jsonlite", "glue"), pkgs)
+          if (length(missing)) {
+            stop("manifest missing expected packages: ",
+                 paste(missing, collapse = ", "))
+          }

@@ -22,8 +22,8 @@ jobs:
         with:
           use-public-rspm: true
 
-      - name: Install pkgdepends
-        run: Rscript -e 'install.packages("pkgdepends")'
+      - name: Install action-test R dependencies
+        run: Rscript -e 'install.packages(c("pkgdepends", "jsonlite"))'
 
       - name: Run bats tests
         run: .github/actions/tests/bats/bin/bats .github/actions/tests/
