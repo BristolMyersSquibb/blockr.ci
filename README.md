@@ -1,6 +1,6 @@
 # blockr.ci
 
-[![ci](https://github.com/cynkra/blockr.ci/actions/workflows/ci.yaml/badge.svg)](https://github.com/cynkra/blockr.ci/actions/workflows/ci.yaml)
+[![ci](https://github.com/BristolMyersSquibb/blockr.ci/actions/workflows/ci.yaml/badge.svg)](https://github.com/BristolMyersSquibb/blockr.ci/actions/workflows/ci.yaml)
 
 Reusable GitHub Actions CI workflows for the [blockr](https://bristolmyerssquibb.github.io/blockr-site/) ecosystem.
 
@@ -17,7 +17,7 @@ on:
 
 jobs:
   ci:
-    uses: cynkra/blockr.ci/.github/workflows/ci.yaml@main
+    uses: BristolMyersSquibb/blockr.ci/.github/workflows/ci.yaml@main
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       BLOCKR_PAT: ${{ secrets.BLOCKR_PAT }}
@@ -39,7 +39,7 @@ name: pkgdown
 
 jobs:
   pkgdown:
-    uses: cynkra/blockr.ci/.github/workflows/pkgdown.yaml@main
+    uses: BristolMyersSquibb/blockr.ci/.github/workflows/pkgdown.yaml@main
     secrets:
       BLOCKR_PAT: ${{ secrets.BLOCKR_PAT }}
     permissions:
@@ -58,13 +58,13 @@ Add a second `jobs:` entry alongside the `ci` entry, gated on
 ```yaml
 jobs:
   ci:
-    uses: cynkra/blockr.ci/.github/workflows/ci.yaml@main
+    uses: BristolMyersSquibb/blockr.ci/.github/workflows/ci.yaml@main
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       BLOCKR_PAT: ${{ secrets.BLOCKR_PAT }}
   revdep:
     if: github.event_name == 'merge_group'
-    uses: cynkra/blockr.ci/.github/workflows/revdep.yaml@main
+    uses: BristolMyersSquibb/blockr.ci/.github/workflows/revdep.yaml@main
     with:
       revdep-packages: |
         BristolMyersSquibb/blockr.dock
@@ -148,7 +148,7 @@ No inputs.
 ```yaml
 jobs:
   ci:
-    uses: cynkra/blockr.ci/.github/workflows/ci.yaml@main
+    uses: BristolMyersSquibb/blockr.ci/.github/workflows/ci.yaml@main
     with:
       coverage-threshold: 80
       lintr-exclusions: |

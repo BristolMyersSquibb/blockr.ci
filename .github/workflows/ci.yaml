@@ -10,14 +10,14 @@
 #
 #   jobs:
 #     ci:
-#       uses: cynkra/blockr.ci/.github/workflows/ci.yaml@main
+#       uses: BristolMyersSquibb/blockr.ci/.github/workflows/ci.yaml@main
 #       secrets:
 #         CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 #         BLOCKR_PAT: ${{ secrets.BLOCKR_PAT }}
 #
 # Pass secrets by name. `secrets: inherit` does not forward secrets
 # across organisations (e.g. BristolMyersSquibb/* calling this workflow
-# in cynkra/blockr.ci) — the inherited values silently arrive blank in
+# in BristolMyersSquibb/blockr.ci) — the inherited values silently arrive blank in
 # the called job.
 #
 # PR jobs (lint, smoke, pkgdown-dev, coverage) run in parallel and gate
@@ -118,12 +118,12 @@ jobs:
       - name: Warn on deprecated revdep-packages input
         if: inputs.revdep-packages != ''
         run: |
-          echo "::warning::The 'revdep-packages' input on ci.yaml is deprecated and no longer triggers reverse-dependency checks. Migrate by dropping it from the ci.yaml call and adding a second jobs entry pointing at revdep.yaml (gated with 'if: github.event_name == \"merge_group\"'). See cynkra/blockr.ci#9."
+          echo "::warning::The 'revdep-packages' input on ci.yaml is deprecated and no longer triggers reverse-dependency checks. Migrate by dropping it from the ci.yaml call and adding a second jobs entry pointing at revdep.yaml (gated with 'if: github.event_name == \"merge_group\"'). See BristolMyersSquibb/blockr.ci#9."
 
       - name: Warn on deprecated skip-pkgdown input
         if: inputs.skip-pkgdown
         run: |
-          echo "::warning::The 'skip-pkgdown' input on ci.yaml is deprecated. The pkgdown job moved into pkgdown.yaml; consumers opt in by adding a pkgdown.yaml workflow rather than gating ci.yaml. See cynkra/blockr.ci#17."
+          echo "::warning::The 'skip-pkgdown' input on ci.yaml is deprecated. The pkgdown job moved into pkgdown.yaml; consumers opt in by adding a pkgdown.yaml workflow rather than gating ci.yaml. See BristolMyersSquibb/blockr.ci#17."
 
       - uses: actions/checkout@v5
 
@@ -131,7 +131,7 @@ jobs:
         with:
           use-public-rspm: true
 
-      - uses: cynkra/blockr.ci/.github/actions/parse-deps@main
+      - uses: BristolMyersSquibb/blockr.ci/.github/actions/parse-deps@main
         id: deps
         with:
           pr-body: ${{ github.event.pull_request.body }}
@@ -189,7 +189,7 @@ jobs:
         with:
           use-public-rspm: true
 
-      - uses: cynkra/blockr.ci/.github/actions/parse-deps@main
+      - uses: BristolMyersSquibb/blockr.ci/.github/actions/parse-deps@main
         id: deps
         with:
           pr-body: ${{ github.event.pull_request.body }}
@@ -230,7 +230,7 @@ jobs:
         with:
           use-public-rspm: true
 
-      - uses: cynkra/blockr.ci/.github/actions/parse-deps@main
+      - uses: BristolMyersSquibb/blockr.ci/.github/actions/parse-deps@main
         id: deps
         with:
           pr-body: ${{ github.event.pull_request.body }}
@@ -278,7 +278,7 @@ jobs:
         with:
           use-public-rspm: true
 
-      - uses: cynkra/blockr.ci/.github/actions/parse-deps@main
+      - uses: BristolMyersSquibb/blockr.ci/.github/actions/parse-deps@main
         id: deps
         with:
           pr-body: ${{ github.event.pull_request.body }}
@@ -361,7 +361,7 @@ jobs:
           http-user-agent: ${{ matrix.config.http-user-agent }}
           use-public-rspm: true
 
-      - uses: cynkra/blockr.ci/.github/actions/parse-deps@main
+      - uses: BristolMyersSquibb/blockr.ci/.github/actions/parse-deps@main
         id: deps
         with:
           pr-body: ${{ github.event.pull_request.body }}

@@ -8,13 +8,13 @@
 #
 #   jobs:
 #     ci:
-#       uses: cynkra/blockr.ci/.github/workflows/ci.yaml@main
+#       uses: BristolMyersSquibb/blockr.ci/.github/workflows/ci.yaml@main
 #       secrets:
 #         CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 #         BLOCKR_PAT: ${{ secrets.BLOCKR_PAT }}
 #     revdep:
 #       if: github.event_name == 'merge_group'
-#       uses: cynkra/blockr.ci/.github/workflows/revdep.yaml@main
+#       uses: BristolMyersSquibb/blockr.ci/.github/workflows/revdep.yaml@main
 #       with:
 #         revdep-packages: |
 #           BristolMyersSquibb/blockr.dock
@@ -110,7 +110,7 @@ jobs:
         with:
           use-public-rspm: true
 
-      - uses: cynkra/blockr.ci/.github/actions/parse-deps@main
+      - uses: BristolMyersSquibb/blockr.ci/.github/actions/parse-deps@main
         id: deps
         with:
           pr-body: ${{ github.event.pull_request.body }}
