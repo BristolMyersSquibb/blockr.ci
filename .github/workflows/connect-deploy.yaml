@@ -65,18 +65,21 @@ on:
         description: >
           Push identity for connect-*. "app" (default): mint a token from
           APP_ID / APP_PRIVATE_KEY and use the protected `environment` — pair
-          with a connect-* ruleset that bypasses the App. "token": push with
-          the workflow's own GITHUB_TOKEN, no App and no environment — pair
-          with an unprotected connect-* (integrity then rests entirely on the
-          source branch's protection).
+          with a connect-* ruleset that bypasses the App. "deploy-key": push
+          over SSH with DEPLOY_KEY, also under `environment` — pair with a
+          connect-* ruleset that bypasses the deploy key (a locked connect-*
+          with the least setup). "token": push with the workflow's own
+          GITHUB_TOKEN, no App, key or environment — pair with an unprotected
+          connect-* (integrity then rests entirely on the source branch's
+          protection).
         type: string
         default: "app"
         required: false
 
       environment:
         description: >
-          Consumer-side protected environment holding the App credentials.
-          Referenced only on merge_group in app mode.
+          Consumer-side protected environment holding the App or deploy-key
+          credentials. Referenced on merge_group in app and deploy-key modes.
         type: string
         default: "connect"
         required: false
@@ -89,6 +92,10 @@ on:
 
       APP_PRIVATE_KEY:
         description: GitHub App private key of the deploy identity (app mode only).
+        required: false
+
+      DEPLOY_KEY:
+        description: SSH deploy key, private half, of the deploy identity (deploy-key mode only).
         required: false
 
 name: connect-deploy
@@ -107,12 +114,12 @@ jobs:
 
     runs-on: ${{ inputs.runs-on }}
 
-    # Environment only on merge_group app mode: the PR leg is a no-op and token
-    # mode has no environment, so neither must reach the gh-readonly-queue-scoped
-    # environment that holds the App key. If an empty environment name is ever
-    # rejected, split into two jobs (a pull_request no-op gate and a merge_group
-    # deploy job).
-    environment: ${{ github.event_name == 'merge_group' && inputs.auth == 'app' && inputs.environment || '' }}
+    # Environment on merge_group for the credentialed modes (app, deploy-key):
+    # the PR leg is a no-op and token mode has no environment, so none must
+    # reach the gh-readonly-queue-scoped environment that holds the App key or
+    # deploy key. If an empty environment name is ever rejected, split into two
+    # jobs (a pull_request no-op gate and a merge_group deploy job).
+    environment: ${{ github.event_name == 'merge_group' && inputs.auth != 'token' && inputs.environment || '' }}
 
     outputs:
       published: ${{ steps.push.outputs.published }}
@@ -132,6 +139,16 @@ jobs:
             exit 1
           fi
 
+      - name: Require deploy key in deploy-key mode
+        if: github.event_name == 'merge_group' && inputs.auth == 'deploy-key'
+        env:
+          DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
+        run: |
+          if [ -z "$DEPLOY_KEY" ]; then
+            echo "::error::auth is 'deploy-key' but DEPLOY_KEY is not set. Provide it, or set auth: token."
+            exit 1
+          fi
+
       - if: github.event_name == 'merge_group' && inputs.auth == 'app'
         id: app-token
         uses: actions/create-github-app-token@v1
@@ -143,6 +160,7 @@ jobs:
         uses: actions/checkout@v5
         with:
           token: ${{ inputs.auth == 'app' && steps.app-token.outputs.token || github.token }}
+          ssh-key: ${{ inputs.auth == 'deploy-key' && secrets.DEPLOY_KEY || '' }}
           fetch-depth: 0
 
       - if: github.event_name == 'merge_group'

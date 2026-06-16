@@ -107,10 +107,28 @@ jobs:
       APP_PRIVATE_KEY: ${{ secrets.CONNECT_DEPLOY_APP_PRIVATE_KEY }}
 ```
 
-For a repo that can't provision a bypass-able App identity (e.g. an EMU
-org where App creation is gated), use `auth: token` — push `connect-*`
-with the workflow's own `GITHUB_TOKEN`, no App, no environment, no
-secrets, paired with an **unprotected** `connect-*`:
+For a repo whose org permits deploy keys but not Apps, use
+`auth: deploy-key` — push `connect-*` over SSH with a repo deploy key on
+the `connect-*` bypass. Same locked-branch guarantee as the App, with the
+least setup:
+
+```yaml
+jobs:
+  connect-deploy:
+    uses: BristolMyersSquibb/blockr.ci/.github/workflows/connect-deploy.yaml@main
+    permissions:
+      contents: read
+    with:
+      auth: deploy-key
+      r-version: "4.4.2"
+    secrets:
+      DEPLOY_KEY: ${{ secrets.CONNECT_DEPLOY_SSH_KEY }}
+```
+
+For a repo that can provision neither an App nor a deploy key (e.g. a
+locked-down EMU org where both are gated), use `auth: token` — push
+`connect-*` with the workflow's own `GITHUB_TOKEN`, no App, no
+environment, no secrets, paired with an **unprotected** `connect-*`:
 
 ```yaml
 jobs:
@@ -210,12 +228,13 @@ No inputs.
 | `repos` | string | `''` | Empty ⇒ PPM binaries for the runner OS via `use-public-rspm`. Set to a dated PPM snapshot to freeze versions, or an internal mirror. Where packages install from is where Connect restores from. |
 | `content-dir` | string | `.` | Directory holding the app and receiving the manifest. |
 | `connect-branch-prefix` | string | `connect-` | Target branch is `<prefix><base>`. |
-| `auth` | string | `app` | Push identity for `connect-*`. `app`: GitHub App token + protected `environment` (pair with a locked `connect-*` ruleset). `token`: the workflow's own `GITHUB_TOKEN`, no App/environment/secrets (pair with an unprotected `connect-*`). See [Auth modes](#auth-modes). |
-| `environment` | string | `connect` | Consumer-side protected environment holding the App credentials (`auth: app` only). |
+| `auth` | string | `app` | Push identity for `connect-*`. `app`: GitHub App token + protected `environment` (locked `connect-*` via App-on-bypass). `deploy-key`: SSH deploy key + protected `environment` (locked `connect-*` via key-on-bypass, least setup). `token`: the workflow's own `GITHUB_TOKEN`, no App/key/environment/secrets (unprotected `connect-*`). See [Auth modes](#auth-modes). |
+| `environment` | string | `connect` | Consumer-side protected environment holding the App or deploy-key credentials (`auth: app` and `deploy-key`). |
 
-Secrets `APP_ID` and `APP_PRIVATE_KEY` identify the deploy GitHub App;
-both are required in `app` mode and unused in `token` mode. The caller's
-`permissions:` differ by mode (`contents: read` for `app`, `contents:
+Secrets: `APP_ID` / `APP_PRIVATE_KEY` (the deploy GitHub App) are
+required in `app` mode; `DEPLOY_KEY` (the SSH private key) is required in
+`deploy-key` mode; `token` mode needs none. The caller's `permissions:`
+differ by mode (`contents: read` for `app` and `deploy-key`, `contents:
 write` for `token`) — see [Auth modes](#auth-modes).
 
 ### Example with inputs
@@ -316,6 +335,15 @@ its ambient `GITHUB_TOKEN` stays read-only — the App token does the
 write. Pair with the locked `connect-*` ruleset, App, and environment
 described below.
 
+**`deploy-key`.** Push `connect-*` over SSH with a repo deploy key. Like
+`app`, the key does the write, so the caller declares `permissions:
+contents: read`. It gives the same locked-`connect-*` guarantee as the
+App — a deploy key is a first-class ruleset bypass actor — with the least
+setup (no App to register or install), at the cost of a long-lived key
+(manual rotation, no auto-expiry), one per repo, granting repo-wide write
+(still constrained by branch rules, so it cannot touch a protected
+`main`). Pair with a `connect-*` ruleset that bypasses the deploy key.
+
 **`token`.** Push `connect-*` with the workflow's own `GITHUB_TOKEN` — no
 App, no environment, no secrets — and declare `permissions: contents:
 write`. For a repo that can't provision a bypass-able identity (an EMU
@@ -335,9 +363,10 @@ push; an `app`-mode caller narrows that back to read by declaring
 A caller that omits `permissions:` gets its repo/workflow default, which
 may not grant write — set it explicitly.
 
-The `connect-*` ruleset, GitHub App, and environment sections below apply
-to **`app` mode**; in `token` mode you skip all three and leave
-`connect-*` unprotected.
+The `connect-*` ruleset and environment sections below apply to both
+locked modes (**`app`** and **`deploy-key`**); the GitHub App and deploy
+key sections are the per-mode identity setup. In `token` mode you skip
+all of them and leave `connect-*` unprotected.
 
 ### The `connect-*` ruleset
 
@@ -346,12 +375,13 @@ A single repository ruleset targeting `connect-*`:
 - Enable **Restrict creations**, **Restrict updates**, **Restrict
   deletions** — each means "only bypass actors may create / update /
   delete the matching ref".
-- Bypass list: the deploy GitHub App only, mode **Always allow** (it
-  pushes directly; it does not open PRs).
+- Bypass list: the deploy identity only — the App in `app` mode or the
+  deploy key in `deploy-key` mode — mode **Always allow** (it pushes
+  directly; it does not open PRs).
 
-Nobody but the App can create, update (including force-push), or delete
-any `connect-*` branch. One ruleset covers every derived branch; adding a
-source branch later needs no ruleset change.
+Nobody but that identity can create, update (including force-push), or
+delete any `connect-*` branch. One ruleset covers every derived branch;
+adding a source branch later needs no ruleset change.
 
 ### Deploy identity — a dedicated GitHub App
 
@@ -364,23 +394,35 @@ workflow mints a short-lived installation token via
 contents: read` so its ambient `GITHUB_TOKEN` stays read-only. Put the
 App on the `connect-*` ruleset bypass.
 
+### Deploy identity — a deploy key
+
+In `deploy-key` mode, generate an `ed25519` keypair, add the **public**
+half to the deployment repo as a deploy key with write access, store the
+**private** half as the `DEPLOY_KEY` environment secret, and add the
+deploy key to the `connect-*` ruleset bypass. `actions/checkout`'s
+`ssh-key` input writes the key, points the remote at SSH, and seeds
+`known_hosts`, so the push authenticates over SSH and the publish step
+stays auth-agnostic. The trade-off vs the App: the key is long-lived
+(rotate it manually) and repo-scoped, not a short-lived per-run token.
+
 ### Environment scoping — the second layer
 
-Store the App ID and private key as **environment** secrets on a
+Store the deploy credential — the App ID and private key in `app` mode,
+or `DEPLOY_KEY` in `deploy-key` mode — as **environment** secrets on a
 protected environment (`connect`), not as repo secrets. Set its
 deployment-branch policy to allow the queue refs the publisher runs on:
 `gh-readonly-queue/main/*` (and `gh-readonly-queue/test/*`, one per
 source branch). Environment secrets are released only to jobs that
 reference the environment and pass its rules, so only the `merge_group`
-publisher can mint the App token.
+publisher can use the credential.
 
 This is the accepted credential-scoping tradeoff: because the queue ref
 is `gh-readonly-queue/<base>/*`, the environment must allow that ref
 pattern rather than just the source branch. A PR only reaches the queue
 after approval and PR checks — the same human gate as merging.
 
-Net: the App is the only identity that can write `connect-*` (ruleset),
-and the only thing that can act as the App is the queue publisher
+Net: the deploy identity is the only one that can write `connect-*`
+(ruleset), and the only thing that can act as it is the queue publisher
 (environment). Both layers are load-bearing.
 
 ### Source-branch protection + merge queue
@@ -433,7 +475,8 @@ seeding by one manual queue run before Connect is wired up.
 ### Footguns
 
 - **The environment must allow `gh-readonly-queue/<base>/*`**, not just
-  the source branch, or the publisher cannot mint the token.
+  the source branch, or the publisher cannot reach the credential it
+  needs (the App key or the deploy key) in `app` / `deploy-key` mode.
 - **No `pull_request_target`** in the deployment repo: it runs on the
   base ref with a PR's context and can satisfy a branch-scoped
   environment, leaking its secrets. The caller pattern here uses plain
