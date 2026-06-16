@@ -14,7 +14,7 @@
 #
 #   jobs:
 #     pkgdown:
-#       uses: cynkra/blockr.ci/.github/workflows/pkgdown.yaml@main
+#       uses: BristolMyersSquibb/blockr.ci/.github/workflows/pkgdown.yaml@main
 #       secrets:
 #         BLOCKR_PAT: ${{ secrets.BLOCKR_PAT }}
 #       permissions:
@@ -62,7 +62,7 @@ jobs:
         with:
           use-public-rspm: true
 
-      - uses: cynkra/blockr.ci/.github/actions/parse-deps@main
+      - uses: BristolMyersSquibb/blockr.ci/.github/actions/parse-deps@main
         id: deps
         with:
           pr-body: ''
