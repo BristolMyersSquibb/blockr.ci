@@ -162,32 +162,21 @@ jobs:
         working-directory: ${{ inputs.content-dir }}
         run: Rscript -e 'rsconnect::writeManifest(appDir = ".")'
 
-      # Resolve check-suggests at the SAME commit as this reusable workflow
-      # (github.job_workflow_sha) instead of floating on @main, so the action
-      # tracks the workflow version for every consumer pin — branch, tag, SHA,
-      # or @main. blockr.ci is public, so the default token reads it. The push
-      # step drops this checkout before staging so it never lands on connect-*.
-      - if: github.event_name == 'merge_group'
-        uses: actions/checkout@v5
-        with:
-          repository: cynkra/blockr.ci
-          ref: ${{ github.job_workflow_sha }}
-          path: .blockr-ci
-
       # Fail the deploy if a deploy-optional Suggests is installed but missing
-      # from the manifest, so it can't silently never reach Connect.
+      # from the manifest, so it can't silently never reach Connect. Pinned to
+      # this branch while check-suggests is unmerged — it isn't on main yet, so
+      # @main would not resolve. A follow-up drops it to @main after merge.
       - if: github.event_name == 'merge_group'
-        uses: ./.blockr-ci/.github/actions/check-suggests
+        uses: cynkra/blockr.ci/.github/actions/check-suggests@24-connect-deploy
         with:
           content-dir: ${{ inputs.content-dir }}
 
-      # The push credential is whatever the first checkout persisted — the App
-      # token in app mode, the ambient GITHUB_TOKEN in token mode — so the git
+      # The push credential is whatever the checkout persisted — the App token
+      # in app mode, the ambient GITHUB_TOKEN in token mode — so the git
       # commands below are auth-agnostic.
       - if: github.event_name == 'merge_group'
         id: push
         run: |
-          rm -rf .blockr-ci
           base="${{ github.event.merge_group.base_ref }}"; base="${base#refs/heads/}"
           target="${{ inputs.connect-branch-prefix }}${base}"
           git config user.name  "connect-deploy[bot]"
