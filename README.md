@@ -97,7 +97,7 @@ on:
 
 jobs:
   connect-deploy:
-    uses: cynkra/blockr.ci/.github/workflows/connect-deploy.yaml@main
+    uses: BristolMyersSquibb/blockr.ci/.github/workflows/connect-deploy.yaml@main
     permissions:
       contents: read
     with:
@@ -115,7 +115,7 @@ secrets, paired with an **unprotected** `connect-*`:
 ```yaml
 jobs:
   connect-deploy:
-    uses: cynkra/blockr.ci/.github/workflows/connect-deploy.yaml@main
+    uses: BristolMyersSquibb/blockr.ci/.github/workflows/connect-deploy.yaml@main
     permissions:
       contents: write
     with:
@@ -125,11 +125,9 @@ jobs:
 
 The job is a no-op on `pull_request` (so the required check stays green
 and the PR is queueable) and the real publisher on `merge_group`. In app
-mode, pass secrets by name: `secrets: inherit` does not forward across
-organisations (the deployment repo lives under `BristolMyersSquibb`, a
-different org from `cynkra/blockr.ci`). The `permissions:` differ by mode
-— see [Auth modes](#auth-modes) for why, and for the security pairing
-each mode requires.
+mode, pass secrets by name. The `permissions:` differ by mode — see
+[Auth modes](#auth-modes) for why, and for the security pairing each
+mode requires.
 
 The full consumer-side configuration — GitHub App, branch ruleset,
 protected environment, required checks — is operational repo settings,

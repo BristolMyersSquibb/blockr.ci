@@ -167,7 +167,7 @@ jobs:
       # this branch while check-suggests is unmerged — it isn't on main yet, so
       # @main would not resolve. A follow-up drops it to @main after merge.
       - if: github.event_name == 'merge_group'
-        uses: cynkra/blockr.ci/.github/actions/check-suggests@24-connect-deploy
+        uses: BristolMyersSquibb/blockr.ci/.github/actions/check-suggests@24-connect-deploy
         with:
           content-dir: ${{ inputs.content-dir }}
 
