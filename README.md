@@ -86,7 +86,8 @@ commits it — from inside the merge queue — to a derived `connect-<base>`
 branch (`connect-main`, `connect-test`) that Connect watches. Source
 branches stay clean, with no manifest and no per-PR manifest churn.
 
-Caller workflow in the deployment repo:
+Caller workflow in the deployment repo (default `auth: app` — push
+`connect-*` with a GitHub App, paired with a locked `connect-*` ruleset):
 
 ```yaml
 name: connect-deploy
@@ -97,6 +98,8 @@ on:
 jobs:
   connect-deploy:
     uses: cynkra/blockr.ci/.github/workflows/connect-deploy.yaml@main
+    permissions:
+      contents: read
     with:
       r-version: "4.4.2"
     secrets:
@@ -104,11 +107,29 @@ jobs:
       APP_PRIVATE_KEY: ${{ secrets.CONNECT_DEPLOY_APP_PRIVATE_KEY }}
 ```
 
+For a repo that can't provision a bypass-able App identity (e.g. an EMU
+org where App creation is gated), use `auth: token` — push `connect-*`
+with the workflow's own `GITHUB_TOKEN`, no App, no environment, no
+secrets, paired with an **unprotected** `connect-*`:
+
+```yaml
+jobs:
+  connect-deploy:
+    uses: cynkra/blockr.ci/.github/workflows/connect-deploy.yaml@main
+    permissions:
+      contents: write
+    with:
+      auth: token
+      r-version: "4.4.2"
+```
+
 The job is a no-op on `pull_request` (so the required check stays green
-and the PR is queueable) and the real publisher on `merge_group`. Pass
-secrets by name: `secrets: inherit` does not forward across
+and the PR is queueable) and the real publisher on `merge_group`. In app
+mode, pass secrets by name: `secrets: inherit` does not forward across
 organisations (the deployment repo lives under `BristolMyersSquibb`, a
-different org from `cynkra/blockr.ci`).
+different org from `cynkra/blockr.ci`). The `permissions:` differ by mode
+— see [Auth modes](#auth-modes) for why, and for the security pairing
+each mode requires.
 
 The full consumer-side configuration — GitHub App, branch ruleset,
 protected environment, required checks — is operational repo settings,
@@ -191,10 +212,13 @@ No inputs.
 | `repos` | string | `''` | Empty ⇒ PPM binaries for the runner OS via `use-public-rspm`. Set to a dated PPM snapshot to freeze versions, or an internal mirror. Where packages install from is where Connect restores from. |
 | `content-dir` | string | `.` | Directory holding the app and receiving the manifest. |
 | `connect-branch-prefix` | string | `connect-` | Target branch is `<prefix><base>`. |
-| `environment` | string | `connect` | Consumer-side protected environment holding the App credentials. |
+| `auth` | string | `app` | Push identity for `connect-*`. `app`: GitHub App token + protected `environment` (pair with a locked `connect-*` ruleset). `token`: the workflow's own `GITHUB_TOKEN`, no App/environment/secrets (pair with an unprotected `connect-*`). See [Auth modes](#auth-modes). |
+| `environment` | string | `connect` | Consumer-side protected environment holding the App credentials (`auth: app` only). |
 
-Secrets `APP_ID` and `APP_PRIVATE_KEY` (both required) identify the
-deploy GitHub App.
+Secrets `APP_ID` and `APP_PRIVATE_KEY` identify the deploy GitHub App;
+both are required in `app` mode and unused in `token` mode. The caller's
+`permissions:` differ by mode (`contents: read` for `app`, `contents:
+write` for `token`) — see [Auth modes](#auth-modes).
 
 ### Example with inputs
 
@@ -280,6 +304,43 @@ aggregator `guard` job that asserts the publish actually ran. List
 `connect-deploy / guard` (not `connect-deploy / deploy`) in the required
 checks.
 
+### Auth modes
+
+The `auth` input picks which token pushes `connect-*`. It only chooses
+the *pusher*; it cannot enforce whether `connect-*` is locked — that is a
+repo-side ruleset the workflow can't reach. So each mode must be paired
+with the matching `connect-*` protection, and that pairing is the
+consumer's responsibility.
+
+**`app` (default).** Mint a short-lived token from a dedicated GitHub App
+and push with it. The caller declares `permissions: contents: read` so
+its ambient `GITHUB_TOKEN` stays read-only — the App token does the
+write. Pair with the locked `connect-*` ruleset, App, and environment
+described below.
+
+**`token`.** Push `connect-*` with the workflow's own `GITHUB_TOKEN` — no
+App, no environment, no secrets — and declare `permissions: contents:
+write`. For a repo that can't provision a bypass-able identity (an EMU
+org where App creation is gated, deploy keys are disabled, fine-grained
+PATs are policy-capped), this is the only way to run the pipeline. Pair
+with an **unprotected** `connect-*`: anyone with repo write — or any pull
+request's own workflow — can then push `connect-*` and thereby deploy, so
+integrity rests **entirely** on the *source* branch being protected.
+`connect-*` is a derived artifact, and nothing technically guarantees it
+only ever holds a build of the source.
+
+The `permissions:` are load-bearing. A reusable workflow's effective
+`GITHUB_TOKEN` permissions are the **intersection** of the caller's and
+the workflow's. The workflow declares `contents: write` so token mode can
+push; an `app`-mode caller narrows that back to read by declaring
+`contents: read`, and a `token`-mode caller keeps write by declaring it.
+A caller that omits `permissions:` gets its repo/workflow default, which
+may not grant write — set it explicitly.
+
+The `connect-*` ruleset, GitHub App, and environment sections below apply
+to **`app` mode**; in `token` mode you skip all three and leave
+`connect-*` unprotected.
+
 ### The `connect-*` ruleset
 
 A single repository ruleset targeting `connect-*`:
@@ -296,13 +357,14 @@ source branch later needs no ruleset change.
 
 ### Deploy identity — a dedicated GitHub App
 
-Use a dedicated GitHub App (installed in `BristolMyersSquibb`,
-`contents: write`), **not** the ambient `GITHUB_TOKEN` (available to
-every workflow, so any PR-added workflow could push) and **not** a PAT
-(long-lived, broad, burns a seat). The workflow mints a short-lived
-installation token via `actions/create-github-app-token`; its own
-`GITHUB_TOKEN` stays `contents: read`. Put the App on the `connect-*`
-ruleset bypass.
+In `app` mode, use a dedicated GitHub App (installed in
+`BristolMyersSquibb`, `contents: write`), **not** the ambient
+`GITHUB_TOKEN` (available to every workflow, so any PR-added workflow
+could push) and **not** a PAT (long-lived, broad, burns a seat). The
+workflow mints a short-lived installation token via
+`actions/create-github-app-token`; the caller declares `permissions:
+contents: read` so its ambient `GITHUB_TOKEN` stays read-only. Put the
+App on the `connect-*` ruleset bypass.
 
 ### Environment scoping — the second layer
 

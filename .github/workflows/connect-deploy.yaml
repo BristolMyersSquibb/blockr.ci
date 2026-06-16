@@ -11,8 +11,11 @@
 # publisher on merge_group. Writing from the queue serialises the connect-*
 # writes and makes "PR ejected" equivalent to "the commit failed".
 #
-# See the README "connect-deploy" section for the consumer-side setup: caller
-# workflow, connect-* ruleset, GitHub App, and environment scoping.
+# Two auth modes (the `auth` input): "app" pushes connect-* with a GitHub App
+# token and a protected environment — pair with a locked connect-* ruleset;
+# "token" pushes with the ambient GITHUB_TOKEN, no App and no environment —
+# pair with an unprotected connect-*. See the README "Connect deployment setup"
+# section for the consumer-side setup: caller workflow, ruleset, App, environment.
 
 on:
   workflow_call:
@@ -58,10 +61,22 @@ on:
         default: "connect-"
         required: false
 
+      auth:
+        description: >
+          Push identity for connect-*. "app" (default): mint a token from
+          APP_ID / APP_PRIVATE_KEY and use the protected `environment` — pair
+          with a connect-* ruleset that bypasses the App. "token": push with
+          the workflow's own GITHUB_TOKEN, no App and no environment — pair
+          with an unprotected connect-* (integrity then rests entirely on the
+          source branch's protection).
+        type: string
+        default: "app"
+        required: false
+
       environment:
         description: >
           Consumer-side protected environment holding the App credentials.
-          Referenced only on merge_group.
+          Referenced only on merge_group in app mode.
         type: string
         default: "connect"
         required: false
@@ -69,18 +84,22 @@ on:
     secrets:
 
       APP_ID:
-        description: GitHub App id of the deploy identity.
-        required: true
+        description: GitHub App id of the deploy identity (app mode only).
+        required: false
 
       APP_PRIVATE_KEY:
-        description: GitHub App private key of the deploy identity.
-        required: true
+        description: GitHub App private key of the deploy identity (app mode only).
+        required: false
 
 name: connect-deploy
 
-# The workflow's own token stays read-only; all writes use the App token.
+# Ceiling for the ambient GITHUB_TOKEN. token-mode callers push connect-* with
+# it, so the workflow must allow write. The effective permission is the
+# intersection of this and the caller's, so an app-mode caller declares
+# `permissions: contents: read` to keep its ambient token read-only — the App
+# token does the write.
 permissions:
-  contents: read
+  contents: write
 
 jobs:
 
@@ -88,18 +107,32 @@ jobs:
 
     runs-on: ${{ inputs.runs-on }}
 
-    # Environment only on merge_group: the PR leg is a no-op and must not reach
-    # the gh-readonly-queue-scoped environment that holds the App key. If an
-    # empty environment name is ever rejected, split into two jobs (a
-    # pull_request no-op gate and a merge_group deploy job).
-    environment: ${{ github.event_name == 'merge_group' && inputs.environment || '' }}
+    # Environment only on merge_group app mode: the PR leg is a no-op and token
+    # mode has no environment, so neither must reach the gh-readonly-queue-scoped
+    # environment that holds the App key. If an empty environment name is ever
+    # rejected, split into two jobs (a pull_request no-op gate and a merge_group
+    # deploy job).
+    environment: ${{ github.event_name == 'merge_group' && inputs.auth == 'app' && inputs.environment || '' }}
 
     outputs:
       published: ${{ steps.push.outputs.published }}
 
     steps:
 
-      - if: github.event_name == 'merge_group'
+      # Fail fast with a clear message rather than an opaque token-mint error
+      # when an app-mode caller forgot the secrets.
+      - name: Require App secrets in app mode
+        if: github.event_name == 'merge_group' && inputs.auth == 'app'
+        env:
+          APP_ID: ${{ secrets.APP_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
+        run: |
+          if [ -z "$APP_ID" ] || [ -z "$APP_PRIVATE_KEY" ]; then
+            echo "::error::auth is 'app' but APP_ID / APP_PRIVATE_KEY are not set. Provide them, or set auth: token."
+            exit 1
+          fi
+
+      - if: github.event_name == 'merge_group' && inputs.auth == 'app'
         id: app-token
         uses: actions/create-github-app-token@v1
         with:
@@ -109,7 +142,7 @@ jobs:
       - if: github.event_name == 'merge_group'
         uses: actions/checkout@v5
         with:
-          token: ${{ steps.app-token.outputs.token }}
+          token: ${{ inputs.auth == 'app' && steps.app-token.outputs.token || github.token }}
           fetch-depth: 0
 
       - if: github.event_name == 'merge_group'
@@ -129,18 +162,32 @@ jobs:
         working-directory: ${{ inputs.content-dir }}
         run: Rscript -e 'rsconnect::writeManifest(appDir = ".")'
 
+      # Resolve check-suggests at the SAME commit as this reusable workflow
+      # (github.job_workflow_sha) instead of floating on @main, so the action
+      # tracks the workflow version for every consumer pin — branch, tag, SHA,
+      # or @main. blockr.ci is public, so the default token reads it. The push
+      # step drops this checkout before staging so it never lands on connect-*.
+      - if: github.event_name == 'merge_group'
+        uses: actions/checkout@v5
+        with:
+          repository: cynkra/blockr.ci
+          ref: ${{ github.job_workflow_sha }}
+          path: .blockr-ci
+
       # Fail the deploy if a deploy-optional Suggests is installed but missing
       # from the manifest, so it can't silently never reach Connect.
       - if: github.event_name == 'merge_group'
-        uses: cynkra/blockr.ci/.github/actions/check-suggests@main
+        uses: ./.blockr-ci/.github/actions/check-suggests
         with:
           content-dir: ${{ inputs.content-dir }}
 
+      # The push credential is whatever the first checkout persisted — the App
+      # token in app mode, the ambient GITHUB_TOKEN in token mode — so the git
+      # commands below are auth-agnostic.
       - if: github.event_name == 'merge_group'
         id: push
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
+          rm -rf .blockr-ci
           base="${{ github.event.merge_group.base_ref }}"; base="${base#refs/heads/}"
           target="${{ inputs.connect-branch-prefix }}${base}"
           git config user.name  "connect-deploy[bot]"
