@@ -100,13 +100,13 @@ on:
 
 name: connect-deploy
 
-# Ceiling for the ambient GITHUB_TOKEN. token-mode callers push connect-* with
-# it, so the workflow must allow write. The effective permission is the
-# intersection of this and the caller's, so an app-mode caller declares
-# `permissions: contents: read` to keep its ambient token read-only — the App
-# token does the write.
-permissions:
-  contents: write
+# No workflow-level `permissions:` on purpose. The push credential differs by
+# mode — the ambient GITHUB_TOKEN in token mode (needs write), the App token or
+# SSH key in app / deploy-key mode (ambient needs only read) — and a reusable
+# workflow may not request MORE than its caller grants: a fixed `contents:
+# write` here makes GitHub reject every read-granting caller (app, deploy-key)
+# with a startup_failure before any job runs. So the caller's per-mode
+# `permissions:` is authoritative and the workflow declares none.
 
 jobs:
 

@@ -355,13 +355,18 @@ integrity rests **entirely** on the *source* branch being protected.
 `connect-*` is a derived artifact, and nothing technically guarantees it
 only ever holds a build of the source.
 
-The `permissions:` are load-bearing. A reusable workflow's effective
-`GITHUB_TOKEN` permissions are the **intersection** of the caller's and
-the workflow's. The workflow declares `contents: write` so token mode can
-push; an `app`-mode caller narrows that back to read by declaring
-`contents: read`, and a `token`-mode caller keeps write by declaring it.
-A caller that omits `permissions:` gets its repo/workflow default, which
-may not grant write — set it explicitly.
+The caller's `permissions:` are load-bearing, and they differ by mode
+because the *pusher* differs: `token` mode pushes with the ambient
+`GITHUB_TOKEN`, so its caller grants `contents: write`; `app` and
+`deploy-key` push with the App token / SSH key, so the ambient token only
+needs `contents: read`. The reusable workflow itself declares **no**
+`permissions:` — a reusable workflow may not request *more* than its
+caller grants, so a fixed `contents: write` in the workflow would make
+GitHub reject every `read`-granting caller (`app`, `deploy-key`) with a
+`startup_failure` before any job runs. Declaring none defers to the
+caller, so each mode grants exactly what it needs. Set the caller's
+`permissions:` explicitly per the examples — an omitted block falls back
+to the repo default, which may not match the mode.
 
 The `connect-*` ruleset and environment sections below apply to both
 locked modes (**`app`** and **`deploy-key`**); the GitHub App and deploy
