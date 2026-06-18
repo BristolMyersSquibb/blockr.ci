@@ -223,10 +223,8 @@ No inputs.
 
 | Input | Type | Default | Purpose |
 |---|---|---|---|
-| `r-version` | string | `4.4.2` | R version for `setup-r`; becomes `platform` in the manifest, so it must be an R version Connect offers. |
-| `runs-on` | string | `ubuntu-24.04` | Runner image. Noble so PPM serves native binaries. |
-| `repos` | string | `''` | Empty ⇒ PPM binaries for the runner OS via `use-public-rspm`. Set to a dated PPM snapshot to freeze versions, or an internal mirror. The runner's install repo; pins the manifest's package versions. |
-| `connect-repos` | string | `''` | Repo URL recorded in the manifest — where Connect installs from. Empty records renv's genericised (distro-less, source) PPM URL. Set to your Connect platform's PPM **binary** repo (e.g. `…/__linux__/centos8/2026-06-01`; RHEL 8 = `centos8`) so Connect installs binaries verbatim. See [Binary installs on Connect](#binary-installs-on-connect). |
+| `r-version` | string | `4.4.2` | R version installed from Posit's centos-8 build; becomes `platform` in the manifest, so it must be an R version Connect offers. |
+| `repos` | string | `…/centos8/latest` | centos8 PPM binary repo the deps install from, recorded verbatim in the manifest as the repo Connect restores from. Default is the rolling centos8 snapshot; pass a dated snapshot (`…/__linux__/centos8/2026-06-01`) to freeze versions, or an internal mirror serving RHEL 8 binaries. See [Binary installs on Connect](#binary-installs-on-connect). |
 | `content-dir` | string | `.` | Directory holding the app and receiving the manifest. |
 | `connect-branch-prefix` | string | `connect-` | Target branch is `<prefix><base>`. |
 | `auth` | string | `app` | Push identity for `connect-*`. `app`: GitHub App token + protected `environment` (locked `connect-*` via App-on-bypass). `deploy-key`: SSH deploy key + protected `environment` (locked `connect-*` via key-on-bypass, least setup). `token`: the workflow's own `GITHUB_TOKEN`, no App/key/environment/secrets (unprotected `connect-*`). See [Auth modes](#auth-modes). |
@@ -473,30 +471,35 @@ can't silently never reach Connect. A worked fixture lives at
 ### Binary installs on Connect
 
 `writeManifest()` records, per package, the repository Connect restores
-from. By default renv **genericises** a PPM URL — it strips the
-`__linux__/<distro>` segment, leaving the distro-less *source* URL
-(`…/cran/<snapshot>`) — on the assumption that the restoring host
-re-derives the binary URL for its own platform. A Connect that instead
-installs the recorded repo **verbatim** then compiles the whole closure
-from source: slow, and a hard failure for any package needing a toolchain
-Connect lacks (e.g. a Rust package with no `rustc`).
+from and the platform the package was built for. If that repository is a
+*source* repository — or the recorded build platform doesn't match
+Connect's — Connect compiles the whole closure from source: slow, and a
+hard failure for any package needing a toolchain Connect lacks (e.g. a
+Rust package with no `rustc`).
 
-To make Connect install **binaries**, set `connect-repos` to your Connect
-platform's PPM binary repo, so the manifest carries that exact URL and
-Connect uses it as-is:
+So the deploy job builds the manifest on the **target platform**. It runs
+in a fixed `rockylinux:8` container — Rocky 8 is ABI-compatible with RHEL
+8, and PPM serves both under the `centos8` slug — installs R from Posit's
+centos-8 build, and installs deps from the centos8 PPM. Every package then
+records a centos8 binary: `RemotePkgPlatform`
+`x86_64-pc-linux-gnu-rocky-8.9`, `RemoteRepos` and `Repository` the
+`centos8` URL, `Built` the centos8 R. A RHEL 8.6 Connect restores those
+binaries directly, no compiler needed.
 
-```yaml
-    with:
-      connect-repos: https://packagemanager.posit.co/cran/__linux__/centos8/2026-06-01
-```
+Two details keep the recorded URL a *binary* URL:
 
-- **RHEL 8.x → `centos8`** — PPM serves RHEL 8 binaries under the
-  `centos8` slug; there is no `rhel8`. RHEL 9 → `rhel9`.
-- **Match the snapshot** to `repos`, so the versions the runner pinned
-  have binaries at that snapshot, and pick an `r-version` PPM publishes
-  binaries for on that platform and Connect has installed.
-- Leaving `connect-repos` empty keeps the portable (source) URL — correct
-  only if your Connect re-derives binaries itself.
+- The deploy installs from, and records, the `repos` input — the centos8
+  PPM (`…/__linux__/centos8/<snapshot>`). RHEL 8.x → `centos8` (there is
+  no `rhel8`); RHEL 9 → `rhel9`.
+- `writeManifest` runs with renv's PPM rewrite off
+  (`RENV_CONFIG_PPM_ENABLED=FALSE`), so renv keeps the literal
+  `__linux__/centos8` URL instead of genericising it to a distro-less
+  source URL.
+
+The platform is fixed, not a knob — the container image and the disabled
+genericisation are correctness properties of a RHEL deploy. To pin
+versions, set `repos` to a dated centos8 snapshot, and pick an `r-version`
+that PPM publishes centos8 binaries for and that Connect has installed.
 
 ### Bootstrap (one-time, manual)
 
