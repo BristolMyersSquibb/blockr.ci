@@ -1,17 +1,19 @@
 # Smoke test for the connect-deploy pipeline, run in a RHEL 8 (Rocky 8)
 # container so the deps installed — and the platform stamped into the manifest
-# (RemotePkgPlatform / Built) — are the centos8 binaries Connect restores on
-# RHEL 8.6, not the runner's ubuntu builds. That is the whole point: a manifest
-# built on ubuntu records ubuntu binaries, which a RHEL Connect can't use, so it
-# recompiles from source. setup-r / setup-r-dependencies are apt-only, so they
-# are replaced here by an explicit R install + pak (which resolves RHEL sysreqs
-# via dnf). Still guards the LinkingTo closure (websocket -> AsioHeaders).
+# (RemotePkgPlatform / RemoteRepos / Built) — are the centos8 binaries Connect
+# restores on RHEL 8.6, not the runner's ubuntu builds. That is the whole point:
+# a manifest built on ubuntu records ubuntu binaries, which a RHEL Connect can't
+# use, so it recompiles from source. Mirrors the deploy job: the same
+# setup-r-rhel action, the same writeManifest invocation, the same check-suggests
+# — minus the git push. Asserts the manifest records centos8, not ubuntu, and
+# still carries the LinkingTo closure (websocket -> AsioHeaders).
 
 on:
   pull_request:
     paths:
       - '.github/workflows/connect-deploy.yaml'
       - '.github/workflows/connect-smoke.yaml'
+      - '.github/actions/setup-r-rhel/**'
       - '.github/actions/check-suggests/**'
       - '.github/actions/tests/fixtures/connect-app/**'
   push:
@@ -19,6 +21,7 @@ on:
     paths:
       - '.github/workflows/connect-deploy.yaml'
       - '.github/workflows/connect-smoke.yaml'
+      - '.github/actions/setup-r-rhel/**'
       - '.github/actions/check-suggests/**'
       - '.github/actions/tests/fixtures/connect-app/**'
 
@@ -36,47 +39,33 @@ jobs:
       image: rockylinux:8
 
     env:
-      R_VERSION: "4.4.2"
       PPM: https://packagemanager.posit.co/cran/__linux__/centos8/latest
 
     steps:
 
-      # The base image carries neither git (actions/checkout needs it) nor R.
-      # EPEL + CRB (powertools on Rocky) carry the -devel sysreqs pak resolves
-      # via dnf, and some of the R rpm's own dependencies.
-      - name: Enable EPEL + CRB and install base tooling
-        run: |
-          dnf install -y dnf-plugins-core epel-release git
-          dnf config-manager --set-enabled powertools
+      # The base image carries no git, which actions/checkout needs.
+      - name: Install git
+        run: dnf install -y git
 
       - uses: actions/checkout@v5
 
-      - name: Install R (Posit centos-8 build)
-        run: |
-          set -euo pipefail
-          curl -fsSL -o /tmp/R.rpm "https://cdn.posit.co/r/centos-8/pkgs/R-${R_VERSION}-1-1.x86_64.rpm"
-          dnf install -y /tmp/R.rpm
-          ln -sf "/opt/R/${R_VERSION}/bin/R" /usr/local/bin/R
-          ln -sf "/opt/R/${R_VERSION}/bin/Rscript" /usr/local/bin/Rscript
-          Rscript -e 'cat(R.version.string, "on", R.version$platform, "\n")'
+      - uses: ./.github/actions/setup-r-rhel
+        with:
+          repos: ${{ env.PPM }}
+          working-directory: .github/actions/tests/fixtures/connect-app
+          extra-packages: any::rsconnect
 
-      - name: Install pak + fixture deps from the centos8 binary repo
-        working-directory: .github/actions/tests/fixtures/connect-app
-        shell: Rscript {0}
-        env:
-          PKG_INCLUDE_LINKINGTO: "true"
-        run: |
-          options(repos = c(CRAN = Sys.getenv("PPM")))
-          install.packages("pak", repos = sprintf(
-            "https://r-lib.github.io/p/pak/stable/%s/%s/%s",
-            .Platform$pkgType, R.Version()$os, R.Version()$arch
-          ))
-          pak::pkg_install(c("deps::.", "any::rsconnect"))
-
+      # Record the literal centos8 URL: with renv's PPM rewrite off, both the
+      # package-level Repository and description$RemoteRepos keep the full binary
+      # URL instead of a distro-less source URL, so a verbatim-restoring Connect
+      # installs binaries. Same invocation as the deploy job.
       - name: Generate manifest
         working-directory: .github/actions/tests/fixtures/connect-app
         shell: Rscript {0}
-        run: rsconnect::writeManifest(appDir = ".")
+        run: |
+          options(repos = c(CRAN = Sys.getenv("PPM")))
+          Sys.setenv(RENV_CONFIG_PPM_ENABLED = "FALSE")
+          rsconnect::writeManifest(appDir = ".")
 
       - name: Check suggests
         uses: ./.github/actions/check-suggests
@@ -91,16 +80,28 @@ jobs:
           pkgs <- names(m$packages)
           cat("manifest packages:", paste(sort(pkgs), collapse = ", "), "\n")
 
-          d <- m$packages$glue$description
-          cat("glue RemotePkgPlatform:", d$RemotePkgPlatform %||% "<none>", "\n")
-          cat("glue RemoteRepos:", d$RemoteRepos %||% "<none>", "\n")
-          cat("glue Built:", d$Built %||% "<none>", "\n")
+          g <- m$packages$glue
+          repo <- g$Repository
+          rrepo <- g$description$RemoteRepos
+          plat <- g$description$RemotePkgPlatform
+          cat("glue Repository:", repo %||% "<none>", "\n")
+          cat("glue RemoteRepos:", rrepo %||% "<none>", "\n")
+          cat("glue RemotePkgPlatform:", plat %||% "<none>", "\n")
+          cat("glue Built:", g$description$Built %||% "<none>", "\n")
 
-          # The whole point: a CRAN dep must NOT record an ubuntu build, else a
-          # RHEL Connect can't use the binary and recompiles from source.
-          plat <- d$RemotePkgPlatform
+          # The whole point: a centos8 build, not ubuntu, so a RHEL Connect
+          # restores binaries rather than recompiling from source.
           if (!is.null(plat) && grepl("ubuntu", plat)) {
             stop("manifest records an ubuntu build platform: ", plat)
+          }
+          if (is.null(rrepo) || !grepl("centos8", rrepo)) {
+            stop("RemoteRepos is not a centos8 repo: ", rrepo %||% "<none>")
+          }
+          # Belt-and-suspenders: the package-level Repository must also keep the
+          # full centos8 URL, not a genericised distro-less source URL.
+          if (is.null(repo) || !grepl("centos8", repo)) {
+            stop("package-level Repository was genericised, not centos8: ",
+                 repo %||% "<none>")
           }
 
           # AsioHeaders = the LinkingTo regression marker (pruned by binary

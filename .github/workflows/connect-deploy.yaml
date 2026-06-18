@@ -24,43 +24,21 @@ on:
 
       r-version:
         description: >
-          R version passed to setup-r; becomes `platform` in the manifest, so
-          it must be an R version Connect offers.
+          R version installed from Posit's centos-8 build; becomes `platform`
+          in the manifest, so it must be an R version Connect offers.
         type: string
         default: "4.4.2"
         required: false
 
-      runs-on:
-        description: >
-          Runner image. Noble so PPM serves native binaries.
-        type: string
-        default: "ubuntu-24.04"
-        required: false
-
       repos:
         description: >
-          Empty (default) lets setup-r's use-public-rspm derive the PPM binary
-          URL from the runner OS. Set to a dated PPM snapshot
-          (.../__linux__/noble/2026-06-01) to freeze versions, or an internal
-          mirror. This is the runner's install repo; it pins the manifest's
-          package versions. `connect-repos` controls the repo Connect restores
-          from.
+          centos8 PPM binary repo the deps install from, recorded verbatim in
+          the manifest as the repo Connect restores from. Default is the rolling
+          centos8 snapshot; pass a dated snapshot
+          (.../__linux__/centos8/2026-06-01) to freeze versions, or an internal
+          mirror that serves RHEL 8 binaries.
         type: string
-        default: ""
-        required: false
-
-      connect-repos:
-        description: >
-          Repo URL recorded in the manifest — where Connect installs from.
-          Empty (default) records the genericised PPM URL renv produces, which
-          is distro-less (a source URL); a Connect that installs it verbatim
-          then compiles everything from source. Set it to your Connect
-          platform's PPM binary repo, e.g.
-          https://packagemanager.posit.co/cran/__linux__/centos8/2026-06-01
-          (RHEL 8 = centos8), so the manifest carries that exact binary URL and
-          Connect installs binaries verbatim. Match its snapshot to `repos`.
-        type: string
-        default: ""
+        default: https://packagemanager.posit.co/cran/__linux__/centos8/latest
         required: false
 
       content-dir:
@@ -128,7 +106,14 @@ jobs:
 
   deploy:
 
-    runs-on: ${{ inputs.runs-on }}
+    runs-on: ubuntu-latest
+
+    # Fixed RHEL 8 image: the manifest must record centos8 binaries for a RHEL
+    # 8.6 Connect, which means building on RHEL 8. Rocky 8 is ABI-compatible and
+    # PPM serves it under the same centos8 token. Deliberately not a config
+    # input — the platform is a correctness property of the deploy, not a knob.
+    container:
+      image: rockylinux:8
 
     # Environment on merge_group for the credentialed modes (app, deploy-key):
     # the PR leg is a no-op and token mode has no environment, so none must
@@ -172,6 +157,11 @@ jobs:
           app-id: ${{ secrets.APP_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
 
+      # The base image carries no git, which actions/checkout needs.
+      - name: Install git
+        if: github.event_name == 'merge_group'
+        run: dnf install -y git
+
       - if: github.event_name == 'merge_group'
         uses: actions/checkout@v5
         with:
@@ -179,22 +169,15 @@ jobs:
           ssh-key: ${{ inputs.auth == 'deploy-key' && secrets.DEPLOY_KEY || '' }}
           fetch-depth: 0
 
+      # setup-r / setup-r-dependencies are apt-only; this is their RHEL analogue
+      # (centos-8 R + pak, resolving sysreqs via dnf, keeping LinkingTo deps).
+      # Pinned to this branch while unmerged — @main would not resolve. The #26
+      # follow-up drops it to @main after merge, alongside check-suggests.
       - if: github.event_name == 'merge_group'
-        uses: r-lib/actions/setup-r@v2
+        uses: BristolMyersSquibb/blockr.ci/.github/actions/setup-r-rhel@24-connect-deploy
         with:
           r-version: ${{ inputs.r-version }}
-          use-public-rspm: ${{ inputs.repos == '' }}
-          cran: ${{ inputs.repos }}
-
-      # PKG_INCLUDE_LINKINGTO keeps LinkingTo deps (e.g. AsioHeaders, pulled via
-      # websocket) for binary installs too — pak prunes them by default, but
-      # renv's writeManifest snapshot requires the full graph and aborts without
-      # them (r-lib/pak#485).
-      - if: github.event_name == 'merge_group'
-        uses: r-lib/actions/setup-r-dependencies@v2
-        env:
-          PKG_INCLUDE_LINKINGTO: true
-        with:
+          repos: ${{ inputs.repos }}
           working-directory: ${{ inputs.content-dir }}
           extra-packages: any::rsconnect
 
@@ -202,27 +185,19 @@ jobs:
       # GitHub-installed deps (via Remotes). Unauthenticated they hit the
       # 60-request/hour-per-IP limit and 403; a token lifts that to 5000/hour.
       #
-      # connect-repos, when set, becomes the repo recorded in the manifest. renv
-      # normally rewrites a PPM URL to its distro-less (source) form, assuming
-      # the restorer re-derives binaries; a Connect that installs the recorded
-      # repo verbatim then builds from source. Disabling that rewrite and
-      # overriding the repo keeps the literal binary URL, so Connect installs
-      # binaries for that platform.
+      # RENV_CONFIG_PPM_ENABLED=FALSE stops renv rewriting the centos8 PPM URL to
+      # its distro-less (source) form: the manifest then records the literal
+      # binary URL, so a verbatim-restoring Connect installs binaries instead of
+      # compiling from source.
       - if: github.event_name == 'merge_group'
         working-directory: ${{ inputs.content-dir }}
         shell: Rscript {0}
         env:
           GITHUB_PAT: ${{ github.token }}
-          CONNECT_REPOS: ${{ inputs.connect-repos }}
+          PPM: ${{ inputs.repos }}
         run: |
-          connect_repos <- Sys.getenv("CONNECT_REPOS")
-          if (nzchar(connect_repos)) {
-            Sys.setenv(
-              RENV_CONFIG_PPM_ENABLED = "FALSE",
-              RENV_CONFIG_REPOS_OVERRIDE = connect_repos
-            )
-            options(repos = c(CRAN = connect_repos))
-          }
+          options(repos = c(CRAN = Sys.getenv("PPM")))
+          Sys.setenv(RENV_CONFIG_PPM_ENABLED = "FALSE")
           rsconnect::writeManifest(appDir = ".")
 
       # Fail the deploy if a deploy-optional Suggests is installed but missing
