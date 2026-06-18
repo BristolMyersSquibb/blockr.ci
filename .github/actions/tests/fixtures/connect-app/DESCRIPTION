@@ -5,7 +5,8 @@ Description: Minimal deploy app exercising the connect-deploy pipeline: the
     connect-smoke workflow installs these declared dependencies, runs
     writeManifest(), and asserts the manifest. Not a real application.
 Imports:
-    shiny
+    shiny,
+    websocket
 Suggests:
     glue,
     jsonlite,

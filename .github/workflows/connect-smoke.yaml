@@ -1,9 +1,11 @@
 # Smoke test for the connect-deploy pipeline. Mirrors the deploy job's
 # install + manifest steps against the fixture app (minus the git push), then
 # runs the working-tree check-suggests and asserts the manifest. Proves the
-# workflow installs declared deps and produces a manifest, and exercises both
+# workflow installs declared deps and produces a manifest, exercises both
 # manifest-inclusion paths the fixture demonstrates (a Suggests dep named in
-# app code, and one named only in the scan-only dependencies.R helper).
+# app code, and one named only in the scan-only dependencies.R helper), and
+# guards the LinkingTo closure (websocket -> AsioHeaders) that pak prunes from
+# binary installs unless PKG_INCLUDE_LINKINGTO keeps it.
 
 on:
   pull_request:
@@ -43,6 +45,8 @@ jobs:
           use-public-rspm: true
 
       - uses: r-lib/actions/setup-r-dependencies@v2
+        env:
+          PKG_INCLUDE_LINKINGTO: true
         with:
           working-directory: .github/actions/tests/fixtures/connect-app
           extra-packages: any::rsconnect
@@ -66,7 +70,13 @@ jobs:
           pkgs <- names(m$packages)
           cat("manifest packages:", paste(sort(pkgs), collapse = ", "), "\n")
 
-          missing <- setdiff(c("shiny", "jsonlite", "glue"), pkgs)
+          # AsioHeaders is the LinkingTo regression marker: websocket's
+          # LinkingTo dep, pruned by binary installs, present only because
+          # PKG_INCLUDE_LINKINGTO kept it. Without that, writeManifest's renv
+          # snapshot aborts before this step ever runs.
+          missing <- setdiff(
+            c("shiny", "jsonlite", "glue", "websocket", "AsioHeaders"), pkgs
+          )
           if (length(missing)) {
             stop("manifest missing expected packages: ",
                  paste(missing, collapse = ", "))

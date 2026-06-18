@@ -1,5 +1,10 @@
 library(shiny)
 
+# websocket pulls AsioHeaders via LinkingTo, which a binary install prunes. It
+# makes this fixture exercise the PKG_INCLUDE_LINKINGTO path that keeps
+# writeManifest's renv snapshot from aborting on the missing header package.
+library(websocket)
+
 ui <- fluidPage(
   titlePanel("connect-deploy smoke fixture"),
   verbatimTextOutput("info")

@@ -170,8 +170,14 @@ jobs:
           use-public-rspm: ${{ inputs.repos == '' }}
           cran: ${{ inputs.repos }}
 
+      # PKG_INCLUDE_LINKINGTO keeps LinkingTo deps (e.g. AsioHeaders, pulled via
+      # websocket) for binary installs too — pak prunes them by default, but
+      # renv's writeManifest snapshot requires the full graph and aborts without
+      # them (r-lib/pak#485).
       - if: github.event_name == 'merge_group'
         uses: r-lib/actions/setup-r-dependencies@v2
+        env:
+          PKG_INCLUDE_LINKINGTO: true
         with:
           working-directory: ${{ inputs.content-dir }}
           extra-packages: any::rsconnect
