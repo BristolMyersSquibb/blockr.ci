@@ -212,11 +212,15 @@ jobs:
         with:
           content-dir: ${{ inputs.content-dir }}
 
-      # The push credential is whatever the checkout persisted — the App token
-      # in app mode, the ambient GITHUB_TOKEN in token mode — so the git
-      # commands below are auth-agnostic.
+      # working-directory anchors git in the checkout: inside a container the
+      # default step CWD is the image's WORKDIR (/), not GITHUB_WORKSPACE, so a
+      # bare git would run outside the repo ("fatal: not in a git directory").
+      # The push credential is whatever the checkout persisted — the App token in
+      # app mode, the ambient GITHUB_TOKEN in token mode — so the git commands
+      # below are auth-agnostic.
       - if: github.event_name == 'merge_group'
         id: push
+        working-directory: ${{ inputs.content-dir }}
         run: |
           base="${{ github.event.merge_group.base_ref }}"; base="${base#refs/heads/}"
           target="${{ inputs.connect-branch-prefix }}${base}"
