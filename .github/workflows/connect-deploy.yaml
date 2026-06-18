@@ -182,8 +182,13 @@ jobs:
           working-directory: ${{ inputs.content-dir }}
           extra-packages: any::rsconnect
 
+      # GITHUB_PAT authenticates renv's GitHub-API origin lookups for any
+      # GitHub-installed deps (via Remotes). Unauthenticated they hit the
+      # 60-request/hour-per-IP limit and 403; a token lifts that to 5000/hour.
       - if: github.event_name == 'merge_group'
         working-directory: ${{ inputs.content-dir }}
+        env:
+          GITHUB_PAT: ${{ github.token }}
         run: Rscript -e 'rsconnect::writeManifest(appDir = ".")'
 
       # Fail the deploy if a deploy-optional Suggests is installed but missing
