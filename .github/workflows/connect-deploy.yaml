@@ -42,7 +42,23 @@ on:
           Empty (default) lets setup-r's use-public-rspm derive the PPM binary
           URL from the runner OS. Set to a dated PPM snapshot
           (.../__linux__/noble/2026-06-01) to freeze versions, or an internal
-          mirror. Whatever packages install from is what Connect restores from.
+          mirror. This is the runner's install repo; it pins the manifest's
+          package versions. `connect-repos` controls the repo Connect restores
+          from.
+        type: string
+        default: ""
+        required: false
+
+      connect-repos:
+        description: >
+          Repo URL recorded in the manifest — where Connect installs from.
+          Empty (default) records the genericised PPM URL renv produces, which
+          is distro-less (a source URL); a Connect that installs it verbatim
+          then compiles everything from source. Set it to your Connect
+          platform's PPM binary repo, e.g.
+          https://packagemanager.posit.co/cran/__linux__/centos8/2026-06-01
+          (RHEL 8 = centos8), so the manifest carries that exact binary URL and
+          Connect installs binaries verbatim. Match its snapshot to `repos`.
         type: string
         default: ""
         required: false
@@ -185,11 +201,29 @@ jobs:
       # GITHUB_PAT authenticates renv's GitHub-API origin lookups for any
       # GitHub-installed deps (via Remotes). Unauthenticated they hit the
       # 60-request/hour-per-IP limit and 403; a token lifts that to 5000/hour.
+      #
+      # connect-repos, when set, becomes the repo recorded in the manifest. renv
+      # normally rewrites a PPM URL to its distro-less (source) form, assuming
+      # the restorer re-derives binaries; a Connect that installs the recorded
+      # repo verbatim then builds from source. Disabling that rewrite and
+      # overriding the repo keeps the literal binary URL, so Connect installs
+      # binaries for that platform.
       - if: github.event_name == 'merge_group'
         working-directory: ${{ inputs.content-dir }}
+        shell: Rscript {0}
         env:
           GITHUB_PAT: ${{ github.token }}
-        run: Rscript -e 'rsconnect::writeManifest(appDir = ".")'
+          CONNECT_REPOS: ${{ inputs.connect-repos }}
+        run: |
+          connect_repos <- Sys.getenv("CONNECT_REPOS")
+          if (nzchar(connect_repos)) {
+            Sys.setenv(
+              RENV_CONFIG_PPM_ENABLED = "FALSE",
+              RENV_CONFIG_REPOS_OVERRIDE = connect_repos
+            )
+            options(repos = c(CRAN = connect_repos))
+          }
+          rsconnect::writeManifest(appDir = ".")
 
       # Fail the deploy if a deploy-optional Suggests is installed but missing
       # from the manifest, so it can't silently never reach Connect. Pinned to

@@ -81,3 +81,29 @@ jobs:
             stop("manifest missing expected packages: ",
                  paste(missing, collapse = ", "))
           }
+
+      # Guards the connect-repos lever: with renv's PPM rewrite off and the repo
+      # overridden, the manifest must record that exact binary URL verbatim —
+      # what makes a verbatim-restoring Connect install binaries. Runs over
+      # setup-r's noble RENV_CONFIG_REPOS_OVERRIDE, proving the override takes.
+      - name: Assert connect-repos pins the literal binary repo
+        working-directory: .github/actions/tests/fixtures/connect-app
+        shell: Rscript {0}
+        env:
+          CONNECT_REPOS: https://packagemanager.posit.co/cran/__linux__/centos8/latest
+        run: |
+          connect_repos <- Sys.getenv("CONNECT_REPOS")
+          Sys.setenv(
+            RENV_CONFIG_PPM_ENABLED = "FALSE",
+            RENV_CONFIG_REPOS_OVERRIDE = connect_repos
+          )
+          options(repos = c(CRAN = connect_repos))
+          rsconnect::writeManifest(appDir = ".")
+
+          m <- jsonlite::fromJSON("manifest.json", simplifyVector = FALSE)
+          repos <- unique(unlist(lapply(m$packages, `[[`, "Repository")))
+          if (!connect_repos %in% repos) {
+            stop("manifest did not record the connect-repos URL; repos seen: ",
+                 paste(repos, collapse = ", "))
+          }
+          cat("connect-repos OK: manifest records", connect_repos, "\n")
