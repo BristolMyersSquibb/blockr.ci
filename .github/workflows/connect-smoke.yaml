@@ -39,6 +39,9 @@ jobs:
       image: rockylinux:8
 
     env:
+      # Mirrors the deploy job: pak/renv read GITHUB_PAT for GitHub Remotes deps
+      # (the all-CRAN fixture has none, so this is for parity, not coverage).
+      GITHUB_PAT: ${{ github.token }}
       PPM: https://packagemanager.posit.co/cran/__linux__/centos8/latest
 
     steps:

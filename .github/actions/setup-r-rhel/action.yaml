@@ -41,15 +41,19 @@ runs:
   steps:
 
     # EPEL + CRB (powertools on Rocky) carry the -devel sysreqs pak resolves via
-    # dnf, and some of the R rpm's own dependencies. R installs to /opt/R/<ver>;
-    # symlink it onto PATH so the Rscript {0} step below resolves. Steer the
-    # library and pak's caches to fixed paths the cache step can key on.
-    - name: Install R (Posit centos-8 build)
+    # dnf, and some of the R rpm's own dependencies. gcc/g++/gfortran/make are
+    # the compiler toolchain any source or GitHub package build needs;
+    # setup-r-dependencies assumes the runner image supplies it, but a bare
+    # rockylinux:8 does not. R installs to /opt/R/<ver>; symlink it onto PATH so
+    # the Rscript {0} step below resolves. Steer the library and pak's caches to
+    # fixed paths the cache step can key on.
+    - name: Install R and the build toolchain (Posit centos-8 build)
       shell: bash
       run: |
         set -euo pipefail
         dnf install -y dnf-plugins-core epel-release
         dnf config-manager --set-enabled powertools
+        dnf install -y gcc gcc-c++ gcc-gfortran make
         rv='${{ inputs.r-version }}'
         curl -fsSL -o /tmp/R.rpm "https://cdn.posit.co/r/centos-8/pkgs/R-${rv}-1-1.x86_64.rpm"
         dnf install -y /tmp/R.rpm
@@ -79,7 +83,9 @@ runs:
     # running R), so it installs without a compiler; skip it when the cache
     # restored it. PKG_INCLUDE_LINKINGTO keeps LinkingTo deps (e.g. AsioHeaders
     # via websocket) that binary installs prune but writeManifest's renv snapshot
-    # requires (r-lib/pak#485).
+    # requires (r-lib/pak#485). pak reads GITHUB_PAT from the environment — set
+    # it at the job level in the caller, as setup-r-dependencies expects — to
+    # authenticate any GitHub Remotes deps (else unauthenticated 60-req/hr 403s).
     - name: Install pak + dependencies from the centos8 binary repo
       shell: Rscript {0}
       working-directory: ${{ inputs.working-directory }}

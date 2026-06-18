@@ -122,6 +122,14 @@ jobs:
     # jobs (a pull_request no-op gate and a merge_group deploy job).
     environment: ${{ github.event_name == 'merge_group' && inputs.auth != 'token' && inputs.environment || '' }}
 
+    # pak (in setup-r-rhel) and renv (in writeManifest) both read GITHUB_PAT to
+    # authenticate GitHub-API lookups for Remotes deps; unauthenticated they hit
+    # the 60-req/hr-per-IP limit and 403. Job-level so both inherit it, the way
+    # the r-lib CI templates set it for setup-r-dependencies. Independent of the
+    # push credential (the checkout-persisted App token / SSH key / ambient).
+    env:
+      GITHUB_PAT: ${{ github.token }}
+
     outputs:
       published: ${{ steps.push.outputs.published }}
 
@@ -181,19 +189,14 @@ jobs:
           working-directory: ${{ inputs.content-dir }}
           extra-packages: any::rsconnect
 
-      # GITHUB_PAT authenticates renv's GitHub-API origin lookups for any
-      # GitHub-installed deps (via Remotes). Unauthenticated they hit the
-      # 60-request/hour-per-IP limit and 403; a token lifts that to 5000/hour.
-      #
       # RENV_CONFIG_PPM_ENABLED=FALSE stops renv rewriting the centos8 PPM URL to
       # its distro-less (source) form: the manifest then records the literal
       # binary URL, so a verbatim-restoring Connect installs binaries instead of
-      # compiling from source.
+      # compiling from source. (GITHUB_PAT for renv's GitHub lookups is job-level.)
       - if: github.event_name == 'merge_group'
         working-directory: ${{ inputs.content-dir }}
         shell: Rscript {0}
         env:
-          GITHUB_PAT: ${{ github.token }}
           PPM: ${{ inputs.repos }}
         run: |
           options(repos = c(CRAN = Sys.getenv("PPM")))
