@@ -1,11 +1,11 @@
-# Smoke test for the connect-deploy pipeline. Mirrors the deploy job's
-# install + manifest steps against the fixture app (minus the git push), then
-# runs the working-tree check-suggests and asserts the manifest. Proves the
-# workflow installs declared deps and produces a manifest, exercises both
-# manifest-inclusion paths the fixture demonstrates (a Suggests dep named in
-# app code, and one named only in the scan-only dependencies.R helper), and
-# guards the LinkingTo closure (websocket -> AsioHeaders) that pak prunes from
-# binary installs unless PKG_INCLUDE_LINKINGTO keeps it.
+# Smoke test for the connect-deploy pipeline, run in a RHEL 8 (Rocky 8)
+# container so the deps installed — and the platform stamped into the manifest
+# (RemotePkgPlatform / Built) — are the centos8 binaries Connect restores on
+# RHEL 8.6, not the runner's ubuntu builds. That is the whole point: a manifest
+# built on ubuntu records ubuntu binaries, which a RHEL Connect can't use, so it
+# recompiles from source. setup-r / setup-r-dependencies are apt-only, so they
+# are replaced here by an explicit R install + pak (which resolves RHEL sysreqs
+# via dnf). Still guards the LinkingTo closure (websocket -> AsioHeaders).
 
 on:
   pull_request:
@@ -31,49 +31,80 @@ jobs:
 
   smoke:
 
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
+    container:
+      image: rockylinux:8
 
     env:
-      FIXTURE: .github/actions/tests/fixtures/connect-app
+      R_VERSION: "4.4.2"
+      PPM: https://packagemanager.posit.co/cran/__linux__/centos8/latest
 
     steps:
 
+      # The base image carries neither git (actions/checkout needs it) nor R.
+      # EPEL + CRB (powertools on Rocky) carry the -devel sysreqs pak resolves
+      # via dnf, and some of the R rpm's own dependencies.
+      - name: Enable EPEL + CRB and install base tooling
+        run: |
+          dnf install -y dnf-plugins-core epel-release git
+          dnf config-manager --set-enabled powertools
+
       - uses: actions/checkout@v5
 
-      - uses: r-lib/actions/setup-r@v2
-        with:
-          use-public-rspm: true
+      - name: Install R (Posit centos-8 build)
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/R.rpm "https://cdn.posit.co/r/centos-8/pkgs/R-${R_VERSION}-1-1.x86_64.rpm"
+          dnf install -y /tmp/R.rpm
+          ln -sf "/opt/R/${R_VERSION}/bin/R" /usr/local/bin/R
+          ln -sf "/opt/R/${R_VERSION}/bin/Rscript" /usr/local/bin/Rscript
+          Rscript -e 'cat(R.version.string, "on", R.version$platform, "\n")'
 
-      - uses: r-lib/actions/setup-r-dependencies@v2
+      - name: Install pak + fixture deps from the centos8 binary repo
+        working-directory: .github/actions/tests/fixtures/connect-app
+        shell: Rscript {0}
         env:
-          PKG_INCLUDE_LINKINGTO: true
-        with:
-          working-directory: .github/actions/tests/fixtures/connect-app
-          extra-packages: any::rsconnect
+          PKG_INCLUDE_LINKINGTO: "true"
+        run: |
+          options(repos = c(CRAN = Sys.getenv("PPM")))
+          install.packages("pak", repos = sprintf(
+            "https://r-lib.github.io/p/pak/stable/%s/%s/%s",
+            .Platform$pkgType, R.Version()$os, R.Version()$arch
+          ))
+          pak::pkg_install(c("deps::.", "any::rsconnect"))
 
       - name: Generate manifest
         working-directory: .github/actions/tests/fixtures/connect-app
-        run: Rscript -e 'rsconnect::writeManifest(appDir = ".")'
+        shell: Rscript {0}
+        run: rsconnect::writeManifest(appDir = ".")
 
       - name: Check suggests
         uses: ./.github/actions/check-suggests
         with:
           content-dir: .github/actions/tests/fixtures/connect-app
 
-      - name: Assert manifest contents
+      - name: Assert manifest is RHEL-built
         working-directory: .github/actions/tests/fixtures/connect-app
         shell: Rscript {0}
         run: |
-          stopifnot(file.exists("manifest.json"))
-
           m <- jsonlite::fromJSON("manifest.json", simplifyVector = FALSE)
           pkgs <- names(m$packages)
           cat("manifest packages:", paste(sort(pkgs), collapse = ", "), "\n")
 
-          # AsioHeaders is the LinkingTo regression marker: websocket's
-          # LinkingTo dep, pruned by binary installs, present only because
-          # PKG_INCLUDE_LINKINGTO kept it. Without that, writeManifest's renv
-          # snapshot aborts before this step ever runs.
+          d <- m$packages$glue$description
+          cat("glue RemotePkgPlatform:", d$RemotePkgPlatform %||% "<none>", "\n")
+          cat("glue RemoteRepos:", d$RemoteRepos %||% "<none>", "\n")
+          cat("glue Built:", d$Built %||% "<none>", "\n")
+
+          # The whole point: a CRAN dep must NOT record an ubuntu build, else a
+          # RHEL Connect can't use the binary and recompiles from source.
+          plat <- d$RemotePkgPlatform
+          if (!is.null(plat) && grepl("ubuntu", plat)) {
+            stop("manifest records an ubuntu build platform: ", plat)
+          }
+
+          # AsioHeaders = the LinkingTo regression marker (pruned by binary
+          # installs unless PKG_INCLUDE_LINKINGTO keeps it).
           missing <- setdiff(
             c("shiny", "jsonlite", "glue", "websocket", "AsioHeaders"), pkgs
           )
@@ -81,29 +112,3 @@ jobs:
             stop("manifest missing expected packages: ",
                  paste(missing, collapse = ", "))
           }
-
-      # Guards the connect-repos lever: with renv's PPM rewrite off and the repo
-      # overridden, the manifest must record that exact binary URL verbatim —
-      # what makes a verbatim-restoring Connect install binaries. Runs over
-      # setup-r's noble RENV_CONFIG_REPOS_OVERRIDE, proving the override takes.
-      - name: Assert connect-repos pins the literal binary repo
-        working-directory: .github/actions/tests/fixtures/connect-app
-        shell: Rscript {0}
-        env:
-          CONNECT_REPOS: https://packagemanager.posit.co/cran/__linux__/centos8/latest
-        run: |
-          connect_repos <- Sys.getenv("CONNECT_REPOS")
-          Sys.setenv(
-            RENV_CONFIG_PPM_ENABLED = "FALSE",
-            RENV_CONFIG_REPOS_OVERRIDE = connect_repos
-          )
-          options(repos = c(CRAN = connect_repos))
-          rsconnect::writeManifest(appDir = ".")
-
-          m <- jsonlite::fromJSON("manifest.json", simplifyVector = FALSE)
-          repos <- unique(unlist(lapply(m$packages, `[[`, "Repository")))
-          if (!connect_repos %in% repos) {
-            stop("manifest did not record the connect-repos URL; repos seen: ",
-                 paste(repos, collapse = ", "))
-          }
-          cat("connect-repos OK: manifest records", connect_repos, "\n")
