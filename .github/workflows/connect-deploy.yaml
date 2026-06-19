@@ -179,10 +179,8 @@ jobs:
 
       # setup-r / setup-r-dependencies are apt-only; this is their RHEL analogue
       # (centos-8 R + pak, resolving sysreqs via dnf, keeping LinkingTo deps).
-      # Pinned to this branch while unmerged — @main would not resolve. The #26
-      # follow-up drops it to @main after merge, alongside check-suggests.
       - if: github.event_name == 'merge_group'
-        uses: BristolMyersSquibb/blockr.ci/.github/actions/setup-r-rhel@24-connect-deploy
+        uses: BristolMyersSquibb/blockr.ci/.github/actions/setup-r-rhel@main
         with:
           r-version: ${{ inputs.r-version }}
           repos: ${{ inputs.repos }}
@@ -204,11 +202,9 @@ jobs:
           rsconnect::writeManifest(appDir = ".")
 
       # Fail the deploy if a deploy-optional Suggests is installed but missing
-      # from the manifest, so it can't silently never reach Connect. Pinned to
-      # this branch while check-suggests is unmerged — it isn't on main yet, so
-      # @main would not resolve. A follow-up drops it to @main after merge.
+      # from the manifest, so it can't silently never reach Connect.
       - if: github.event_name == 'merge_group'
-        uses: BristolMyersSquibb/blockr.ci/.github/actions/check-suggests@24-connect-deploy
+        uses: BristolMyersSquibb/blockr.ci/.github/actions/check-suggests@main
         with:
           content-dir: ${{ inputs.content-dir }}
 
