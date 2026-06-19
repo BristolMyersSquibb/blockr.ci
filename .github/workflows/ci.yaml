@@ -34,6 +34,12 @@
 # Skipped jobs satisfy required checks, so the queue accepts the PR-only
 # rows as skipped on merge_group refs.
 #
+# A deploy app runs on exactly one R version (whatever Posit Connect
+# serves).  Pass `r-version:` (e.g. "4.4.2") so the PR-leg jobs — notably
+# the smoke R CMD check — run on that version instead of `release`.  The
+# merge-queue `check` matrix is unaffected and keeps its cross-platform
+# release/devel/oldrel spread.
+#
 # pkgdown site deploy lives in a separate reusable workflow
 # (pkgdown.yaml).  Consumers that want a deployed site add a second
 # workflow file calling pkgdown.yaml on `push: branches: main`.
@@ -62,6 +68,18 @@ on:
           and uploaded to Codecov.
         type: number
         default: 0
+        required: false
+
+      r-version:
+        description: >
+          R version for the PR-leg jobs (lint, smoke, pkgdown-dev,
+          coverage).  Default '' runs them on 'release'.  Set it (e.g.
+          '4.4.2') for a deploy app that runs on exactly one R version,
+          so its PR checks — notably the smoke R CMD check — exercise the
+          deployment target.  The merge-queue check matrix is unaffected
+          and keeps its cross-platform release/devel/oldrel spread.
+        type: string
+        default: ''
         required: false
 
       skip-pkgdown:
@@ -129,6 +147,7 @@ jobs:
 
       - uses: r-lib/actions/setup-r@v2
         with:
+          r-version: ${{ inputs.r-version || 'release' }}
           use-public-rspm: true
 
       - uses: BristolMyersSquibb/blockr.ci/.github/actions/parse-deps@main
@@ -187,6 +206,7 @@ jobs:
 
       - uses: r-lib/actions/setup-r@v2
         with:
+          r-version: ${{ inputs.r-version || 'release' }}
           use-public-rspm: true
 
       - uses: BristolMyersSquibb/blockr.ci/.github/actions/parse-deps@main
@@ -228,6 +248,7 @@ jobs:
 
       - uses: r-lib/actions/setup-r@v2
         with:
+          r-version: ${{ inputs.r-version || 'release' }}
           use-public-rspm: true
 
       - uses: BristolMyersSquibb/blockr.ci/.github/actions/parse-deps@main
@@ -276,6 +297,7 @@ jobs:
 
       - uses: r-lib/actions/setup-r@v2
         with:
+          r-version: ${{ inputs.r-version || 'release' }}
           use-public-rspm: true
 
       - uses: BristolMyersSquibb/blockr.ci/.github/actions/parse-deps@main
