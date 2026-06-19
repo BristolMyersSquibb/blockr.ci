@@ -120,6 +120,50 @@
 <span id="cb3-14"><a href="#cb3-14" tabindex="-1"></a><span class="at">      </span><span class="fu">BLOCKR_PAT</span><span class="kw">:</span><span class="at"> ${{ secrets.BLOCKR_PAT }}</span></span></code></pre></div>
 <p>Pass secrets by name. <code>secrets: inherit</code> does not forward secrets across organisations — the inherited values silently arrive blank in the called job.</p>
 </div>
+<div class="section level3">
+<h3 id="connect-deployyaml--pull-mode-posit-connect-deploys">
+<code>connect-deploy.yaml</code> — pull-mode Posit Connect deploys<a class="anchor" aria-label="anchor" href="#connect-deployyaml--pull-mode-posit-connect-deploys"></a>
+</h3>
+<p>Publishes git-backed (“pull-mode”) deployments to Posit Connect, for a Connect that sits on an internal network a GitHub runner cannot reach. Deployment is inverted: Connect polls a branch and redeploys when it advances. The workflow regenerates the per-deploy <code>manifest.json</code> and commits it — from inside the merge queue — to a derived <code>connect-&lt;base&gt;</code> branch (<code>connect-main</code>, <code>connect-test</code>) that Connect watches. Source branches stay clean, with no manifest and no per-PR manifest churn.</p>
+<p>Caller workflow in the deployment repo (default <code>auth: app</code> — push <code>connect-*</code> with a GitHub App, paired with a locked <code>connect-*</code> ruleset):</p>
+<div class="sourceCode" id="cb4"><pre class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb4-1"><a href="#cb4-1" tabindex="-1"></a><span class="fu">name</span><span class="kw">:</span><span class="at"> connect-deploy</span></span>
+<span id="cb4-2"><a href="#cb4-2" tabindex="-1"></a><span class="fu">on</span><span class="kw">:</span></span>
+<span id="cb4-3"><a href="#cb4-3" tabindex="-1"></a><span class="at">  </span><span class="fu">pull_request</span><span class="kw">:</span></span>
+<span id="cb4-4"><a href="#cb4-4" tabindex="-1"></a><span class="at">  </span><span class="fu">merge_group</span><span class="kw">:</span></span>
+<span id="cb4-5"><a href="#cb4-5" tabindex="-1"></a></span>
+<span id="cb4-6"><a href="#cb4-6" tabindex="-1"></a><span class="fu">jobs</span><span class="kw">:</span></span>
+<span id="cb4-7"><a href="#cb4-7" tabindex="-1"></a><span class="at">  </span><span class="fu">connect-deploy</span><span class="kw">:</span></span>
+<span id="cb4-8"><a href="#cb4-8" tabindex="-1"></a><span class="at">    </span><span class="fu">uses</span><span class="kw">:</span><span class="at"> BristolMyersSquibb/blockr.ci/.github/workflows/connect-deploy.yaml@main</span></span>
+<span id="cb4-9"><a href="#cb4-9" tabindex="-1"></a><span class="at">    </span><span class="fu">permissions</span><span class="kw">:</span></span>
+<span id="cb4-10"><a href="#cb4-10" tabindex="-1"></a><span class="at">      </span><span class="fu">contents</span><span class="kw">:</span><span class="at"> read</span></span>
+<span id="cb4-11"><a href="#cb4-11" tabindex="-1"></a><span class="at">    </span><span class="fu">with</span><span class="kw">:</span></span>
+<span id="cb4-12"><a href="#cb4-12" tabindex="-1"></a><span class="at">      </span><span class="fu">r-version</span><span class="kw">:</span><span class="at"> </span><span class="st">"4.4.2"</span></span>
+<span id="cb4-13"><a href="#cb4-13" tabindex="-1"></a><span class="at">    </span><span class="fu">secrets</span><span class="kw">:</span></span>
+<span id="cb4-14"><a href="#cb4-14" tabindex="-1"></a><span class="at">      </span><span class="fu">APP_ID</span><span class="kw">:</span><span class="at"> ${{ secrets.CONNECT_DEPLOY_APP_ID }}</span></span>
+<span id="cb4-15"><a href="#cb4-15" tabindex="-1"></a><span class="at">      </span><span class="fu">APP_PRIVATE_KEY</span><span class="kw">:</span><span class="at"> ${{ secrets.CONNECT_DEPLOY_APP_PRIVATE_KEY }}</span></span></code></pre></div>
+<p>For a repo whose org permits deploy keys but not Apps, use <code>auth: deploy-key</code> — push <code>connect-*</code> over SSH with a repo deploy key on the <code>connect-*</code> bypass. Same locked-branch guarantee as the App, with the least setup:</p>
+<div class="sourceCode" id="cb5"><pre class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb5-1"><a href="#cb5-1" tabindex="-1"></a><span class="fu">jobs</span><span class="kw">:</span></span>
+<span id="cb5-2"><a href="#cb5-2" tabindex="-1"></a><span class="at">  </span><span class="fu">connect-deploy</span><span class="kw">:</span></span>
+<span id="cb5-3"><a href="#cb5-3" tabindex="-1"></a><span class="at">    </span><span class="fu">uses</span><span class="kw">:</span><span class="at"> BristolMyersSquibb/blockr.ci/.github/workflows/connect-deploy.yaml@main</span></span>
+<span id="cb5-4"><a href="#cb5-4" tabindex="-1"></a><span class="at">    </span><span class="fu">permissions</span><span class="kw">:</span></span>
+<span id="cb5-5"><a href="#cb5-5" tabindex="-1"></a><span class="at">      </span><span class="fu">contents</span><span class="kw">:</span><span class="at"> read</span></span>
+<span id="cb5-6"><a href="#cb5-6" tabindex="-1"></a><span class="at">    </span><span class="fu">with</span><span class="kw">:</span></span>
+<span id="cb5-7"><a href="#cb5-7" tabindex="-1"></a><span class="at">      </span><span class="fu">auth</span><span class="kw">:</span><span class="at"> deploy-key</span></span>
+<span id="cb5-8"><a href="#cb5-8" tabindex="-1"></a><span class="at">      </span><span class="fu">r-version</span><span class="kw">:</span><span class="at"> </span><span class="st">"4.4.2"</span></span>
+<span id="cb5-9"><a href="#cb5-9" tabindex="-1"></a><span class="at">    </span><span class="fu">secrets</span><span class="kw">:</span></span>
+<span id="cb5-10"><a href="#cb5-10" tabindex="-1"></a><span class="at">      </span><span class="fu">DEPLOY_KEY</span><span class="kw">:</span><span class="at"> ${{ secrets.CONNECT_DEPLOY_SSH_KEY }}</span></span></code></pre></div>
+<p>For a repo that can provision neither an App nor a deploy key (e.g. a locked-down EMU org where both are gated), use <code>auth: token</code> — push <code>connect-*</code> with the workflow’s own <code>GITHUB_TOKEN</code>, no App, no environment, no secrets, paired with an <strong>unprotected</strong> <code>connect-*</code>:</p>
+<div class="sourceCode" id="cb6"><pre class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb6-1"><a href="#cb6-1" tabindex="-1"></a><span class="fu">jobs</span><span class="kw">:</span></span>
+<span id="cb6-2"><a href="#cb6-2" tabindex="-1"></a><span class="at">  </span><span class="fu">connect-deploy</span><span class="kw">:</span></span>
+<span id="cb6-3"><a href="#cb6-3" tabindex="-1"></a><span class="at">    </span><span class="fu">uses</span><span class="kw">:</span><span class="at"> BristolMyersSquibb/blockr.ci/.github/workflows/connect-deploy.yaml@main</span></span>
+<span id="cb6-4"><a href="#cb6-4" tabindex="-1"></a><span class="at">    </span><span class="fu">permissions</span><span class="kw">:</span></span>
+<span id="cb6-5"><a href="#cb6-5" tabindex="-1"></a><span class="at">      </span><span class="fu">contents</span><span class="kw">:</span><span class="at"> write</span></span>
+<span id="cb6-6"><a href="#cb6-6" tabindex="-1"></a><span class="at">    </span><span class="fu">with</span><span class="kw">:</span></span>
+<span id="cb6-7"><a href="#cb6-7" tabindex="-1"></a><span class="at">      </span><span class="fu">auth</span><span class="kw">:</span><span class="at"> token</span></span>
+<span id="cb6-8"><a href="#cb6-8" tabindex="-1"></a><span class="at">      </span><span class="fu">r-version</span><span class="kw">:</span><span class="at"> </span><span class="st">"4.4.2"</span></span></code></pre></div>
+<p>The job is a no-op on <code>pull_request</code> (so the required check stays green and the PR is queueable) and the real publisher on <code>merge_group</code>. In app mode, pass secrets by name. The <code>permissions:</code> differ by mode — see <a href="#auth-modes">Auth modes</a> for why, and for the security pairing each mode requires.</p>
+<p>The full consumer-side configuration — GitHub App, branch ruleset, protected environment, required checks — is operational repo settings, mostly one-time, and several pieces are load-bearing for security. See <a href="#connect-deployment-setup">Connect deployment setup</a>.</p>
+</div>
 </div>
 <div class="section level2">
 <h2 id="pipeline">Pipeline<a class="anchor" aria-label="anchor" href="#pipeline"></a>
@@ -259,19 +303,77 @@ Skipped jobs satisfy required checks, so the queue accepts the PR-only jobs as <
 <p>No inputs.</p>
 </div>
 <div class="section level3">
+<h3 id="connect-deployyaml">
+<code>connect-deploy.yaml</code><a class="anchor" aria-label="anchor" href="#connect-deployyaml"></a>
+</h3>
+<table class="table">
+<colgroup>
+<col width="25%">
+<col width="25%">
+<col width="25%">
+<col width="25%">
+</colgroup>
+<thead><tr>
+<th>Input</th>
+<th>Type</th>
+<th>Default</th>
+<th>Purpose</th>
+</tr></thead>
+<tbody>
+<tr>
+<td><code>r-version</code></td>
+<td>string</td>
+<td><code>4.4.2</code></td>
+<td>R version installed from Posit’s centos-8 build; becomes <code>platform</code> in the manifest, so it must be an R version Connect offers.</td>
+</tr>
+<tr>
+<td><code>repos</code></td>
+<td>string</td>
+<td><code>…/centos8/latest</code></td>
+<td>centos8 PPM binary repo the deps install from, recorded verbatim in the manifest as the repo Connect restores from. Default is the rolling centos8 snapshot; pass a dated snapshot (<code>…/__linux__/centos8/2026-06-01</code>) to freeze versions, or an internal mirror serving RHEL 8 binaries. See <a href="#binary-installs-on-connect">Binary installs on Connect</a>.</td>
+</tr>
+<tr>
+<td><code>content-dir</code></td>
+<td>string</td>
+<td><code>.</code></td>
+<td>Directory holding the app and receiving the manifest.</td>
+</tr>
+<tr>
+<td><code>connect-branch-prefix</code></td>
+<td>string</td>
+<td><code>connect-</code></td>
+<td>Target branch is <code>&lt;prefix&gt;&lt;base&gt;</code>.</td>
+</tr>
+<tr>
+<td><code>auth</code></td>
+<td>string</td>
+<td><code>app</code></td>
+<td>Push identity for <code>connect-*</code>. <code>app</code>: GitHub App token + protected <code>environment</code> (locked <code>connect-*</code> via App-on-bypass). <code>deploy-key</code>: SSH deploy key + protected <code>environment</code> (locked <code>connect-*</code> via key-on-bypass, least setup). <code>token</code>: the workflow’s own <code>GITHUB_TOKEN</code>, no App/key/environment/secrets (unprotected <code>connect-*</code>). See <a href="#auth-modes">Auth modes</a>.</td>
+</tr>
+<tr>
+<td><code>environment</code></td>
+<td>string</td>
+<td><code>connect</code></td>
+<td>Consumer-side protected environment holding the App or deploy-key credentials (<code>auth: app</code> and <code>deploy-key</code>).</td>
+</tr>
+</tbody>
+</table>
+<p>Secrets: <code>APP_ID</code> / <code>APP_PRIVATE_KEY</code> (the deploy GitHub App) are required in <code>app</code> mode; <code>DEPLOY_KEY</code> (the SSH private key) is required in <code>deploy-key</code> mode; <code>token</code> mode needs none. The caller’s <code>permissions:</code> differ by mode (<code>contents: read</code> for <code>app</code> and <code>deploy-key</code>, <code>contents: write</code> for <code>token</code>) — see <a href="#auth-modes">Auth modes</a>.</p>
+</div>
+<div class="section level3">
 <h3 id="example-with-inputs">Example with inputs<a class="anchor" aria-label="anchor" href="#example-with-inputs"></a>
 </h3>
-<div class="sourceCode" id="cb4"><pre class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb4-1"><a href="#cb4-1" tabindex="-1"></a><span class="fu">jobs</span><span class="kw">:</span></span>
-<span id="cb4-2"><a href="#cb4-2" tabindex="-1"></a><span class="at">  </span><span class="fu">ci</span><span class="kw">:</span></span>
-<span id="cb4-3"><a href="#cb4-3" tabindex="-1"></a><span class="at">    </span><span class="fu">uses</span><span class="kw">:</span><span class="at"> BristolMyersSquibb/blockr.ci/.github/workflows/ci.yaml@main</span></span>
-<span id="cb4-4"><a href="#cb4-4" tabindex="-1"></a><span class="at">    </span><span class="fu">with</span><span class="kw">:</span></span>
-<span id="cb4-5"><a href="#cb4-5" tabindex="-1"></a><span class="at">      </span><span class="fu">coverage-threshold</span><span class="kw">:</span><span class="at"> </span><span class="dv">80</span></span>
-<span id="cb4-6"><a href="#cb4-6" tabindex="-1"></a><span class="fu">      lintr-exclusions</span><span class="kw">: </span><span class="ch">|</span></span>
-<span id="cb4-7"><a href="#cb4-7" tabindex="-1"></a>        vignettes/foo.qmd</span>
-<span id="cb4-8"><a href="#cb4-8" tabindex="-1"></a>        vignettes/bar.qmd</span>
-<span id="cb4-9"><a href="#cb4-9" tabindex="-1"></a><span class="at">    </span><span class="fu">secrets</span><span class="kw">:</span></span>
-<span id="cb4-10"><a href="#cb4-10" tabindex="-1"></a><span class="at">      </span><span class="fu">CODECOV_TOKEN</span><span class="kw">:</span><span class="at"> ${{ secrets.CODECOV_TOKEN }}</span></span>
-<span id="cb4-11"><a href="#cb4-11" tabindex="-1"></a><span class="at">      </span><span class="fu">BLOCKR_PAT</span><span class="kw">:</span><span class="at"> ${{ secrets.BLOCKR_PAT }}</span></span></code></pre></div>
+<div class="sourceCode" id="cb7"><pre class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb7-1"><a href="#cb7-1" tabindex="-1"></a><span class="fu">jobs</span><span class="kw">:</span></span>
+<span id="cb7-2"><a href="#cb7-2" tabindex="-1"></a><span class="at">  </span><span class="fu">ci</span><span class="kw">:</span></span>
+<span id="cb7-3"><a href="#cb7-3" tabindex="-1"></a><span class="at">    </span><span class="fu">uses</span><span class="kw">:</span><span class="at"> BristolMyersSquibb/blockr.ci/.github/workflows/ci.yaml@main</span></span>
+<span id="cb7-4"><a href="#cb7-4" tabindex="-1"></a><span class="at">    </span><span class="fu">with</span><span class="kw">:</span></span>
+<span id="cb7-5"><a href="#cb7-5" tabindex="-1"></a><span class="at">      </span><span class="fu">coverage-threshold</span><span class="kw">:</span><span class="at"> </span><span class="dv">80</span></span>
+<span id="cb7-6"><a href="#cb7-6" tabindex="-1"></a><span class="fu">      lintr-exclusions</span><span class="kw">: </span><span class="ch">|</span></span>
+<span id="cb7-7"><a href="#cb7-7" tabindex="-1"></a>        vignettes/foo.qmd</span>
+<span id="cb7-8"><a href="#cb7-8" tabindex="-1"></a>        vignettes/bar.qmd</span>
+<span id="cb7-9"><a href="#cb7-9" tabindex="-1"></a><span class="at">    </span><span class="fu">secrets</span><span class="kw">:</span></span>
+<span id="cb7-10"><a href="#cb7-10" tabindex="-1"></a><span class="at">      </span><span class="fu">CODECOV_TOKEN</span><span class="kw">:</span><span class="at"> ${{ secrets.CODECOV_TOKEN }}</span></span>
+<span id="cb7-11"><a href="#cb7-11" tabindex="-1"></a><span class="at">      </span><span class="fu">BLOCKR_PAT</span><span class="kw">:</span><span class="at"> ${{ secrets.BLOCKR_PAT }}</span></span></code></pre></div>
 </div>
 </div>
 <div class="section level2">
@@ -295,7 +397,128 @@ Skipped jobs satisfy required checks, so the queue accepts the PR-only jobs as <
 </li>
 <li>
 <strong>parse-deps</strong> — pin a downstream revdep ref via a <code>```deps</code> block in the PR body, read fresh when the merge queue runs revdep</li>
+<li>
+<strong>connect-deploy</strong> — pull-mode Posit Connect deploys: regenerate the manifest in the merge queue and publish it to a <code>connect-*</code> branch Connect polls — separate reusable workflow</li>
 </ul>
+</div>
+<div class="section level2">
+<h2 id="connect-deployment-setup">Connect deployment setup<a class="anchor" aria-label="anchor" href="#connect-deployment-setup"></a>
+</h2>
+<p><code>connect-deploy.yaml</code> ships only the reusable workflow body. The configuration below is one-time settings on the deployment repo. Two layers are load-bearing for security — the <code>connect-*</code> ruleset and the protected environment — and both are explained in full.</p>
+<div class="section level3">
+<h3 id="how-it-works">How it works<a class="anchor" aria-label="anchor" href="#how-it-works"></a>
+</h3>
+<p>Connect periodically polls each git-backed content item (default every 15 minutes) and redeploys when the watched branch advances, including when a PR merges into it. The watched directory must contain a <code>manifest.json</code>, which pins the package set, the R version, and the content metadata Connect restores from.</p>
+<p>For each source branch (<code>main</code>, <code>test</code>) the workflow maintains a derived branch <code>connect-&lt;source&gt;</code> carrying the app tree plus the regenerated <code>manifest.json</code>. Connect watches the <code>connect-*</code> branches, never the source branches. The manifest is generated and committed from the <code>merge_group</code> job, and <code>connect-*</code> is writable by exactly one identity — the deploy GitHub App.</p>
+<ol style="list-style-type: decimal">
+<li>A PR is opened against a source branch. The repo’s own validation (lint, etc.) runs on <code>pull_request</code> and gates queueing.</li>
+<li>
+<code>connect-deploy</code> runs on <code>pull_request</code> as a no-op success, so the PR is mergeable, and does its real work only on <code>merge_group</code>.</li>
+<li>Approved + green → added to the merge queue.</li>
+<li>In the queue, the job checks out the queue ref, derives the target <code>connect-&lt;base&gt;</code> from <code>merge_group.base_ref</code>, sets up R, installs the app’s dependencies, runs <code>writeManifest()</code>, commits, and force-pushes to <code>connect-&lt;base&gt;</code> using the App token.</li>
+<li>If that job fails the PR is ejected; otherwise the merge completes and Connect picks up <code>connect-&lt;base&gt;</code> on its next poll.</li>
+</ol>
+<p>Writing from the queue is deliberate: the queue serialises, so <code>connect-*</code> writes never race, and “ejected” is equivalent to “the commit failed”. Keep real validation on the <code>pull_request</code> side (or use batch size 1) so no other check can eject a PR after the push.</p>
+</div>
+<div class="section level3">
+<h3 id="required-check-topology">Required-check topology<a class="anchor" aria-label="anchor" href="#required-check-topology"></a>
+</h3>
+<p>Each required check does real work in exactly one event and reports a cheap success in the other, so nothing double-runs:</p>
+<ul>
+<li>The repo’s validation (lint, etc.): real on <code>pull_request</code>, gated to skip on <code>merge_group</code> with <code>if: github.event_name == 'pull_request'</code>.</li>
+<li>
+<code>connect-deploy</code>: no-op on <code>pull_request</code>, real on <code>merge_group</code>.</li>
+</ul>
+<p>A skipped required check counts as <strong>passed</strong> by the merge queue — that is what makes the symmetry work, and it is also a footgun: a publish step skipped on <code>merge_group</code> by a too-broad <code>if</code> would let the queue merge having deployed nothing. The workflow guards against this with an aggregator <code>guard</code> job that asserts the publish actually ran. List <code>connect-deploy / guard</code> (not <code>connect-deploy / deploy</code>) in the required checks.</p>
+</div>
+<div class="section level3">
+<h3 id="auth-modes">Auth modes<a class="anchor" aria-label="anchor" href="#auth-modes"></a>
+</h3>
+<p>The <code>auth</code> input picks which token pushes <code>connect-*</code>. It only chooses the <em>pusher</em>; it cannot enforce whether <code>connect-*</code> is locked — that is a repo-side ruleset the workflow can’t reach. So each mode must be paired with the matching <code>connect-*</code> protection, and that pairing is the consumer’s responsibility.</p>
+<p><strong><code>app</code> (default).</strong> Mint a short-lived token from a dedicated GitHub App and push with it. The caller declares <code>permissions: contents: read</code> so its ambient <code>GITHUB_TOKEN</code> stays read-only — the App token does the write. Pair with the locked <code>connect-*</code> ruleset, App, and environment described below.</p>
+<p><strong><code>deploy-key</code>.</strong> Push <code>connect-*</code> over SSH with a repo deploy key. Like <code>app</code>, the key does the write, so the caller declares <code>permissions: contents: read</code>. It gives the same locked-<code>connect-*</code> guarantee as the App — a deploy key is a first-class ruleset bypass actor — with the least setup (no App to register or install), at the cost of a long-lived key (manual rotation, no auto-expiry), one per repo, granting repo-wide write (still constrained by branch rules, so it cannot touch a protected <code>main</code>). Pair with a <code>connect-*</code> ruleset that bypasses the deploy key.</p>
+<p><strong><code>token</code>.</strong> Push <code>connect-*</code> with the workflow’s own <code>GITHUB_TOKEN</code> — no App, no environment, no secrets — and declare <code>permissions: contents: write</code>. For a repo that can’t provision a bypass-able identity (an EMU org where App creation is gated, deploy keys are disabled, fine-grained PATs are policy-capped), this is the only way to run the pipeline. Pair with an <strong>unprotected</strong> <code>connect-*</code>: anyone with repo write — or any pull request’s own workflow — can then push <code>connect-*</code> and thereby deploy, so integrity rests <strong>entirely</strong> on the <em>source</em> branch being protected. <code>connect-*</code> is a derived artifact, and nothing technically guarantees it only ever holds a build of the source.</p>
+<p>The caller’s <code>permissions:</code> are load-bearing, and they differ by mode because the <em>pusher</em> differs: <code>token</code> mode pushes with the ambient <code>GITHUB_TOKEN</code>, so its caller grants <code>contents: write</code>; <code>app</code> and <code>deploy-key</code> push with the App token / SSH key, so the ambient token only needs <code>contents: read</code>. The reusable workflow itself declares <strong>no</strong> <code>permissions:</code> — a reusable workflow may not request <em>more</em> than its caller grants, so a fixed <code>contents: write</code> in the workflow would make GitHub reject every <code>read</code>-granting caller (<code>app</code>, <code>deploy-key</code>) with a <code>startup_failure</code> before any job runs. Declaring none defers to the caller, so each mode grants exactly what it needs. Set the caller’s <code>permissions:</code> explicitly per the examples — an omitted block falls back to the repo default, which may not match the mode.</p>
+<p>The <code>connect-*</code> ruleset and environment sections below apply to both locked modes (<strong><code>app</code></strong> and <strong><code>deploy-key</code></strong>); the GitHub App and deploy key sections are the per-mode identity setup. In <code>token</code> mode you skip all of them and leave <code>connect-*</code> unprotected.</p>
+</div>
+<div class="section level3">
+<h3 id="the-connect--ruleset">The <code>connect-*</code> ruleset<a class="anchor" aria-label="anchor" href="#the-connect--ruleset"></a>
+</h3>
+<p>A single repository ruleset targeting <code>connect-*</code>:</p>
+<ul>
+<li>Enable <strong>Restrict creations</strong>, <strong>Restrict updates</strong>, <strong>Restrict deletions</strong> — each means “only bypass actors may create / update / delete the matching ref”.</li>
+<li>Bypass list: the deploy identity only — the App in <code>app</code> mode or the deploy key in <code>deploy-key</code> mode — mode <strong>Always allow</strong> (it pushes directly; it does not open PRs).</li>
+</ul>
+<p>Nobody but that identity can create, update (including force-push), or delete any <code>connect-*</code> branch. One ruleset covers every derived branch; adding a source branch later needs no ruleset change.</p>
+</div>
+<div class="section level3">
+<h3 id="deploy-identity--a-dedicated-github-app">Deploy identity — a dedicated GitHub App<a class="anchor" aria-label="anchor" href="#deploy-identity--a-dedicated-github-app"></a>
+</h3>
+<p>In <code>app</code> mode, use a dedicated GitHub App (installed in <code>BristolMyersSquibb</code>, <code>contents: write</code>), <strong>not</strong> the ambient <code>GITHUB_TOKEN</code> (available to every workflow, so any PR-added workflow could push) and <strong>not</strong> a PAT (long-lived, broad, burns a seat). The workflow mints a short-lived installation token via <code>actions/create-github-app-token</code>; the caller declares <code>permissions: contents: read</code> so its ambient <code>GITHUB_TOKEN</code> stays read-only. Put the App on the <code>connect-*</code> ruleset bypass.</p>
+</div>
+<div class="section level3">
+<h3 id="deploy-identity--a-deploy-key">Deploy identity — a deploy key<a class="anchor" aria-label="anchor" href="#deploy-identity--a-deploy-key"></a>
+</h3>
+<p>In <code>deploy-key</code> mode, generate an <code>ed25519</code> keypair, add the <strong>public</strong> half to the deployment repo as a deploy key with write access, store the <strong>private</strong> half as the <code>DEPLOY_KEY</code> environment secret, and add the deploy key to the <code>connect-*</code> ruleset bypass. <code>actions/checkout</code>’s <code>ssh-key</code> input writes the key, points the remote at SSH, and seeds <code>known_hosts</code>, so the push authenticates over SSH and the publish step stays auth-agnostic. The trade-off vs the App: the key is long-lived (rotate it manually) and repo-scoped, not a short-lived per-run token.</p>
+</div>
+<div class="section level3">
+<h3 id="environment-scoping--the-second-layer">Environment scoping — the second layer<a class="anchor" aria-label="anchor" href="#environment-scoping--the-second-layer"></a>
+</h3>
+<p>Store the deploy credential — the App ID and private key in <code>app</code> mode, or <code>DEPLOY_KEY</code> in <code>deploy-key</code> mode — as <strong>environment</strong> secrets on a protected environment (<code>connect</code>), not as repo secrets. Set its deployment-branch policy to allow the queue refs the publisher runs on: <code>gh-readonly-queue/main/*</code> (and <code>gh-readonly-queue/test/*</code>, one per source branch). Environment secrets are released only to jobs that reference the environment and pass its rules, so only the <code>merge_group</code> publisher can use the credential.</p>
+<p>This is the accepted credential-scoping tradeoff: because the queue ref is <code>gh-readonly-queue/&lt;base&gt;/*</code>, the environment must allow that ref pattern rather than just the source branch. A PR only reaches the queue after approval and PR checks — the same human gate as merging.</p>
+<p>Net: the deploy identity is the only one that can write <code>connect-*</code> (ruleset), and the only thing that can act as it is the queue publisher (environment). Both layers are load-bearing.</p>
+</div>
+<div class="section level3">
+<h3 id="source-branch-protection--merge-queue">Source-branch protection + merge queue<a class="anchor" aria-label="anchor" href="#source-branch-protection--merge-queue"></a>
+</h3>
+<p>Each source branch (<code>main</code>, <code>test</code>) is fully protected — PR required, no bypass, no direct push — with a merge queue enabled and the merge method left as <strong>merge commit</strong>. Required status checks: the repo’s validation plus <code>connect-deploy / guard</code>. Connect watches <code>connect-main</code> / <code>connect-test</code>, never the source branches.</p>
+</div>
+<div class="section level3">
+<h3 id="declaring-the-deploy-apps-dependencies">Declaring the deploy app’s dependencies<a class="anchor" aria-label="anchor" href="#declaring-the-deploy-apps-dependencies"></a>
+</h3>
+<p>The deploy directory is structured like an R package — no <code>renv</code>, no committed lockfile. A <code>DESCRIPTION</code> declares runtime dependencies under <code>Imports</code>; the workflow installs them with <code>r-lib/actions/setup-r-dependencies</code> and runs <code>writeManifest()</code>. <code>rsconnect</code> is build-time tooling the workflow installs; keep it out of the <code>DESCRIPTION</code>.</p>
+<p><code>writeManifest()</code> records a package only when the app’s own code references it. So:</p>
+<ul>
+<li>
+<strong>Required deps</strong> go in <code>Imports</code> — always shipped.</li>
+<li>
+<strong>Optional two-path deps</strong> (a <code><a href="https://rdrr.io/r/base/ns-load.html" class="external-link">requireNamespace()</a></code> graceful-degradation path) go in <code>Suggests</code> — still shipped, because the code names them.</li>
+<li>A package the app <strong>never names</strong> — a transitive / UX-only dep — is not auto-detected. Keep it in <code>Suggests</code> (so it installs) and add a top-level <code>dependencies.R</code> containing <code><a href="https://rdrr.io/r/base/ns-load.html" class="external-link">requireNamespace("pkg")</a></code>, which the manifest scanner reads. The helper is scan-only; Connect runs the app, not loose scripts.</li>
+<li>
+<strong>Dev/check tooling</strong> (<code>testthat</code>, …) stays in <code>Suggests</code> for <code>R CMD check</code> and is also listed in <code>Config/Needs/tests</code>, which the guard subtracts so it is neither deployed nor flagged.</li>
+</ul>
+<p>After <code>writeManifest()</code>, the <code>check-suggests</code> action fails the deploy if a deploy-optional <code>Suggests</code> package (Suggests minus <code>Config/Needs/tests</code> minus base packages) is absent from the manifest, with a pointer to the <code><a href="https://rdrr.io/r/base/ns-load.html" class="external-link">requireNamespace()</a></code> / <code>dependencies.R</code> fix — so a missing optional dep can’t silently never reach Connect. A worked fixture lives at <code>.github/actions/tests/fixtures/connect-app</code>.</p>
+</div>
+<div class="section level3">
+<h3 id="binary-installs-on-connect">Binary installs on Connect<a class="anchor" aria-label="anchor" href="#binary-installs-on-connect"></a>
+</h3>
+<p><code>writeManifest()</code> records, per package, the repository Connect restores from and the platform the package was built for. If that repository is a <em>source</em> repository — or the recorded build platform doesn’t match Connect’s — Connect compiles the whole closure from source: slow, and a hard failure for any package needing a toolchain Connect lacks (e.g. a Rust package with no <code>rustc</code>).</p>
+<p>So the deploy job builds the manifest on the <strong>target platform</strong>. It runs in a fixed <code>rockylinux:8</code> container — Rocky 8 is ABI-compatible with RHEL 8, and PPM serves both under the <code>centos8</code> slug — installs R from Posit’s centos-8 build, and installs deps from the centos8 PPM. Every package then records a centos8 binary: <code>RemotePkgPlatform</code> <code>x86_64-pc-linux-gnu-rocky-8.9</code>, <code>RemoteRepos</code> and <code>Repository</code> the <code>centos8</code> URL, <code>Built</code> the centos8 R. A RHEL 8.6 Connect restores those binaries directly, no compiler needed.</p>
+<p>Two details keep the recorded URL a <em>binary</em> URL:</p>
+<ul>
+<li>The deploy installs from, and records, the <code>repos</code> input — the centos8 PPM (<code>…/__linux__/centos8/&lt;snapshot&gt;</code>). RHEL 8.x → <code>centos8</code> (there is no <code>rhel8</code>); RHEL 9 → <code>rhel9</code>.</li>
+<li>
+<code>writeManifest</code> runs with renv’s PPM rewrite off (<code>RENV_CONFIG_PPM_ENABLED=FALSE</code>), so renv keeps the literal <code>__linux__/centos8</code> URL instead of genericising it to a distro-less source URL.</li>
+</ul>
+<p>The platform is fixed, not a knob — the container image and the disabled genericisation are correctness properties of a RHEL deploy. To pin versions, set <code>repos</code> to a dated centos8 snapshot, and pick an <code>r-version</code> that PPM publishes centos8 binaries for and that Connect has installed.</p>
+</div>
+<div class="section level3">
+<h3 id="bootstrap-one-time-manual">Bootstrap (one-time, manual)<a class="anchor" aria-label="anchor" href="#bootstrap-one-time-manual"></a>
+</h3>
+<p>Out of scope for the workflow, done once when wiring up a deployment: create the Connect content item, point it at the repo + <code>connect-&lt;base&gt;</code> branch + <code>content-dir</code>, and configure the Connect-side git read credential and poll frequency. The first <code>connect-&lt;base&gt;</code> branch may need seeding by one manual queue run before Connect is wired up.</p>
+</div>
+<div class="section level3">
+<h3 id="footguns">Footguns<a class="anchor" aria-label="anchor" href="#footguns"></a>
+</h3>
+<ul>
+<li>
+<strong>The environment must allow <code>gh-readonly-queue/&lt;base&gt;/*</code></strong>, not just the source branch, or the publisher cannot reach the credential it needs (the App key or the deploy key) in <code>app</code> / <code>deploy-key</code> mode.</li>
+<li>
+<strong>No <code>pull_request_target</code></strong> in the deployment repo: it runs on the base ref with a PR’s context and can satisfy a branch-scoped environment, leaking its secrets. The caller pattern here uses plain <code>pull_request</code>; keep it that way.</li>
+<li>
+<strong>Runner OS need not match Connect’s OS.</strong> The manifest pins package versions and the PPM repo URL; Connect restores against that URL with its own platform via PPM content negotiation. Only the R version and package versions must be resolvable on Connect — pick <code>r-version</code> from Connect’s available Rs.</li>
+</ul>
+</div>
 </div>
 <div class="section level2">
 <h2 id="dependency-resolution">Dependency resolution<a class="anchor" aria-label="anchor" href="#dependency-resolution"></a>
@@ -313,10 +536,10 @@ Remotes:
 <h3 id="per-pr-revdep-refs">Per-PR revdep refs<a class="anchor" aria-label="anchor" href="#per-pr-revdep-refs"></a>
 </h3>
 <p>The deps block in a PR body controls which ref of each revdep gets checked out for the <strong>revdep job</strong> — nothing else. It is not a mechanism for overriding forward dependencies; those belong in <code>Remotes:</code> in <code>DESCRIPTION</code>.</p>
-<div class="sourceCode" id="cb6"><pre class="sourceCode markdown"><code class="sourceCode markdown"><span id="cb6-1"><a href="#cb6-1" tabindex="-1"></a><span class="in">```deps</span></span>
-<span id="cb6-2"><a href="#cb6-2" tabindex="-1"></a><span class="in">BristolMyersSquibb/blockr.dag#111</span></span>
-<span id="cb6-3"><a href="#cb6-3" tabindex="-1"></a><span class="in">BristolMyersSquibb/blockr.ai@my-feature-branch</span></span>
-<span id="cb6-4"><a href="#cb6-4" tabindex="-1"></a><span class="in">```</span></span></code></pre></div>
+<div class="sourceCode" id="cb9"><pre class="sourceCode markdown"><code class="sourceCode markdown"><span id="cb9-1"><a href="#cb9-1" tabindex="-1"></a><span class="in">```deps</span></span>
+<span id="cb9-2"><a href="#cb9-2" tabindex="-1"></a><span class="in">BristolMyersSquibb/blockr.dag#111</span></span>
+<span id="cb9-3"><a href="#cb9-3" tabindex="-1"></a><span class="in">BristolMyersSquibb/blockr.ai@my-feature-branch</span></span>
+<span id="cb9-4"><a href="#cb9-4" tabindex="-1"></a><span class="in">```</span></span></code></pre></div>
 <p>Each line is <code>owner/repo@branch</code> or <code>owner/repo#PR-number</code>. The matching revdep job checks out that ref instead of the default branch.</p>
 <p><code>parse-deps</code> validates each entry against the package’s <code>DESCRIPTION</code>: if a deps-block entry’s package name appears in <code>Imports</code>/<code>Depends</code>/<code>LinkingTo</code>/<code>Suggests</code>/<code>Remotes</code>, parse-deps fails with a pointer to <code>Remotes:</code>. This catches the common mistake of trying to use the deps block to swap in a dev branch of a forward dep.</p>
 <p>The revdep job runs only in the merge queue, and it reads the deps block fresh from the PR body each time the queue runs. To change which ref gets checked out, edit the block and re-enqueue — there is no separate re-run trigger.</p>
@@ -329,9 +552,9 @@ Remotes:
 <li><p>Open your PR on <code>blockr.dock</code>. The configured <code>revdep-packages</code> input includes <code>BristolMyersSquibb/blockr.dag</code>, so the revdep job runs against <code>blockr.dag</code>’s default branch by default.</p></li>
 <li>
 <p>To pin it to a specific PR, add to the PR body:</p>
-<div class="sourceCode" id="cb7"><pre class="sourceCode markdown"><code class="sourceCode markdown"><span id="cb7-1"><a href="#cb7-1" tabindex="-1"></a><span class="in">```deps</span></span>
-<span id="cb7-2"><a href="#cb7-2" tabindex="-1"></a><span class="in">BristolMyersSquibb/blockr.dag#111</span></span>
-<span id="cb7-3"><a href="#cb7-3" tabindex="-1"></a><span class="in">```</span></span></code></pre></div>
+<div class="sourceCode" id="cb10"><pre class="sourceCode markdown"><code class="sourceCode markdown"><span id="cb10-1"><a href="#cb10-1" tabindex="-1"></a><span class="in">```deps</span></span>
+<span id="cb10-2"><a href="#cb10-2" tabindex="-1"></a><span class="in">BristolMyersSquibb/blockr.dag#111</span></span>
+<span id="cb10-3"><a href="#cb10-3" tabindex="-1"></a><span class="in">```</span></span></code></pre></div>
 </li>
 <li><p>When the PR is enqueued, the merge-queue revdep job reads the block and checks out <code>blockr.dag</code> PR #111 head instead of the default branch.</p></li>
 <li><p>To point at a different PR later, edit the block and re-enqueue.</p></li>
