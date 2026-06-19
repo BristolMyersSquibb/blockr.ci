@@ -1,0 +1,37 @@
+# Guards the reusable workflow's permission contract. A reusable workflow may
+# not request more than its caller grants, so connect-deploy.yaml must declare
+# no workflow-level `permissions:` — otherwise a caller granting less than it
+# declares (the `contents: read` that app and deploy-key modes use) is rejected
+# with a startup_failure before any job runs. This dispatches connect-deploy
+# under both caller shapes: read (app / deploy-key) and write (token). On
+# pull_request the deploy job no-ops (its steps are merge_group-gated), so this
+# exercises only the dispatch path, which is where the permission check fires.
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/connect-deploy.yaml'
+      - '.github/workflows/connect-deploy-dispatch.yaml'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/connect-deploy.yaml'
+      - '.github/workflows/connect-deploy-dispatch.yaml'
+
+name: connect-deploy-dispatch
+
+jobs:
+
+  read-caller:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/connect-deploy.yaml
+    with:
+      auth: deploy-key
+
+  write-caller:
+    permissions:
+      contents: write
+    uses: ./.github/workflows/connect-deploy.yaml
+    with:
+      auth: token

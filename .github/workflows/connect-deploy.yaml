@@ -1,0 +1,267 @@
+# Pull-mode Posit Connect deploys via merge-queue manifest publishing.
+#
+# Connect sits on an internal network a runner cannot reach, so deployment is
+# inverted: Connect polls a branch and redeploys when it advances. This
+# workflow regenerates the per-deploy manifest.json and commits it — from
+# inside the merge queue — to a derived `connect-<base>` branch Connect
+# watches. Source branches (main, test) stay manifest-free.
+#
+# The single `deploy` job is a no-op on pull_request (every step gated to
+# merge_group) so the required check stays green and queueable, and the real
+# publisher on merge_group. Writing from the queue serialises the connect-*
+# writes and makes "PR ejected" equivalent to "the commit failed".
+#
+# Two auth modes (the `auth` input): "app" pushes connect-* with a GitHub App
+# token and a protected environment — pair with a locked connect-* ruleset;
+# "token" pushes with the ambient GITHUB_TOKEN, no App and no environment —
+# pair with an unprotected connect-*. See the README "Connect deployment setup"
+# section for the consumer-side setup: caller workflow, ruleset, App, environment.
+
+on:
+  workflow_call:
+
+    inputs:
+
+      r-version:
+        description: >
+          R version installed from Posit's centos-8 build; becomes `platform`
+          in the manifest, so it must be an R version Connect offers.
+        type: string
+        default: "4.4.2"
+        required: false
+
+      repos:
+        description: >
+          centos8 PPM binary repo the deps install from, recorded verbatim in
+          the manifest as the repo Connect restores from. Default is the rolling
+          centos8 snapshot; pass a dated snapshot
+          (.../__linux__/centos8/2026-06-01) to freeze versions, or an internal
+          mirror that serves RHEL 8 binaries.
+        type: string
+        default: https://packagemanager.posit.co/cran/__linux__/centos8/latest
+        required: false
+
+      content-dir:
+        description: >
+          Directory holding the app and receiving the manifest.
+        type: string
+        default: "."
+        required: false
+
+      connect-branch-prefix:
+        description: >
+          Target branch is `<prefix><base>` (e.g. connect-main).
+        type: string
+        default: "connect-"
+        required: false
+
+      auth:
+        description: >
+          Push identity for connect-*. "app" (default): mint a token from
+          APP_ID / APP_PRIVATE_KEY and use the protected `environment` — pair
+          with a connect-* ruleset that bypasses the App. "deploy-key": push
+          over SSH with DEPLOY_KEY, also under `environment` — pair with a
+          connect-* ruleset that bypasses the deploy key (a locked connect-*
+          with the least setup). "token": push with the workflow's own
+          GITHUB_TOKEN, no App, key or environment — pair with an unprotected
+          connect-* (integrity then rests entirely on the source branch's
+          protection).
+        type: string
+        default: "app"
+        required: false
+
+      environment:
+        description: >
+          Consumer-side protected environment holding the App or deploy-key
+          credentials. Referenced on merge_group in app and deploy-key modes.
+        type: string
+        default: "connect"
+        required: false
+
+    secrets:
+
+      APP_ID:
+        description: GitHub App id of the deploy identity (app mode only).
+        required: false
+
+      APP_PRIVATE_KEY:
+        description: GitHub App private key of the deploy identity (app mode only).
+        required: false
+
+      DEPLOY_KEY:
+        description: SSH deploy key, private half, of the deploy identity (deploy-key mode only).
+        required: false
+
+name: connect-deploy
+
+# No workflow-level `permissions:` on purpose. The push credential differs by
+# mode — the ambient GITHUB_TOKEN in token mode (needs write), the App token or
+# SSH key in app / deploy-key mode (ambient needs only read) — and a reusable
+# workflow may not request MORE than its caller grants: a fixed `contents:
+# write` here makes GitHub reject every read-granting caller (app, deploy-key)
+# with a startup_failure before any job runs. So the caller's per-mode
+# `permissions:` is authoritative and the workflow declares none.
+
+jobs:
+
+  deploy:
+
+    runs-on: ubuntu-latest
+
+    # Fixed RHEL 8 image: the manifest must record centos8 binaries for a RHEL
+    # 8.6 Connect, which means building on RHEL 8. Rocky 8 is ABI-compatible and
+    # PPM serves it under the same centos8 token. Deliberately not a config
+    # input — the platform is a correctness property of the deploy, not a knob.
+    container:
+      image: rockylinux:8
+
+    # Environment on merge_group for the credentialed modes (app, deploy-key):
+    # the PR leg is a no-op and token mode has no environment, so none must
+    # reach the gh-readonly-queue-scoped environment that holds the App key or
+    # deploy key. If an empty environment name is ever rejected, split into two
+    # jobs (a pull_request no-op gate and a merge_group deploy job).
+    environment: ${{ github.event_name == 'merge_group' && inputs.auth != 'token' && inputs.environment || '' }}
+
+    # pak (in setup-r-rhel) and renv (in writeManifest) both read GITHUB_PAT to
+    # authenticate GitHub-API lookups for Remotes deps; unauthenticated they hit
+    # the 60-req/hr-per-IP limit and 403. Job-level so both inherit it, the way
+    # the r-lib CI templates set it for setup-r-dependencies. Independent of the
+    # push credential (the checkout-persisted App token / SSH key / ambient).
+    env:
+      GITHUB_PAT: ${{ github.token }}
+
+    outputs:
+      published: ${{ steps.push.outputs.published }}
+
+    steps:
+
+      # Fail fast with a clear message rather than an opaque token-mint error
+      # when an app-mode caller forgot the secrets.
+      - name: Require App secrets in app mode
+        if: github.event_name == 'merge_group' && inputs.auth == 'app'
+        env:
+          APP_ID: ${{ secrets.APP_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
+        run: |
+          if [ -z "$APP_ID" ] || [ -z "$APP_PRIVATE_KEY" ]; then
+            echo "::error::auth is 'app' but APP_ID / APP_PRIVATE_KEY are not set. Provide them, or set auth: token."
+            exit 1
+          fi
+
+      - name: Require deploy key in deploy-key mode
+        if: github.event_name == 'merge_group' && inputs.auth == 'deploy-key'
+        env:
+          DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
+        run: |
+          if [ -z "$DEPLOY_KEY" ]; then
+            echo "::error::auth is 'deploy-key' but DEPLOY_KEY is not set. Provide it, or set auth: token."
+            exit 1
+          fi
+
+      - if: github.event_name == 'merge_group' && inputs.auth == 'app'
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      # The base image carries no git, which actions/checkout needs.
+      - name: Install git
+        if: github.event_name == 'merge_group'
+        run: dnf install -y git
+
+      - if: github.event_name == 'merge_group'
+        uses: actions/checkout@v5
+        with:
+          token: ${{ inputs.auth == 'app' && steps.app-token.outputs.token || github.token }}
+          ssh-key: ${{ inputs.auth == 'deploy-key' && secrets.DEPLOY_KEY || '' }}
+          fetch-depth: 0
+
+      # setup-r / setup-r-dependencies are apt-only; this is their RHEL analogue
+      # (centos-8 R + pak, resolving sysreqs via dnf, keeping LinkingTo deps).
+      # Pinned to this branch while unmerged — @main would not resolve. The #26
+      # follow-up drops it to @main after merge, alongside check-suggests.
+      - if: github.event_name == 'merge_group'
+        uses: BristolMyersSquibb/blockr.ci/.github/actions/setup-r-rhel@24-connect-deploy
+        with:
+          r-version: ${{ inputs.r-version }}
+          repos: ${{ inputs.repos }}
+          working-directory: ${{ inputs.content-dir }}
+          extra-packages: any::rsconnect
+
+      # RENV_CONFIG_PPM_ENABLED=FALSE stops renv rewriting the centos8 PPM URL to
+      # its distro-less (source) form: the manifest then records the literal
+      # binary URL, so a verbatim-restoring Connect installs binaries instead of
+      # compiling from source. (GITHUB_PAT for renv's GitHub lookups is job-level.)
+      - if: github.event_name == 'merge_group'
+        working-directory: ${{ inputs.content-dir }}
+        shell: Rscript {0}
+        env:
+          PPM: ${{ inputs.repos }}
+        run: |
+          options(repos = c(CRAN = Sys.getenv("PPM")))
+          Sys.setenv(RENV_CONFIG_PPM_ENABLED = "FALSE")
+          rsconnect::writeManifest(appDir = ".")
+
+      # Fail the deploy if a deploy-optional Suggests is installed but missing
+      # from the manifest, so it can't silently never reach Connect. Pinned to
+      # this branch while check-suggests is unmerged — it isn't on main yet, so
+      # @main would not resolve. A follow-up drops it to @main after merge.
+      - if: github.event_name == 'merge_group'
+        uses: BristolMyersSquibb/blockr.ci/.github/actions/check-suggests@24-connect-deploy
+        with:
+          content-dir: ${{ inputs.content-dir }}
+
+      # git runs as root inside the container, but checkout puts the workspace on
+      # a host-mounted volume owned by the runner uid, not root — so git rejects
+      # it for dubious ownership, which surfaces as "fatal: not in a git
+      # directory" on the first command. checkout's own safe.directory exception
+      # was written under a temporary HOME that has since been restored, so
+      # re-assert it here; HOME=/github/home persists across the step, so
+      # --global lands where git reads. (working-directory is for parity with the
+      # other steps, not load-bearing.) The push credential is whatever the
+      # checkout persisted — App token, SSH key, or ambient — so the git commands
+      # are auth-agnostic.
+      - if: github.event_name == 'merge_group'
+        id: push
+        working-directory: ${{ inputs.content-dir }}
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          base="${{ github.event.merge_group.base_ref }}"; base="${base#refs/heads/}"
+          target="${{ inputs.connect-branch-prefix }}${base}"
+          git config user.name  "connect-deploy[bot]"
+          git config user.email "connect-deploy[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Deploy ${base}: regenerate manifest"
+          git push --force-with-lease origin "HEAD:${target}"
+          echo "published=true" >> "$GITHUB_OUTPUT"
+
+  # Aggregator gate. A green connect-deploy must mean the manifest was actually
+  # published: a mis-gated publish step leaves `deploy` green (skipped steps
+  # don't fail a job) and a skipped required check counts as passed, so without
+  # this gate a queue could merge having deployed nothing. List THIS job —
+  # `connect-deploy / guard` — in the consumer's required checks, not `deploy`.
+  guard:
+
+    needs: deploy
+    if: always()
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Assert the publish ran on merge_group
+        env:
+          EVENT: ${{ github.event_name }}
+          DEPLOY_RESULT: ${{ needs.deploy.result }}
+          PUBLISHED: ${{ needs.deploy.outputs.published }}
+        run: |
+          if [ "$DEPLOY_RESULT" != "success" ] && [ "$DEPLOY_RESULT" != "skipped" ]; then
+            echo "::error::connect-deploy: deploy job concluded '$DEPLOY_RESULT'"
+            exit 1
+          fi
+          if [ "$EVENT" = "merge_group" ] && [ "$PUBLISHED" != "true" ]; then
+            echo "::error::connect-deploy ran on merge_group but published nothing (the publish step did not run). Refusing to report success."
+            exit 1
+          fi
+          echo "connect-deploy guard OK (event=$EVENT, deploy=$DEPLOY_RESULT, published=${PUBLISHED:-<none>})"

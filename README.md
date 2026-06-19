@@ -76,6 +76,82 @@ Pass secrets by name. `secrets: inherit` does not forward secrets
 across organisations — the inherited values silently arrive blank in
 the called job.
 
+### `connect-deploy.yaml` — pull-mode Posit Connect deploys
+
+Publishes git-backed ("pull-mode") deployments to Posit Connect, for a
+Connect that sits on an internal network a GitHub runner cannot reach.
+Deployment is inverted: Connect polls a branch and redeploys when it
+advances. The workflow regenerates the per-deploy `manifest.json` and
+commits it — from inside the merge queue — to a derived `connect-<base>`
+branch (`connect-main`, `connect-test`) that Connect watches. Source
+branches stay clean, with no manifest and no per-PR manifest churn.
+
+Caller workflow in the deployment repo (default `auth: app` — push
+`connect-*` with a GitHub App, paired with a locked `connect-*` ruleset):
+
+```yaml
+name: connect-deploy
+on:
+  pull_request:
+  merge_group:
+
+jobs:
+  connect-deploy:
+    uses: BristolMyersSquibb/blockr.ci/.github/workflows/connect-deploy.yaml@main
+    permissions:
+      contents: read
+    with:
+      r-version: "4.4.2"
+    secrets:
+      APP_ID: ${{ secrets.CONNECT_DEPLOY_APP_ID }}
+      APP_PRIVATE_KEY: ${{ secrets.CONNECT_DEPLOY_APP_PRIVATE_KEY }}
+```
+
+For a repo whose org permits deploy keys but not Apps, use
+`auth: deploy-key` — push `connect-*` over SSH with a repo deploy key on
+the `connect-*` bypass. Same locked-branch guarantee as the App, with the
+least setup:
+
+```yaml
+jobs:
+  connect-deploy:
+    uses: BristolMyersSquibb/blockr.ci/.github/workflows/connect-deploy.yaml@main
+    permissions:
+      contents: read
+    with:
+      auth: deploy-key
+      r-version: "4.4.2"
+    secrets:
+      DEPLOY_KEY: ${{ secrets.CONNECT_DEPLOY_SSH_KEY }}
+```
+
+For a repo that can provision neither an App nor a deploy key (e.g. a
+locked-down EMU org where both are gated), use `auth: token` — push
+`connect-*` with the workflow's own `GITHUB_TOKEN`, no App, no
+environment, no secrets, paired with an **unprotected** `connect-*`:
+
+```yaml
+jobs:
+  connect-deploy:
+    uses: BristolMyersSquibb/blockr.ci/.github/workflows/connect-deploy.yaml@main
+    permissions:
+      contents: write
+    with:
+      auth: token
+      r-version: "4.4.2"
+```
+
+The job is a no-op on `pull_request` (so the required check stays green
+and the PR is queueable) and the real publisher on `merge_group`. In app
+mode, pass secrets by name. The `permissions:` differ by mode — see
+[Auth modes](#auth-modes) for why, and for the security pairing each
+mode requires.
+
+The full consumer-side configuration — GitHub App, branch ruleset,
+protected environment, required checks — is operational repo settings,
+mostly one-time, and several pieces are load-bearing for security. See
+[Connect deployment setup](#connect-deployment-setup).
+
 ## Pipeline
 
 | Trigger | Jobs |
@@ -143,6 +219,23 @@ the queue is reserved for `main`.
 
 No inputs.
 
+### `connect-deploy.yaml`
+
+| Input | Type | Default | Purpose |
+|---|---|---|---|
+| `r-version` | string | `4.4.2` | R version installed from Posit's centos-8 build; becomes `platform` in the manifest, so it must be an R version Connect offers. |
+| `repos` | string | `…/centos8/latest` | centos8 PPM binary repo the deps install from, recorded verbatim in the manifest as the repo Connect restores from. Default is the rolling centos8 snapshot; pass a dated snapshot (`…/__linux__/centos8/2026-06-01`) to freeze versions, or an internal mirror serving RHEL 8 binaries. See [Binary installs on Connect](#binary-installs-on-connect). |
+| `content-dir` | string | `.` | Directory holding the app and receiving the manifest. |
+| `connect-branch-prefix` | string | `connect-` | Target branch is `<prefix><base>`. |
+| `auth` | string | `app` | Push identity for `connect-*`. `app`: GitHub App token + protected `environment` (locked `connect-*` via App-on-bypass). `deploy-key`: SSH deploy key + protected `environment` (locked `connect-*` via key-on-bypass, least setup). `token`: the workflow's own `GITHUB_TOKEN`, no App/key/environment/secrets (unprotected `connect-*`). See [Auth modes](#auth-modes). |
+| `environment` | string | `connect` | Consumer-side protected environment holding the App or deploy-key credentials (`auth: app` and `deploy-key`). |
+
+Secrets: `APP_ID` / `APP_PRIVATE_KEY` (the deploy GitHub App) are
+required in `app` mode; `DEPLOY_KEY` (the SSH private key) is required in
+`deploy-key` mode; `token` mode needs none. The caller's `permissions:`
+differ by mode (`contents: read` for `app` and `deploy-key`, `contents:
+write` for `token`) — see [Auth modes](#auth-modes).
+
 ### Example with inputs
 
 ```yaml
@@ -169,6 +262,267 @@ jobs:
 - **Reverse-dependency checks** against configurable downstream packages — merge-queue gate
 - **pkgdown deploy** — site build + deploy to `gh-pages` on push to `main`
 - **parse-deps** — pin a downstream revdep ref via a `` ```deps `` block in the PR body, read fresh when the merge queue runs revdep
+- **connect-deploy** — pull-mode Posit Connect deploys: regenerate the manifest in the merge queue and publish it to a `connect-*` branch Connect polls — separate reusable workflow
+
+## Connect deployment setup
+
+`connect-deploy.yaml` ships only the reusable workflow body. The
+configuration below is one-time settings on the deployment repo. Two
+layers are load-bearing for security — the `connect-*` ruleset and the
+protected environment — and both are explained in full.
+
+### How it works
+
+Connect periodically polls each git-backed content item (default every
+15 minutes) and redeploys when the watched branch advances, including
+when a PR merges into it. The watched directory must contain a
+`manifest.json`, which pins the package set, the R version, and the
+content metadata Connect restores from.
+
+For each source branch (`main`, `test`) the workflow maintains a derived
+branch `connect-<source>` carrying the app tree plus the regenerated
+`manifest.json`. Connect watches the `connect-*` branches, never the
+source branches. The manifest is generated and committed from the
+`merge_group` job, and `connect-*` is writable by exactly one identity —
+the deploy GitHub App.
+
+1. A PR is opened against a source branch. The repo's own validation
+   (lint, etc.) runs on `pull_request` and gates queueing.
+2. `connect-deploy` runs on `pull_request` as a no-op success, so the PR
+   is mergeable, and does its real work only on `merge_group`.
+3. Approved + green → added to the merge queue.
+4. In the queue, the job checks out the queue ref, derives the target
+   `connect-<base>` from `merge_group.base_ref`, sets up R, installs the
+   app's dependencies, runs `writeManifest()`, commits, and force-pushes
+   to `connect-<base>` using the App token.
+5. If that job fails the PR is ejected; otherwise the merge completes and
+   Connect picks up `connect-<base>` on its next poll.
+
+Writing from the queue is deliberate: the queue serialises, so
+`connect-*` writes never race, and "ejected" is equivalent to "the
+commit failed". Keep real validation on the `pull_request` side (or use
+batch size 1) so no other check can eject a PR after the push.
+
+### Required-check topology
+
+Each required check does real work in exactly one event and reports a
+cheap success in the other, so nothing double-runs:
+
+- The repo's validation (lint, etc.): real on `pull_request`, gated to
+  skip on `merge_group` with `if: github.event_name == 'pull_request'`.
+- `connect-deploy`: no-op on `pull_request`, real on `merge_group`.
+
+A skipped required check counts as **passed** by the merge queue — that
+is what makes the symmetry work, and it is also a footgun: a publish step
+skipped on `merge_group` by a too-broad `if` would let the queue merge
+having deployed nothing. The workflow guards against this with an
+aggregator `guard` job that asserts the publish actually ran. List
+`connect-deploy / guard` (not `connect-deploy / deploy`) in the required
+checks.
+
+### Auth modes
+
+The `auth` input picks which token pushes `connect-*`. It only chooses
+the *pusher*; it cannot enforce whether `connect-*` is locked — that is a
+repo-side ruleset the workflow can't reach. So each mode must be paired
+with the matching `connect-*` protection, and that pairing is the
+consumer's responsibility.
+
+**`app` (default).** Mint a short-lived token from a dedicated GitHub App
+and push with it. The caller declares `permissions: contents: read` so
+its ambient `GITHUB_TOKEN` stays read-only — the App token does the
+write. Pair with the locked `connect-*` ruleset, App, and environment
+described below.
+
+**`deploy-key`.** Push `connect-*` over SSH with a repo deploy key. Like
+`app`, the key does the write, so the caller declares `permissions:
+contents: read`. It gives the same locked-`connect-*` guarantee as the
+App — a deploy key is a first-class ruleset bypass actor — with the least
+setup (no App to register or install), at the cost of a long-lived key
+(manual rotation, no auto-expiry), one per repo, granting repo-wide write
+(still constrained by branch rules, so it cannot touch a protected
+`main`). Pair with a `connect-*` ruleset that bypasses the deploy key.
+
+**`token`.** Push `connect-*` with the workflow's own `GITHUB_TOKEN` — no
+App, no environment, no secrets — and declare `permissions: contents:
+write`. For a repo that can't provision a bypass-able identity (an EMU
+org where App creation is gated, deploy keys are disabled, fine-grained
+PATs are policy-capped), this is the only way to run the pipeline. Pair
+with an **unprotected** `connect-*`: anyone with repo write — or any pull
+request's own workflow — can then push `connect-*` and thereby deploy, so
+integrity rests **entirely** on the *source* branch being protected.
+`connect-*` is a derived artifact, and nothing technically guarantees it
+only ever holds a build of the source.
+
+The caller's `permissions:` are load-bearing, and they differ by mode
+because the *pusher* differs: `token` mode pushes with the ambient
+`GITHUB_TOKEN`, so its caller grants `contents: write`; `app` and
+`deploy-key` push with the App token / SSH key, so the ambient token only
+needs `contents: read`. The reusable workflow itself declares **no**
+`permissions:` — a reusable workflow may not request *more* than its
+caller grants, so a fixed `contents: write` in the workflow would make
+GitHub reject every `read`-granting caller (`app`, `deploy-key`) with a
+`startup_failure` before any job runs. Declaring none defers to the
+caller, so each mode grants exactly what it needs. Set the caller's
+`permissions:` explicitly per the examples — an omitted block falls back
+to the repo default, which may not match the mode.
+
+The `connect-*` ruleset and environment sections below apply to both
+locked modes (**`app`** and **`deploy-key`**); the GitHub App and deploy
+key sections are the per-mode identity setup. In `token` mode you skip
+all of them and leave `connect-*` unprotected.
+
+### The `connect-*` ruleset
+
+A single repository ruleset targeting `connect-*`:
+
+- Enable **Restrict creations**, **Restrict updates**, **Restrict
+  deletions** — each means "only bypass actors may create / update /
+  delete the matching ref".
+- Bypass list: the deploy identity only — the App in `app` mode or the
+  deploy key in `deploy-key` mode — mode **Always allow** (it pushes
+  directly; it does not open PRs).
+
+Nobody but that identity can create, update (including force-push), or
+delete any `connect-*` branch. One ruleset covers every derived branch;
+adding a source branch later needs no ruleset change.
+
+### Deploy identity — a dedicated GitHub App
+
+In `app` mode, use a dedicated GitHub App (installed in
+`BristolMyersSquibb`, `contents: write`), **not** the ambient
+`GITHUB_TOKEN` (available to every workflow, so any PR-added workflow
+could push) and **not** a PAT (long-lived, broad, burns a seat). The
+workflow mints a short-lived installation token via
+`actions/create-github-app-token`; the caller declares `permissions:
+contents: read` so its ambient `GITHUB_TOKEN` stays read-only. Put the
+App on the `connect-*` ruleset bypass.
+
+### Deploy identity — a deploy key
+
+In `deploy-key` mode, generate an `ed25519` keypair, add the **public**
+half to the deployment repo as a deploy key with write access, store the
+**private** half as the `DEPLOY_KEY` environment secret, and add the
+deploy key to the `connect-*` ruleset bypass. `actions/checkout`'s
+`ssh-key` input writes the key, points the remote at SSH, and seeds
+`known_hosts`, so the push authenticates over SSH and the publish step
+stays auth-agnostic. The trade-off vs the App: the key is long-lived
+(rotate it manually) and repo-scoped, not a short-lived per-run token.
+
+### Environment scoping — the second layer
+
+Store the deploy credential — the App ID and private key in `app` mode,
+or `DEPLOY_KEY` in `deploy-key` mode — as **environment** secrets on a
+protected environment (`connect`), not as repo secrets. Set its
+deployment-branch policy to allow the queue refs the publisher runs on:
+`gh-readonly-queue/main/*` (and `gh-readonly-queue/test/*`, one per
+source branch). Environment secrets are released only to jobs that
+reference the environment and pass its rules, so only the `merge_group`
+publisher can use the credential.
+
+This is the accepted credential-scoping tradeoff: because the queue ref
+is `gh-readonly-queue/<base>/*`, the environment must allow that ref
+pattern rather than just the source branch. A PR only reaches the queue
+after approval and PR checks — the same human gate as merging.
+
+Net: the deploy identity is the only one that can write `connect-*`
+(ruleset), and the only thing that can act as it is the queue publisher
+(environment). Both layers are load-bearing.
+
+### Source-branch protection + merge queue
+
+Each source branch (`main`, `test`) is fully protected — PR required, no
+bypass, no direct push — with a merge queue enabled and the merge method
+left as **merge commit**. Required status checks: the repo's validation
+plus `connect-deploy / guard`. Connect watches `connect-main` /
+`connect-test`, never the source branches.
+
+### Declaring the deploy app's dependencies
+
+The deploy directory is structured like an R package — no `renv`, no
+committed lockfile. A `DESCRIPTION` declares runtime dependencies under
+`Imports`; the workflow installs them with
+`r-lib/actions/setup-r-dependencies` and runs `writeManifest()`.
+`rsconnect` is build-time tooling the workflow installs; keep it out of
+the `DESCRIPTION`.
+
+`writeManifest()` records a package only when the app's own code
+references it. So:
+
+- **Required deps** go in `Imports` — always shipped.
+- **Optional two-path deps** (a `requireNamespace()` graceful-degradation
+  path) go in `Suggests` — still shipped, because the code names them.
+- A package the app **never names** — a transitive / UX-only dep — is
+  not auto-detected. Keep it in `Suggests` (so it installs) and add a
+  top-level `dependencies.R` containing `requireNamespace("pkg")`, which
+  the manifest scanner reads. The helper is scan-only; Connect runs the
+  app, not loose scripts.
+- **Dev/check tooling** (`testthat`, …) stays in `Suggests` for `R CMD
+  check` and is also listed in `Config/Needs/tests`, which the guard
+  subtracts so it is neither deployed nor flagged.
+
+After `writeManifest()`, the `check-suggests` action fails the deploy if
+a deploy-optional `Suggests` package (Suggests minus `Config/Needs/tests`
+minus base packages) is absent from the manifest, with a pointer to the
+`requireNamespace()` / `dependencies.R` fix — so a missing optional dep
+can't silently never reach Connect. A worked fixture lives at
+`.github/actions/tests/fixtures/connect-app`.
+
+### Binary installs on Connect
+
+`writeManifest()` records, per package, the repository Connect restores
+from and the platform the package was built for. If that repository is a
+*source* repository — or the recorded build platform doesn't match
+Connect's — Connect compiles the whole closure from source: slow, and a
+hard failure for any package needing a toolchain Connect lacks (e.g. a
+Rust package with no `rustc`).
+
+So the deploy job builds the manifest on the **target platform**. It runs
+in a fixed `rockylinux:8` container — Rocky 8 is ABI-compatible with RHEL
+8, and PPM serves both under the `centos8` slug — installs R from Posit's
+centos-8 build, and installs deps from the centos8 PPM. Every package then
+records a centos8 binary: `RemotePkgPlatform`
+`x86_64-pc-linux-gnu-rocky-8.9`, `RemoteRepos` and `Repository` the
+`centos8` URL, `Built` the centos8 R. A RHEL 8.6 Connect restores those
+binaries directly, no compiler needed.
+
+Two details keep the recorded URL a *binary* URL:
+
+- The deploy installs from, and records, the `repos` input — the centos8
+  PPM (`…/__linux__/centos8/<snapshot>`). RHEL 8.x → `centos8` (there is
+  no `rhel8`); RHEL 9 → `rhel9`.
+- `writeManifest` runs with renv's PPM rewrite off
+  (`RENV_CONFIG_PPM_ENABLED=FALSE`), so renv keeps the literal
+  `__linux__/centos8` URL instead of genericising it to a distro-less
+  source URL.
+
+The platform is fixed, not a knob — the container image and the disabled
+genericisation are correctness properties of a RHEL deploy. To pin
+versions, set `repos` to a dated centos8 snapshot, and pick an `r-version`
+that PPM publishes centos8 binaries for and that Connect has installed.
+
+### Bootstrap (one-time, manual)
+
+Out of scope for the workflow, done once when wiring up a deployment:
+create the Connect content item, point it at the repo + `connect-<base>`
+branch + `content-dir`, and configure the Connect-side git read
+credential and poll frequency. The first `connect-<base>` branch may need
+seeding by one manual queue run before Connect is wired up.
+
+### Footguns
+
+- **The environment must allow `gh-readonly-queue/<base>/*`**, not just
+  the source branch, or the publisher cannot reach the credential it
+  needs (the App key or the deploy key) in `app` / `deploy-key` mode.
+- **No `pull_request_target`** in the deployment repo: it runs on the
+  base ref with a PR's context and can satisfy a branch-scoped
+  environment, leaking its secrets. The caller pattern here uses plain
+  `pull_request`; keep it that way.
+- **Runner OS need not match Connect's OS.** The manifest pins package
+  versions and the PPM repo URL; Connect restores against that URL with
+  its own platform via PPM content negotiation. Only the R version and
+  package versions must be resolvable on Connect — pick `r-version` from
+  Connect's available Rs.
 
 ## Dependency resolution
 

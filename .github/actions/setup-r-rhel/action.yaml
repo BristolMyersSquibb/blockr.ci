@@ -1,0 +1,105 @@
+name: Set up R and dependencies on RHEL/Rocky
+description: >
+  Installs a pinned R from Posit's centos-8 build, bootstraps pak, and installs
+  the working-directory's dependencies (deps::.) plus any extra-packages from a
+  centos8 binary repo — pak resolving RHEL system requirements via dnf, with the
+  package library and pak cache cached across runs. The RHEL analogue of setup-r
+  + setup-r-dependencies (both apt-only), used so a manifest generated afterwards
+  records centos8 binaries (RemotePkgPlatform / RemoteRepos / Built) that a RHEL
+  8 Connect restores directly instead of recompiling from source. Run inside a
+  glibc RHEL 8 container (e.g. rockylinux:8), as root.
+
+inputs:
+
+  r-version:
+    description: R version to install from cdn.posit.co/r/centos-8.
+    required: false
+    default: "4.4.2"
+
+  repos:
+    description: >
+      centos8 PPM binary repo pak installs from, recorded as the manifest's
+      package repo. Default is the rolling centos8 snapshot; pass a dated
+      snapshot (.../__linux__/centos8/2026-06-01) to freeze versions.
+    required: false
+    default: https://packagemanager.posit.co/cran/__linux__/centos8/latest
+
+  working-directory:
+    description: Directory whose DESCRIPTION declares the dependencies.
+    required: false
+    default: "."
+
+  extra-packages:
+    description: Space-separated extra pak package refs (e.g. any::rsconnect).
+    required: false
+    default: ""
+
+runs:
+
+  using: composite
+
+  steps:
+
+    # EPEL + CRB (powertools on Rocky) carry the -devel sysreqs pak resolves via
+    # dnf, and some of the R rpm's own dependencies. gcc/g++/gfortran/make are
+    # the compiler toolchain any source or GitHub package build needs;
+    # setup-r-dependencies assumes the runner image supplies it, but a bare
+    # rockylinux:8 does not. R installs to /opt/R/<ver>; symlink it onto PATH so
+    # the Rscript {0} step below resolves. Steer the library and pak's caches to
+    # fixed paths the cache step can key on.
+    - name: Install R and the build toolchain (Posit centos-8 build)
+      shell: bash
+      run: |
+        set -euo pipefail
+        dnf install -y dnf-plugins-core epel-release
+        dnf config-manager --set-enabled powertools
+        dnf install -y gcc gcc-c++ gcc-gfortran make
+        rv='${{ inputs.r-version }}'
+        curl -fsSL -o /tmp/R.rpm "https://cdn.posit.co/r/centos-8/pkgs/R-${rv}-1-1.x86_64.rpm"
+        dnf install -y /tmp/R.rpm
+        ln -sf "/opt/R/${rv}/bin/R" /usr/local/bin/R
+        ln -sf "/opt/R/${rv}/bin/Rscript" /usr/local/bin/Rscript
+        mkdir -p /cache/R-lib
+        {
+          echo "R_LIBS_USER=/cache/R-lib"
+          echo "R_USER_CACHE_DIR=/cache/r-user"
+        } >> "$GITHUB_ENV"
+        Rscript -e 'cat(R.version.string, "on", R.version$platform, "\n")'
+
+    # Library + pak cache, keyed on R version and the app's DESCRIPTION. A
+    # DESCRIPTION change misses and reinstalls; the restore-key still seeds the
+    # prior library so pak installs only the delta.
+    - name: Cache R library + pak cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          /cache/R-lib
+          /cache/r-user
+        key: setup-r-rhel-rocky8-R${{ inputs.r-version }}-${{ hashFiles(format('{0}/DESCRIPTION', inputs.working-directory)) }}
+        restore-keys: |
+          setup-r-rhel-rocky8-R${{ inputs.r-version }}-
+
+    # pak ships a self-contained Linux binary at the source path (matched to the
+    # running R), so it installs without a compiler; skip it when the cache
+    # restored it. PKG_INCLUDE_LINKINGTO keeps LinkingTo deps (e.g. AsioHeaders
+    # via websocket) that binary installs prune but writeManifest's renv snapshot
+    # requires (r-lib/pak#485). pak reads GITHUB_PAT from the environment — set
+    # it at the job level in the caller, as setup-r-dependencies expects — to
+    # authenticate any GitHub Remotes deps (else unauthenticated 60-req/hr 403s).
+    - name: Install pak + dependencies from the centos8 binary repo
+      shell: Rscript {0}
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        PPM: ${{ inputs.repos }}
+        EXTRA: ${{ inputs.extra-packages }}
+        PKG_INCLUDE_LINKINGTO: "true"
+      run: |
+        options(repos = c(CRAN = Sys.getenv("PPM")))
+        if (!requireNamespace("pak", quietly = TRUE)) {
+          install.packages("pak", repos = sprintf(
+            "https://r-lib.github.io/p/pak/stable/%s/%s/%s",
+            .Platform$pkgType, R.Version()$os, R.Version()$arch
+          ))
+        }
+        extra <- strsplit(trimws(Sys.getenv("EXTRA")), "[[:space:]]+")[[1]]
+        pak::pkg_install(c("deps::.", extra[nzchar(extra)]))

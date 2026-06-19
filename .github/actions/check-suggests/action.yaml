@@ -1,0 +1,29 @@
+name: Check Suggests in manifest
+description: >
+  Fail the deploy if a deploy-optional Suggests package (Suggests minus
+  Config/Needs/tests minus base packages) is absent from the generated
+  manifest.json — i.e. installed on the runner but never recorded, so it
+  would never reach Connect. Run after rsconnect::writeManifest().
+
+inputs:
+  content-dir:
+    description: >
+      Directory holding the deploy app's DESCRIPTION and the generated
+      manifest.json.
+    required: false
+    default: '.'
+
+runs:
+  using: composite
+  steps:
+    - name: Ensure jsonlite
+      shell: bash
+      run: |
+        Rscript -e 'if (!requireNamespace("jsonlite", quietly = TRUE)) install.packages("jsonlite", repos = Sys.getenv("RSPM", unset = "https://cloud.r-project.org"))'
+
+    - name: Check
+      shell: bash
+      env:
+        CONTENT_DIR: ${{ inputs.content-dir }}
+        SCRIPT_DIR: ${{ github.action_path }}
+      run: bash "$SCRIPT_DIR/check-suggests.sh"

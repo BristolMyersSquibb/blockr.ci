@@ -1,0 +1,16 @@
+Package: connectapp
+Title: Connect-Deploy Smoke Fixture
+Version: 0.0.0.9000
+Description: Minimal deploy app exercising the connect-deploy pipeline: the
+    connect-smoke workflow installs these declared dependencies, runs
+    writeManifest(), and asserts the manifest. Not a real application.
+Imports:
+    shiny,
+    websocket
+Suggests:
+    glue,
+    jsonlite,
+    testthat
+Config/Needs/tests: testthat
+License: GPL-3
+Encoding: UTF-8

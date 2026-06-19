@@ -1,0 +1,143 @@
+# Smoke test for the connect-deploy pipeline, run in a RHEL 8 (Rocky 8)
+# container so the deps installed — and the platform stamped into the manifest
+# (RemotePkgPlatform / RemoteRepos / Built) — are the centos8 binaries Connect
+# restores on RHEL 8.6, not the runner's ubuntu builds. That is the whole point:
+# a manifest built on ubuntu records ubuntu binaries, which a RHEL Connect can't
+# use, so it recompiles from source. Mirrors the deploy job: the same
+# setup-r-rhel action, the same writeManifest invocation, the same check-suggests
+# — minus the git push. Asserts the manifest records centos8, not ubuntu, and
+# still carries the LinkingTo closure (websocket -> AsioHeaders).
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/connect-deploy.yaml'
+      - '.github/workflows/connect-smoke.yaml'
+      - '.github/actions/setup-r-rhel/**'
+      - '.github/actions/check-suggests/**'
+      - '.github/actions/tests/fixtures/connect-app/**'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/connect-deploy.yaml'
+      - '.github/workflows/connect-smoke.yaml'
+      - '.github/actions/setup-r-rhel/**'
+      - '.github/actions/check-suggests/**'
+      - '.github/actions/tests/fixtures/connect-app/**'
+
+name: connect-smoke
+
+permissions:
+  contents: read
+
+jobs:
+
+  smoke:
+
+    runs-on: ubuntu-latest
+    container:
+      image: rockylinux:8
+
+    env:
+      # Mirrors the deploy job: pak/renv read GITHUB_PAT for GitHub Remotes deps
+      # (the all-CRAN fixture has none, so this is for parity, not coverage).
+      GITHUB_PAT: ${{ github.token }}
+      PPM: https://packagemanager.posit.co/cran/__linux__/centos8/latest
+
+    steps:
+
+      # The base image carries no git, which actions/checkout needs.
+      - name: Install git
+        run: dnf install -y git
+
+      - uses: actions/checkout@v5
+
+      - uses: ./.github/actions/setup-r-rhel
+        with:
+          repos: ${{ env.PPM }}
+          working-directory: .github/actions/tests/fixtures/connect-app
+          extra-packages: any::rsconnect
+
+      # Record the literal centos8 URL: with renv's PPM rewrite off, both the
+      # package-level Repository and description$RemoteRepos keep the full binary
+      # URL instead of a distro-less source URL, so a verbatim-restoring Connect
+      # installs binaries. Same invocation as the deploy job.
+      - name: Generate manifest
+        working-directory: .github/actions/tests/fixtures/connect-app
+        shell: Rscript {0}
+        run: |
+          options(repos = c(CRAN = Sys.getenv("PPM")))
+          Sys.setenv(RENV_CONFIG_PPM_ENABLED = "FALSE")
+          rsconnect::writeManifest(appDir = ".")
+
+      - name: Check suggests
+        uses: ./.github/actions/check-suggests
+        with:
+          content-dir: .github/actions/tests/fixtures/connect-app
+
+      - name: Assert manifest is RHEL-built
+        working-directory: .github/actions/tests/fixtures/connect-app
+        shell: Rscript {0}
+        run: |
+          m <- jsonlite::fromJSON("manifest.json", simplifyVector = FALSE)
+          pkgs <- names(m$packages)
+          cat("manifest packages:", paste(sort(pkgs), collapse = ", "), "\n")
+
+          g <- m$packages$glue
+          repo <- g$Repository
+          rrepo <- g$description$RemoteRepos
+          plat <- g$description$RemotePkgPlatform
+          cat("glue Repository:", repo %||% "<none>", "\n")
+          cat("glue RemoteRepos:", rrepo %||% "<none>", "\n")
+          cat("glue RemotePkgPlatform:", plat %||% "<none>", "\n")
+          cat("glue Built:", g$description$Built %||% "<none>", "\n")
+
+          # The whole point: a centos8 build, not ubuntu, so a RHEL Connect
+          # restores binaries rather than recompiling from source.
+          if (!is.null(plat) && grepl("ubuntu", plat)) {
+            stop("manifest records an ubuntu build platform: ", plat)
+          }
+          if (is.null(rrepo) || !grepl("centos8", rrepo)) {
+            stop("RemoteRepos is not a centos8 repo: ", rrepo %||% "<none>")
+          }
+          # Belt-and-suspenders: the package-level Repository must also keep the
+          # full centos8 URL, not a genericised distro-less source URL.
+          if (is.null(repo) || !grepl("centos8", repo)) {
+            stop("package-level Repository was genericised, not centos8: ",
+                 repo %||% "<none>")
+          }
+
+          # AsioHeaders = the LinkingTo regression marker (pruned by binary
+          # installs unless PKG_INCLUDE_LINKINGTO keeps it).
+          missing <- setdiff(
+            c("shiny", "jsonlite", "glue", "websocket", "AsioHeaders"), pkgs
+          )
+          if (length(missing)) {
+            stop("manifest missing expected packages: ",
+                 paste(missing, collapse = ", "))
+          }
+
+      # Regression guard for the deploy job's publish step, which runs git as
+      # root in this same container against the host-mounted, runner-uid-owned
+      # workspace — needing a re-asserted safe.directory or it fails for dubious
+      # ownership. That step is merge_group-only so it never runs in this repo's
+      # CI (twice this class of bug only surfaced on blockr.uat). This reproduces
+      # its git preconditions (commit locally, no push) and is self-proving: it
+      # first asserts a bare git IS refused, so the guard can't pass vacuously,
+      # then that re-asserting safe.directory clears it.
+      - name: Smoke the publish git preconditions
+        working-directory: .github/actions/tests/fixtures/connect-app
+        run: |
+          echo "uid=$(id -u)  workspace owner uid=$(stat -c '%u' "$GITHUB_WORKSPACE")"
+          if git rev-parse --git-dir >/dev/null 2>&1; then
+            echo "::error::publish guard is vacuous: git as root accepted the workspace with no safe.directory exception, so the dubious-ownership condition the deploy push step hits is not reproduced here"
+            exit 1
+          fi
+          echo "confirmed: git as root is refused on the host-owned workspace without safe.directory"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git config user.name  "connect-deploy[bot]"
+          git config user.email "connect-deploy[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "smoke: publish preconditions" --allow-empty
+          git rev-parse HEAD >/dev/null
+          echo "publish git preconditions OK after re-asserting safe.directory"
