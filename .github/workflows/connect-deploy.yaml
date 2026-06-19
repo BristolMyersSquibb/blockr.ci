@@ -212,16 +212,21 @@ jobs:
         with:
           content-dir: ${{ inputs.content-dir }}
 
-      # working-directory anchors git in the checkout: inside a container the
-      # default step CWD is the image's WORKDIR (/), not GITHUB_WORKSPACE, so a
-      # bare git would run outside the repo ("fatal: not in a git directory").
-      # The push credential is whatever the checkout persisted — the App token in
-      # app mode, the ambient GITHUB_TOKEN in token mode — so the git commands
-      # below are auth-agnostic.
+      # git runs as root inside the container, but checkout puts the workspace on
+      # a host-mounted volume owned by the runner uid, not root — so git rejects
+      # it for dubious ownership, which surfaces as "fatal: not in a git
+      # directory" on the first command. checkout's own safe.directory exception
+      # was written under a temporary HOME that has since been restored, so
+      # re-assert it here; HOME=/github/home persists across the step, so
+      # --global lands where git reads. (working-directory is for parity with the
+      # other steps, not load-bearing.) The push credential is whatever the
+      # checkout persisted — App token, SSH key, or ambient — so the git commands
+      # are auth-agnostic.
       - if: github.event_name == 'merge_group'
         id: push
         working-directory: ${{ inputs.content-dir }}
         run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           base="${{ github.event.merge_group.base_ref }}"; base="${base#refs/heads/}"
           target="${{ inputs.connect-branch-prefix }}${base}"
           git config user.name  "connect-deploy[bot]"

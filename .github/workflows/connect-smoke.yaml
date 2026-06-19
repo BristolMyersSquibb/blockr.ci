@@ -116,3 +116,28 @@ jobs:
             stop("manifest missing expected packages: ",
                  paste(missing, collapse = ", "))
           }
+
+      # Regression guard for the deploy job's publish step, which runs git as
+      # root in this same container against the host-mounted, runner-uid-owned
+      # workspace — needing a re-asserted safe.directory or it fails for dubious
+      # ownership. That step is merge_group-only so it never runs in this repo's
+      # CI (twice this class of bug only surfaced on blockr.uat). This reproduces
+      # its git preconditions (commit locally, no push) and is self-proving: it
+      # first asserts a bare git IS refused, so the guard can't pass vacuously,
+      # then that re-asserting safe.directory clears it.
+      - name: Smoke the publish git preconditions
+        working-directory: .github/actions/tests/fixtures/connect-app
+        run: |
+          echo "uid=$(id -u)  workspace owner uid=$(stat -c '%u' "$GITHUB_WORKSPACE")"
+          if git rev-parse --git-dir >/dev/null 2>&1; then
+            echo "::error::publish guard is vacuous: git as root accepted the workspace with no safe.directory exception, so the dubious-ownership condition the deploy push step hits is not reproduced here"
+            exit 1
+          fi
+          echo "confirmed: git as root is refused on the host-owned workspace without safe.directory"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git config user.name  "connect-deploy[bot]"
+          git config user.email "connect-deploy[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "smoke: publish preconditions" --allow-empty
+          git rev-parse HEAD >/dev/null
+          echo "publish git preconditions OK after re-asserting safe.directory"
