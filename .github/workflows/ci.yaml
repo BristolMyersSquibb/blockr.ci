@@ -40,6 +40,12 @@
 # merge-queue `check` matrix is unaffected and keeps its cross-platform
 # release/devel/oldrel spread.
 #
+# The smoke and check R CMD check jobs fail on NOTEs by default
+# (`error-on: '"note"'`), holding the fleet's 0-errors/0-warnings/
+# 0-notes bar.  A deploy app that declares unused Imports on purpose —
+# so the Connect manifest ships them — passes `error-on: '"warning"'`
+# to tolerate the resulting "All declared Imports should be used" NOTE.
+#
 # pkgdown site deploy lives in a separate reusable workflow
 # (pkgdown.yaml).  Consumers that want a deployed site add a second
 # workflow file calling pkgdown.yaml on `push: branches: main`.
@@ -78,6 +84,19 @@ on:
           so its PR checks — notably the smoke R CMD check — exercise the
           deployment target.  The merge-queue check matrix is unaffected
           and keeps its cross-platform release/devel/oldrel spread.
+        type: string
+        default: ''
+        required: false
+
+      error-on:
+        description: >
+          R CMD check severity that fails the smoke and check jobs,
+          passed through to r-lib/actions/check-r-package's error-on.
+          Default '' fails on any NOTE, holding the
+          0-errors/0-warnings/0-notes bar.  A deploy app that declares
+          unused Imports on purpose — so the Connect manifest ships
+          them — sets '"warning"' to tolerate the resulting "All
+          declared Imports should be used" NOTE.
         type: string
         default: ''
         required: false
@@ -229,6 +248,7 @@ jobs:
       - uses: r-lib/actions/check-r-package@v2
         with:
           upload-snapshots: true
+          error-on: ${{ inputs.error-on || '"note"' }}
 
   # ── pkgdown dev build (PR gate, no deploy) ───────────────────────────
 
@@ -403,6 +423,7 @@ jobs:
       - uses: r-lib/actions/check-r-package@v2
         with:
           upload-snapshots: true
+          error-on: ${{ inputs.error-on || '"note"' }}
 
   # ── Aggregate check-matrix result for the required-checks list ───────
   #
