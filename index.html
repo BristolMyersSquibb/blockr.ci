@@ -181,7 +181,7 @@
 <tr>
 <td><code>pull_request</code></td>
 <td>
-<code>lint</code>, <code>smoke</code>, <code>pkgdown-dev</code>, <code>coverage</code> (parallel)</td>
+<code>lint</code>, <code>smoke</code>, <code>pkgdown-dev</code>, <code>coverage</code>, <code>docs</code> (parallel)</td>
 </tr>
 <tr>
 <td><code>merge_group</code></td>
@@ -212,6 +212,7 @@
 <li><code>ci / smoke</code></li>
 <li><code>ci / pkgdown-dev</code></li>
 <li><code>ci / coverage</code></li>
+<li><code>ci / docs</code></li>
 <li><code>ci / check-all</code></li>
 <li>
 <code>revdep / revdep-all</code> (if <code>revdep.yaml</code> is configured)</li>
@@ -260,7 +261,7 @@ Skipped jobs satisfy required checks, so the queue accepts the PR-only jobs as <
 <td><code>r-version</code></td>
 <td>string</td>
 <td><code>''</code></td>
-<td>R version for the PR-leg jobs (lint, smoke, pkgdown-dev, coverage). Default (<code>''</code>) runs them on <code>release</code>. Set it (e.g. <code>4.4.2</code>) for a deploy app pinned to one runtime, so its PR checks — notably the <code>smoke</code> R CMD check — exercise the deployment target. The merge-queue <code>check</code> matrix is unaffected. Pair with <code>connect-deploy.yaml</code>’s <code>r-version</code> to gate against the version Connect serves.</td>
+<td>R version for the PR-leg jobs (lint, smoke, pkgdown-dev, coverage, docs). Default (<code>''</code>) runs them on <code>release</code>. Set it (e.g. <code>4.4.2</code>) for a deploy app pinned to one runtime, so its PR checks — notably the <code>smoke</code> R CMD check — exercise the deployment target. The merge-queue <code>check</code> matrix is unaffected. Pair with <code>connect-deploy.yaml</code>’s <code>r-version</code> to gate against the version Connect serves.</td>
 </tr>
 <tr>
 <td><code>error-on</code></td>
@@ -400,6 +401,8 @@ Skipped jobs satisfy required checks, so the queue accepts the PR-only jobs as <
 <strong>pkgdown-dev</strong> — <code>pkgdown::build_site(devel = TRUE)</code>, artifact upload, no deploy — PR gate</li>
 <li>
 <strong>Coverage</strong> via <code>covr::package_coverage()</code> + codecov, optional threshold — PR gate</li>
+<li>
+<strong>Docs freshness</strong> — regenerate <code>man/</code> + <code>NAMESPACE</code> with the roxygen2 version pinned in <code>DESCRIPTION</code> (<code>Config/roxygen2/version</code>, or legacy <code>RoxygenNote</code>) and fail on drift — PR gate</li>
 <li>
 <strong>Full check</strong> — 4-platform matrix (macOS, Windows, Ubuntu devel, Ubuntu oldrel) — merge-queue gate</li>
 <li>
