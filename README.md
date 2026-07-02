@@ -156,7 +156,7 @@ mostly one-time, and several pieces are load-bearing for security. See
 
 | Trigger | Jobs |
 |---|---|
-| `pull_request` | `lint`, `smoke`, `pkgdown-dev`, `coverage` (parallel) |
+| `pull_request` | `lint`, `smoke`, `pkgdown-dev`, `coverage`, `docs` (parallel) |
 | `merge_group` | `check` matrix → `check-all`; `revdep` matrix → `revdep-all` (if configured) |
 | `push: main` | `pkgdown.yaml` deploy (if configured) |
 
@@ -184,6 +184,7 @@ To enable, in the consumer repo's branch protection settings for `main`:
    - `ci / smoke`
    - `ci / pkgdown-dev`
    - `ci / coverage`
+   - `ci / docs`
    - `ci / check-all`
    - `revdep / revdep-all` (if `revdep.yaml` is configured)
 
@@ -206,7 +207,7 @@ the queue is reserved for `main`.
 |---|---|---|---|
 | `lintr-exclusions` | newline-separated list | `''` | File paths to exclude from linting |
 | `coverage-threshold` | number | `0` | Minimum coverage percent for the `coverage` job to pass. `0` disables the gate; coverage is still uploaded to Codecov. |
-| `r-version` | string | `''` | R version for the PR-leg jobs (lint, smoke, pkgdown-dev, coverage). Default (`''`) runs them on `release`. Set it (e.g. `4.4.2`) for a deploy app pinned to one runtime, so its PR checks — notably the `smoke` R CMD check — exercise the deployment target. The merge-queue `check` matrix is unaffected. Pair with `connect-deploy.yaml`'s `r-version` to gate against the version Connect serves. |
+| `r-version` | string | `''` | R version for the PR-leg jobs (lint, smoke, pkgdown-dev, coverage, docs). Default (`''`) runs them on `release`. Set it (e.g. `4.4.2`) for a deploy app pinned to one runtime, so its PR checks — notably the `smoke` R CMD check — exercise the deployment target. The merge-queue `check` matrix is unaffected. Pair with `connect-deploy.yaml`'s `r-version` to gate against the version Connect serves. |
 | `error-on` | string | `''` | R CMD check severity that fails the `smoke` and `check` jobs (passed to `check-r-package`'s `error-on`). Default (`''`) fails on any NOTE (`'"note"'`), holding the 0-errors/0-warnings/0-notes bar. A deploy app that declares unused `Imports` on purpose (so the Connect manifest ships them) sets `'"warning"'` to tolerate the resulting NOTE. |
 | `skip-pkgdown` | boolean | `false` | DEPRECATED — pkgdown moved to `pkgdown.yaml`. No-op. |
 | `revdep-packages` | newline-separated list | `''` | DEPRECATED — moved to `revdep.yaml`. No-op. |
@@ -260,6 +261,7 @@ jobs:
 - **Smoke test** — single-platform R CMD check — PR gate
 - **pkgdown-dev** — `pkgdown::build_site(devel = TRUE)`, artifact upload, no deploy — PR gate
 - **Coverage** via `covr::package_coverage()` + codecov, optional threshold — PR gate
+- **Docs freshness** — regenerate `man/` + `NAMESPACE` with the roxygen2 version pinned in `DESCRIPTION` (`Config/roxygen2/version`, or legacy `RoxygenNote`) and fail on drift — PR gate
 - **Full check** — 4-platform matrix (macOS, Windows, Ubuntu devel, Ubuntu oldrel) — merge-queue gate
 - **Reverse-dependency checks** against configurable downstream packages — merge-queue gate
 - **pkgdown deploy** — site build + deploy to `gh-pages` on push to `main`
