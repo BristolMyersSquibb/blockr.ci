@@ -411,10 +411,19 @@ Skipped jobs satisfy required checks, so the queue accepts the PR-only jobs as <
 <strong>pkgdown deploy</strong> — site build + deploy to <code>gh-pages</code> on push to <code>main</code>
 </li>
 <li>
+<strong>Pinned Quarto</strong> — jobs that install Quarto (any package holding a <code>.qmd</code>) pass an explicit version instead of the action’s <code>release</code> default, which resolves the version through an unretried <code>curl</code> to quarto.org and has twice killed a green run — see <a href="#quarto-pin">Quarto pin</a>
+</li>
+<li>
 <strong>parse-deps</strong> — pin a downstream revdep ref via a <code>```deps</code> block in the PR body, read fresh when the merge queue runs revdep</li>
 <li>
 <strong>connect-deploy</strong> — pull-mode Posit Connect deploys: regenerate the manifest in the merge queue and publish it to a <code>connect-*</code> branch Connect polls — separate reusable workflow</li>
 </ul>
+<div class="section level3">
+<h3 id="quarto-pin">Quarto pin<a class="anchor" aria-label="anchor" href="#quarto-pin"></a>
+</h3>
+<p>Quarto reaches a job through <code>setup-r-dependencies</code>, which installs it for any package holding a <code>.qmd</code>. Left at its <code>release</code> default, that install resolves the version at job time by piping an unretried curl of <code>https://quarto.org/docs/download/_download.json</code> into <code>jq</code>; under <code>pipefail</code> any hiccup from quarto.org kills the step and takes an otherwise-green run with it. An explicit version skips the lookup and goes straight to the release asset, which the action fetches with <code>wget</code> (20 retries by default).</p>
+<p>The version lives in a <code>QUARTO_VERSION</code> workflow-level <code>env</code> in <code>ci.yaml</code>, <code>pkgdown.yaml</code> and <code>revdep.yaml</code> — bump the three together. This is the Quarto that builds every consumer’s vignettes, so treat a bump as a deliberate toolchain change rather than routine upkeep. Windows is exempt: quarto-actions installs through scoop there and never performs the lookup, so the <code>check</code> matrix leaves that leg on the default.</p>
+</div>
 </div>
 <div class="section level2">
 <h2 id="connect-deployment-setup">Connect deployment setup<a class="anchor" aria-label="anchor" href="#connect-deployment-setup"></a>
@@ -629,7 +638,7 @@ Remotes:
 
 <div class="pkgdown">
   <p></p>
-<p>Site built with <a href="https://pkgdown.r-lib.org/" class="external-link">pkgdown</a> 2.2.0.</p>
+<p>Site built with <a href="https://pkgdown.r-lib.org/" class="external-link">pkgdown</a> 2.2.1.</p>
 </div>
 
       </footer>
