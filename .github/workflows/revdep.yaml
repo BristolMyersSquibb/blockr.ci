@@ -53,6 +53,13 @@ on:
 
 name: revdep
 
+# Pinned for the reason spelled out in ci.yaml's env: block — the
+# 'release' default resolves the version through an unretried curl to
+# quarto.org, which has twice killed a job on a transient response.
+# Keep in step with ci.yaml and pkgdown.yaml.
+env:
+  QUARTO_VERSION: '1.10.18'
+
 jobs:
 
   # ── Build the per-package matrix from revdep-packages ─────────────────
@@ -128,7 +135,21 @@ jobs:
 
       - uses: r-lib/actions/setup-pandoc@v2
 
+      # Retried once: this is the only Quarto install the workflows own
+      # outright (ci.yaml's are nested inside setup-r-dependencies and
+      # can't be wrapped from here), and it gates the merge queue, where
+      # a failure ejects the PR rather than just reddening a check.  A
+      # `uses:` step can't be retried in place, hence the second copy.
       - uses: quarto-dev/quarto-actions/setup@v2
+        id: quarto
+        continue-on-error: true
+        with:
+          version: ${{ env.QUARTO_VERSION }}
+
+      - uses: quarto-dev/quarto-actions/setup@v2
+        if: steps.quarto.outcome == 'failure'
+        with:
+          version: ${{ env.QUARTO_VERSION }}
 
       # Two-pass install lets pkg's and revdep's Remotes both get followed
       # while keeping their dependency closures separate. Walking pkg's deps
@@ -169,6 +190,7 @@ jobs:
           extra-packages: ${{ steps.deps.outputs.extra-packages }}
           working-directory: revdep
           dependencies: 'c("all", "hard")'
+          quarto-version: ${{ env.QUARTO_VERSION }}
           # Bumped to invalidate caches built before the two-pass install
           # landed — those caches contain Suggests-tree leftovers (e.g. `uuid`)
           # that pak's resolver no longer pulls in but doesn't remove either.

@@ -61,6 +61,10 @@
 # Reverse-dependency checks also live in a separate reusable workflow
 # (revdep.yaml).  Consumers with downstream packages to check add a
 # second jobs: entry — see revdep.yaml for usage.
+#
+# Quarto is installed by setup-r-dependencies whenever the package holds
+# a .qmd file, and is pinned to QUARTO_VERSION below rather than left at
+# the action's 'release' default — see the env: block for why.
 
 on:
   pull_request:
@@ -146,6 +150,28 @@ on:
 
 name: ci
 
+# Quarto version installed by setup-r-dependencies (it pulls in
+# quarto-dev/quarto-actions/setup for any package holding a .qmd).
+#
+# Pinned because that action's 'release' default resolves the version at
+# job time, piping an unretried curl of
+# https://quarto.org/docs/download/_download.json straight into jq.
+# Under bash's pipefail any hiccup from quarto.org kills the step and
+# ejects an otherwise-green PR — observed both as a non-JSON body (jq
+# parse error, exit 5) and as a 30s stall then connection reset (curl
+# exit 35).  An explicit version skips the lookup entirely and goes
+# straight to the release asset, which the action fetches with wget
+# (20 retries by default).
+#
+# Windows is exempt throughout: quarto-actions installs there through
+# scoop and skips the lookup, so pinning buys nothing and would swap a
+# working install for scoop's versioned-install path.
+#
+# Bump deliberately: this is the Quarto that builds every consumer's
+# vignettes.  Latest release: https://quarto.org/docs/download/
+env:
+  QUARTO_VERSION: '1.10.18'
+
 jobs:
 
   # ── Lint (PR gate) ───────────────────────────────────────────────────
@@ -190,6 +216,7 @@ jobs:
         with:
           extra-packages: ${{ steps.deps.outputs.extra-packages }}
           needs: lint
+          quarto-version: ${{ env.QUARTO_VERSION }}
 
       - name: Write lintr config
         if: ${{ hashFiles('.lintr') == '' }}
@@ -249,6 +276,7 @@ jobs:
         with:
           extra-packages: ${{ steps.deps.outputs.extra-packages }}
           needs: check
+          quarto-version: ${{ env.QUARTO_VERSION }}
 
       - name: Remove mermaid config for CI
         run: Rscript -e 'unlink("vignettes/_metadata.yml")'
@@ -293,6 +321,7 @@ jobs:
         with:
           extra-packages: ${{ steps.deps.outputs.extra-packages }}
           needs: website
+          quarto-version: ${{ env.QUARTO_VERSION }}
 
       - name: Remove mermaid config for CI
         run: Rscript -e 'unlink("vignettes/_metadata.yml")'
@@ -340,6 +369,7 @@ jobs:
         with:
           extra-packages: ${{ steps.deps.outputs.extra-packages }}
           needs: coverage
+          quarto-version: ${{ env.QUARTO_VERSION }}
 
       - name: Compute, upload and gate coverage
         shell: Rscript {0}
@@ -441,6 +471,7 @@ jobs:
             ${{ steps.deps.outputs.extra-packages }}
             roxygen2@${{ steps.pin.outputs.version }}
           needs: roxygenize
+          quarto-version: ${{ env.QUARTO_VERSION }}
 
       - name: Regenerate documentation
         if: steps.pin.outputs.run == 'true'
@@ -505,6 +536,9 @@ jobs:
         with:
           extra-packages: ${{ steps.deps.outputs.extra-packages }}
           needs: check
+          # The only matrix carrying Windows, where the pin is skipped —
+          # see the env: block.
+          quarto-version: ${{ matrix.config.os == 'windows-latest' && 'release' || env.QUARTO_VERSION }}
 
       - name: Remove mermaid config for CI
         run: Rscript -e 'unlink("vignettes/_metadata.yml")'

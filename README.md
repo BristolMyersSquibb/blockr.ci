@@ -265,8 +265,28 @@ jobs:
 - **Full check** — 4-platform matrix (macOS, Windows, Ubuntu devel, Ubuntu oldrel) — merge-queue gate
 - **Reverse-dependency checks** against configurable downstream packages — merge-queue gate
 - **pkgdown deploy** — site build + deploy to `gh-pages` on push to `main`
+- **Pinned Quarto** — jobs that install Quarto (any package holding a `.qmd`) pass an explicit version instead of the action's `release` default, which resolves the version through an unretried `curl` to quarto.org and has twice killed a green run — see [Quarto pin](#quarto-pin)
 - **parse-deps** — pin a downstream revdep ref via a `` ```deps `` block in the PR body, read fresh when the merge queue runs revdep
 - **connect-deploy** — pull-mode Posit Connect deploys: regenerate the manifest in the merge queue and publish it to a `connect-*` branch Connect polls — separate reusable workflow
+
+### Quarto pin
+
+Quarto reaches a job through `setup-r-dependencies`, which installs it
+for any package holding a `.qmd`. Left at its `release` default, that
+install resolves the version at job time by piping an unretried curl of
+`https://quarto.org/docs/download/_download.json` into `jq`; under
+`pipefail` any hiccup from quarto.org kills the step and takes an
+otherwise-green run with it. An explicit version skips the lookup and
+goes straight to the release asset, which the action fetches with
+`wget` (20 retries by default).
+
+The version lives in a `QUARTO_VERSION` workflow-level `env` in
+`ci.yaml`, `pkgdown.yaml` and `revdep.yaml` — bump the three together.
+This is the Quarto that builds every consumer's vignettes, so treat a
+bump as a deliberate toolchain change rather than routine upkeep.
+Windows is exempt: quarto-actions installs through scoop there and
+never performs the lookup, so the `check` matrix leaves that leg on the
+default.
 
 ## Connect deployment setup
 
