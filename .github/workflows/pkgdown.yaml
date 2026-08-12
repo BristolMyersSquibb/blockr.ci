@@ -38,6 +38,13 @@ on:
 
 name: pkgdown
 
+# Pinned for the reason spelled out in ci.yaml's env: block — the
+# 'release' default resolves the version through an unretried curl to
+# quarto.org, which has twice killed a job on a transient response.
+# Keep in step with ci.yaml and revdep.yaml.
+env:
+  QUARTO_VERSION: '1.10.18'
+
 jobs:
 
   pkgdown:
@@ -74,6 +81,7 @@ jobs:
         with:
           extra-packages: ${{ steps.deps.outputs.extra-packages }}
           needs: website
+          quarto-version: ${{ env.QUARTO_VERSION }}
 
       - name: Remove mermaid config for CI
         run: Rscript -e 'unlink("vignettes/_metadata.yml")'
