@@ -1,5 +1,7 @@
 name: Action tests
 
+# Every job sets `timeout-minutes: 60` — see ci.yaml for why.
+
 on:
   push:
     branches: [main]
@@ -13,6 +15,7 @@ on:
 jobs:
   bats:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
         with:

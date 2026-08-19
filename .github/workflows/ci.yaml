@@ -66,16 +66,20 @@
 # a .qmd file, and is pinned to QUARTO_VERSION below rather than left at
 # the action's 'release' default — see the env: block for why.
 #
-# Every job sets `timeout-minutes: 60`.  GitHub's default is six hours,
-# so a step that hangs instead of failing — an apt index fetch from an
-# Ubuntu archive mirror that stops answering, say — leaves the PR
-# showing checks in progress and holds a runner until someone cancels by
-# hand.  An hour is deliberately far above normal runtime rather than
-# close to it: a warm-cache PR job finishes in single-digit minutes, but
-# a cold cache building the dependency tree from source is legitimately
-# much slower, and a timeout sized off the happy path would turn those
-# runs red for no good reason.  The point is to bound a pathological
-# stall, not to police performance.
+# Every job in every workflow here sets `timeout-minutes: 60`; the other
+# five files carry a one-line pointer back to this paragraph, so keep
+# them in step (`grep -rn timeout-minutes .github/workflows`).
+#
+# GitHub's default is six hours, so a step that hangs instead of failing
+# — an apt index fetch from an Ubuntu archive mirror that stops
+# answering, say — leaves the PR showing checks in progress and holds a
+# runner until someone cancels by hand.  An hour is deliberately far
+# above normal runtime rather than close to it: the slowest job in the
+# fleet is the ubuntu-devel check leg at roughly 15 min, and everything
+# else lands well under that, but those are cache hits.  A cold cache
+# building the dependency tree from source is legitimately much slower,
+# and a timeout sized off the happy path would turn honest runs red.
+# The point is to bound a pathological stall, not to police performance.
 
 on:
   pull_request:

@@ -16,6 +16,10 @@
 # "token" pushes with the ambient GITHUB_TOKEN, no App and no environment —
 # pair with an unprotected connect-*. See the README "Connect deployment setup"
 # section for the consumer-side setup: caller workflow, ruleset, App, environment.
+#
+# Every job sets `timeout-minutes: 60` — see ci.yaml for why.  The bound sits on
+# the jobs here rather than on the dispatcher's caller jobs, so it holds however
+# this workflow is invoked.
 
 on:
   workflow_call:
@@ -107,6 +111,8 @@ jobs:
   deploy:
 
     runs-on: ubuntu-latest
+
+    timeout-minutes: 60
 
     # Fixed RHEL 8 image: the manifest must record centos8 binaries for a RHEL
     # 8.6 Connect, which means building on RHEL 8. Rocky 8 is ABI-compatible and
@@ -243,6 +249,8 @@ jobs:
     if: always()
 
     runs-on: ubuntu-latest
+
+    timeout-minutes: 60
 
     steps:
 
