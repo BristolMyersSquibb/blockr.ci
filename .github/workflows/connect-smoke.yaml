@@ -7,6 +7,8 @@
 # setup-r-rhel action, the same writeManifest invocation, the same check-suggests
 # — minus the git push. Asserts the manifest records centos8, not ubuntu, and
 # still carries the LinkingTo closure (websocket -> AsioHeaders).
+#
+# Every job sets `timeout-minutes: 60` — see ci.yaml for why.
 
 on:
   pull_request:
@@ -37,6 +39,8 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: rockylinux:8
+
+    timeout-minutes: 60
 
     env:
       # Mirrors the deploy job: pak/renv read GITHUB_PAT for GitHub Remotes deps
