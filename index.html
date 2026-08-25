@@ -414,6 +414,9 @@ Skipped jobs satisfy required checks, so the queue accepts the PR-only jobs as <
 <strong>Pinned Quarto</strong> — jobs that install Quarto (any package holding a <code>.qmd</code>) pass an explicit version instead of the action’s <code>release</code> default, which resolves the version through an unretried <code>curl</code> to quarto.org and has twice killed a green run — see <a href="#quarto-pin">Quarto pin</a>
 </li>
 <li>
+<strong>Hard-dependency resolution on <code>lint</code> and <code>docs</code></strong> — neither job runs the suite or builds a site, so both skip the <code>Suggests</code> closure and the 125 MB Chromium that a <code>chromote</code> / <code>shinytest2</code> suggestion drags in — see <a href="#suggests-on-the-lint-and-docs-jobs">Suggests on the lint and docs jobs</a>
+</li>
+<li>
 <strong>parse-deps</strong> — pin a downstream revdep ref via a <code>```deps</code> block in the PR body, read fresh when the merge queue runs revdep</li>
 <li>
 <strong>connect-deploy</strong> — pull-mode Posit Connect deploys: regenerate the manifest in the merge queue and publish it to a <code>connect-*</code> branch Connect polls — separate reusable workflow</li>
@@ -557,13 +560,24 @@ Remotes:
     cynkra/g6R</code></pre>
 <p><code>r-lib/actions/setup-r-dependencies</code> reads <code>Remotes:</code> directly, and so does <code><a href="https://pak.r-lib.org/reference/local_install.html" class="external-link">pak::local_install()</a></code> on a contributor’s laptop — CI behavior is exactly what you get locally, no central registry, no implicit overrides.</p>
 <div class="section level3">
+<h3 id="suggests-on-the-lint-and-docs-jobs">Suggests on the lint and docs jobs<a class="anchor" aria-label="anchor" href="#suggests-on-the-lint-and-docs-jobs"></a>
+</h3>
+<p>The <code>lint</code> and <code>docs</code> jobs resolve hard dependencies only — <code>Depends</code>, <code>Imports</code>, <code>LinkingTo</code>. The other four (<code>smoke</code>, <code>coverage</code>, <code>pkgdown-dev</code>, and the merge-queue <code>check</code> matrix) run the test suite or build the site, so they keep resolving everything. Neither <code>lintr::lint_package()</code> nor <code>roxygen2::roxygenise()</code> needs the <code>Suggests</code> closure, and for a package that suggests <code>chromote</code> or <code>shinytest2</code> that closure also pulls a 125 MB Chromium from <code>ppa:xtradeb/apps</code> which the job never launches — <code>chromote</code> picks up the runner image’s Google Chrome first.</p>
+<p>A package that does need a suggested package at lint or roxygen time declares it in <code>Config/Needs/lint</code> or <code>Config/Needs/roxygenize</code>; both jobs already pass those fields through to <code>setup-r-dependencies</code> as <code>needs:</code>. Two cases come up in practice.</p>
+<p><strong>Roxygen packages and roclets.</strong> The <code>docs</code> job loads whatever <code>Roxygen: list(packages = ...)</code> names, along with the package behind any <code>pkg::roclet</code> entry. A missing one aborts <code>roxygenise()</code> with <code>there is no package called ...</code>, so declare it:</p>
+<pre><code><span><span class="va">Config</span><span class="op">/</span><span class="va">Needs</span><span class="op">/</span><span class="va">roxygenize</span><span class="op">:</span> <span class="va">roxy.shinylive</span></span></code></pre>
+<p><strong>Packages that a <code><a href="https://rdrr.io/r/base/library.html" class="external-link">library()</a></code> call makes lintr resolve.</strong> The <code>lint</code> job covers <code>tests/</code>, <code>vignettes/</code> and <code>inst/</code> alongside <code>R/</code>. Where a file both calls <code><a href="https://rdrr.io/r/base/library.html" class="external-link">library(pkg)</a></code> and assigns a function, <code>object_usage_linter()</code> resolves <code>pkg</code> to list its exports; an uninstalled one yields a <code>Could not find exported symbols</code> lint, which fails the job under <code>LINTR_ERROR_ON_LINT</code>. A file carrying a <code><a href="https://rdrr.io/r/base/library.html" class="external-link">library()</a></code> call but defining no function — a stock <code>tests/testthat.R</code>, say — never triggers it.</p>
+<pre><code><span><span class="va">Config</span><span class="op">/</span><span class="va">Needs</span><span class="op">/</span><span class="va">lint</span><span class="op">:</span> <span class="va">shinytest2</span></span></code></pre>
+<p>Either field is inert while a package still resolves everything, so it can land ahead of the workflow change rather than alongside it.</p>
+</div>
+<div class="section level3">
 <h3 id="per-pr-revdep-refs">Per-PR revdep refs<a class="anchor" aria-label="anchor" href="#per-pr-revdep-refs"></a>
 </h3>
 <p>The deps block in a PR body controls which ref of each revdep gets checked out for the <strong>revdep job</strong> — nothing else. It is not a mechanism for overriding forward dependencies; those belong in <code>Remotes:</code> in <code>DESCRIPTION</code>.</p>
-<div class="sourceCode" id="cb9"><pre class="sourceCode markdown"><code class="sourceCode markdown"><span id="cb9-1"><a href="#cb9-1" tabindex="-1"></a><span class="in">```deps</span></span>
-<span id="cb9-2"><a href="#cb9-2" tabindex="-1"></a><span class="in">BristolMyersSquibb/blockr.dag#111</span></span>
-<span id="cb9-3"><a href="#cb9-3" tabindex="-1"></a><span class="in">BristolMyersSquibb/blockr.ai@my-feature-branch</span></span>
-<span id="cb9-4"><a href="#cb9-4" tabindex="-1"></a><span class="in">```</span></span></code></pre></div>
+<div class="sourceCode" id="cb11"><pre class="sourceCode markdown"><code class="sourceCode markdown"><span id="cb11-1"><a href="#cb11-1" tabindex="-1"></a><span class="in">```deps</span></span>
+<span id="cb11-2"><a href="#cb11-2" tabindex="-1"></a><span class="in">BristolMyersSquibb/blockr.dag#111</span></span>
+<span id="cb11-3"><a href="#cb11-3" tabindex="-1"></a><span class="in">BristolMyersSquibb/blockr.ai@my-feature-branch</span></span>
+<span id="cb11-4"><a href="#cb11-4" tabindex="-1"></a><span class="in">```</span></span></code></pre></div>
 <p>Each line is <code>owner/repo@branch</code> or <code>owner/repo#PR-number</code>. The matching revdep job checks out that ref instead of the default branch.</p>
 <p><code>parse-deps</code> validates each entry against the package’s <code>DESCRIPTION</code>: if a deps-block entry’s package name appears in <code>Imports</code>/<code>Depends</code>/<code>LinkingTo</code>/<code>Suggests</code>/<code>Remotes</code>, parse-deps fails with a pointer to <code>Remotes:</code>. This catches the common mistake of trying to use the deps block to swap in a dev branch of a forward dep.</p>
 <p>The revdep job runs only in the merge queue, and it reads the deps block fresh from the PR body each time the queue runs. To change which ref gets checked out, edit the block and re-enqueue — there is no separate re-run trigger.</p>
@@ -576,9 +590,9 @@ Remotes:
 <li><p>Open your PR on <code>blockr.dock</code>. The configured <code>revdep-packages</code> input includes <code>BristolMyersSquibb/blockr.dag</code>, so the revdep job runs against <code>blockr.dag</code>’s default branch by default.</p></li>
 <li>
 <p>To pin it to a specific PR, add to the PR body:</p>
-<div class="sourceCode" id="cb10"><pre class="sourceCode markdown"><code class="sourceCode markdown"><span id="cb10-1"><a href="#cb10-1" tabindex="-1"></a><span class="in">```deps</span></span>
-<span id="cb10-2"><a href="#cb10-2" tabindex="-1"></a><span class="in">BristolMyersSquibb/blockr.dag#111</span></span>
-<span id="cb10-3"><a href="#cb10-3" tabindex="-1"></a><span class="in">```</span></span></code></pre></div>
+<div class="sourceCode" id="cb12"><pre class="sourceCode markdown"><code class="sourceCode markdown"><span id="cb12-1"><a href="#cb12-1" tabindex="-1"></a><span class="in">```deps</span></span>
+<span id="cb12-2"><a href="#cb12-2" tabindex="-1"></a><span class="in">BristolMyersSquibb/blockr.dag#111</span></span>
+<span id="cb12-3"><a href="#cb12-3" tabindex="-1"></a><span class="in">```</span></span></code></pre></div>
 </li>
 <li><p>When the PR is enqueued, the merge-queue revdep job reads the block and checks out <code>blockr.dag</code> PR #111 head instead of the default branch.</p></li>
 <li><p>To point at a different PR later, edit the block and re-enqueue.</p></li>
