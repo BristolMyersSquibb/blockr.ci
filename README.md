@@ -266,6 +266,7 @@ jobs:
 - **Reverse-dependency checks** against configurable downstream packages — merge-queue gate
 - **pkgdown deploy** — site build + deploy to `gh-pages` on push to `main`
 - **Pinned Quarto** — jobs that install Quarto (any package holding a `.qmd`) pass an explicit version instead of the action's `release` default, which resolves the version through an unretried `curl` to quarto.org and has twice killed a green run — see [Quarto pin](#quarto-pin)
+- **Hard-dependency resolution on `lint` and `docs`** — neither job runs the suite or builds a site, so both skip the `Suggests` closure and the 125 MB Chromium that a `chromote` / `shinytest2` suggestion drags in — see [Suggests on the lint and docs jobs](#suggests-on-the-lint-and-docs-jobs)
 - **parse-deps** — pin a downstream revdep ref via a `` ```deps `` block in the PR body, read fresh when the merge queue runs revdep
 - **connect-deploy** — pull-mode Posit Connect deploys: regenerate the manifest in the merge queue and publish it to a `connect-*` branch Connect polls — separate reusable workflow
 
@@ -563,6 +564,26 @@ Remotes:
 ```
 
 `r-lib/actions/setup-r-dependencies` reads `Remotes:` directly, and so does `pak::local_install()` on a contributor's laptop — CI behavior is exactly what you get locally, no central registry, no implicit overrides.
+
+### Suggests on the lint and docs jobs
+
+The `lint` and `docs` jobs resolve hard dependencies only — `Depends`, `Imports`, `LinkingTo`. The other four (`smoke`, `coverage`, `pkgdown-dev`, and the merge-queue `check` matrix) run the test suite or build the site, so they keep resolving everything. Neither `lintr::lint_package()` nor `roxygen2::roxygenise()` needs the `Suggests` closure, and for a package that suggests `chromote` or `shinytest2` that closure also pulls a 125 MB Chromium from `ppa:xtradeb/apps` which the job never launches — `chromote` picks up the runner image's Google Chrome first.
+
+A package that does need a suggested package at lint or roxygen time declares it in `Config/Needs/lint` or `Config/Needs/roxygenize`; both jobs already pass those fields through to `setup-r-dependencies` as `needs:`. Two cases come up in practice.
+
+**Roxygen packages and roclets.** The `docs` job loads whatever `Roxygen: list(packages = ...)` names, along with the package behind any `pkg::roclet` entry. A missing one aborts `roxygenise()` with `there is no package called ...`, so declare it:
+
+```
+Config/Needs/roxygenize: roxy.shinylive
+```
+
+**Packages that a `library()` call makes lintr resolve.** The `lint` job covers `tests/`, `vignettes/` and `inst/` alongside `R/`. Where a file both calls `library(pkg)` and assigns a function, `object_usage_linter()` resolves `pkg` to list its exports; an uninstalled one yields a `Could not find exported symbols` lint, which fails the job under `LINTR_ERROR_ON_LINT`. A file carrying a `library()` call but defining no function — a stock `tests/testthat.R`, say — never triggers it.
+
+```
+Config/Needs/lint: shinytest2
+```
+
+Either field is inert while a package still resolves everything, so it can land ahead of the workflow change rather than alongside it.
 
 ### Per-PR revdep refs
 

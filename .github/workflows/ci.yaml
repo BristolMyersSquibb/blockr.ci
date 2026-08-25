@@ -54,6 +54,20 @@
 # when the working tree is then dirty.  A package that carries neither
 # field — one that doesn't run roxygen2 — skips the check.
 #
+# The lint and docs jobs resolve hard dependencies only.  Neither runs
+# the test suite or builds vignettes, so the Suggests closure buys them
+# nothing but install time — and for a package that suggests chromote or
+# shinytest2 it also drags in a 125 MB Chromium from a PPA the job never
+# launches, since chromote picks the runner image's Google Chrome first.
+# The other four jobs run the suite or build the site and keep Suggests.
+#
+# A package that does need a suggested package at lint or roxygenize
+# time declares it in Config/Needs/lint or Config/Needs/roxygenize.  Two
+# cases come up: the roxygen2 run loads whatever `Roxygen: list(packages
+# = ...)` names, along with the package behind any pkg::roclet, and
+# lintr resolves the library() calls in the files it lints — an
+# uninstalled one there becomes a lint, which fails the job.
+#
 # pkgdown site deploy lives in a separate reusable workflow
 # (pkgdown.yaml).  Consumers that want a deployed site add a second
 # workflow file calling pkgdown.yaml on `push: branches: main`.
@@ -231,6 +245,7 @@ jobs:
 
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
+          dependencies: '"hard"'
           extra-packages: ${{ steps.deps.outputs.extra-packages }}
           needs: lint
           quarto-version: ${{ env.QUARTO_VERSION }}
@@ -492,6 +507,7 @@ jobs:
       - uses: r-lib/actions/setup-r-dependencies@v2
         if: steps.pin.outputs.run == 'true'
         with:
+          dependencies: '"hard"'
           extra-packages: |
             ${{ steps.deps.outputs.extra-packages }}
             roxygen2@${{ steps.pin.outputs.version }}
