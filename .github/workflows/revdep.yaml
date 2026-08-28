@@ -46,6 +46,29 @@ on:
         type: string
         required: true
 
+      revdep-test-upstream:
+        description: >
+          Also run the calling package's own tests in each leg, with the
+          downstream installed -- for checks the upstream owns that only mean
+          anything against a real consumer.  Those tests gate themselves on
+          `REVDEP_PKG`, set here to the downstream under check and unset
+          everywhere else, so they stay inert in the upstream's own CI and in
+          a developer's working copy.
+        type: boolean
+        default: false
+        required: false
+
+      revdep-test-filter:
+        description: >
+          Restrict the above to the test files matching this testthat
+          `filter` -- `tokens-revdep` selects `test-tokens-revdep.R`.  Empty,
+          the default, runs the whole suite.  A filter matching nothing is an
+          error rather than an empty pass.  Ignored unless
+          `revdep-test-upstream` is set.
+        type: string
+        default: ''
+        required: false
+
     secrets:
 
       BLOCKR_PAT:
@@ -208,6 +231,29 @@ jobs:
         with:
           working-directory: revdep
           build_args: 'c("--no-manual","--compact-vignettes=gs+qpdf")'
+
+      # The leg checks the downstream, but the upstream may own checks that
+      # only mean anything with a real consumer present -- a shared CSS
+      # vocabulary its consumers read, say.  Those are ordinary tests in the
+      # upstream's suite, skipping on an unset REVDEP_PKG, and this is the one
+      # place it is set.
+      #
+      # After the check rather than before: installing revdep ahead of it
+      # would leave an extra package in libPaths position [1] for the test
+      # run -- the perturbation the two-pass install above exists to avoid.
+      #
+      # NOT_CRAN because a browser-driving test skips itself without it, and
+      # a skip here is indistinguishable from a pass.
+      - name: Run upstream tests against this downstream
+        if: inputs.revdep-test-upstream
+        env:
+          NOT_CRAN: "true"
+          REVDEP_PKG: ${{ matrix.pkg }}
+          REVDEP_FILTER: ${{ inputs.revdep-test-filter }}
+        run: |
+          R CMD INSTALL revdep
+          Rscript -e 'filter <- Sys.getenv("REVDEP_FILTER")
+            testthat::test_local("pkg", filter = if (nzchar(filter)) filter)'
 
   # ── Aggregate revdep-matrix result for the required-checks list ──────
   #
