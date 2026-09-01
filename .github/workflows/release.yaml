@@ -7,10 +7,12 @@
 # code those are where a submission gets rejected, and without this
 # workflow the first signal is CRAN's own check page, after the upload.
 #
-# The checks run in the public R-hub containers, one image per flavour,
-# under `container:`.  No R-hub account and no `rhub` package are
-# involved — the images are pulled straight from ghcr.io, and the
-# r-hub/actions steps below work with an empty `job-config`.
+# The flavours come from R-hub, in two shapes.  Most are public
+# containers pulled straight from ghcr.io and run under `container:`;
+# the rest — `m1-san`, `windows`, `macos`, `macos-arm64` — are virtual
+# machines and run on a GitHub runner directly.  Both shapes are
+# resolved by `r-hub/actions/setup`, so neither needs an R-hub account
+# nor the `rhub` package.
 #
 # Usage — consumer repo .github/workflows/release.yaml, a file of its
 # own rather than a second jobs: entry in ci.yaml:
@@ -30,6 +32,7 @@
 #           clang-asan
 #           gcc-asan
 #           clang-ubsan
+#           m1-san
 #           valgrind
 #           rchk
 #           nosuggests
@@ -53,8 +56,8 @@
 # below it, so a required `release / release-all` would sit at
 # "Expected — waiting for status" and block every merge.  An absent
 # context is not a skipped one.  So the caller runs on every event and
-# only the inner `matrix` job is conditional, which leaves `release-all`
-# free to report on every ref.
+# only the inner jobs are conditional, which leaves `release-all` free
+# to report on every ref.
 #
 # ── Trigger: a label on the release-prep pull request ────────────────
 #
@@ -117,7 +120,7 @@
 # --no-build-vignettes.  That is why no QUARTO_VERSION appears here.
 #
 # Every job here sets `timeout-minutes` — see ci.yaml for the reasoning.
-# The `release` job is the fleet's one deviation from the shared hour:
+# The check jobs are the fleet's one deviation from the shared hour:
 # valgrind runs a test suite tens of times slower than native, and rchk
 # and the sanitizers all pay for an instrumented build from source, so
 # an hour sits close to legitimate runtime rather than far above it.
@@ -128,12 +131,14 @@ on:
 
       release-platforms:
         description: >
-          Newline-separated list of R-hub container flavours to check in,
-          each naming an image under ghcr.io/r-hub/containers (e.g.
-          `clang-asan`, `valgrind`, `rchk`, `nosuggests`).  Empty, the
+          Newline-separated list of R-hub platforms to check in, named as
+          R-hub names them (e.g. `clang-asan`, `valgrind`, `rchk`,
+          `nosuggests`, `m1-san`).  Commas work too.  Both the container
+          flavours and the virtual-machine ones are available; see the
+          R-hub platform list for what a name resolves to, and the README
+          for which flavours a package's properties call for.  Empty, the
           default, skips the matrix and reports success, so a consumer
-          can wire the caller in and choose a list later.  See the README
-          for which flavours a package's properties call for.
+          can wire the caller in and choose a list later.
         type: string
         default: ''
         required: false
@@ -163,7 +168,31 @@ name: release
 
 jobs:
 
-  # ── Build the per-flavour matrix from release-platforms ──────────────
+  # ── Resolve release-platforms into the two R-hub matrices ───────────
+  #
+  # The `r-hub/actions/setup` action matches each name against R-hub's
+  # own platform list and emits one matrix per shape: `containers` for
+  # the flavours that are docker images, `platforms` for the ones that
+  # are virtual machines.  Building the matrix here instead, by mapping
+  # each name onto `ghcr.io/r-hub/containers/<name>:latest`, is what this
+  # job used to do, and it structurally could not reach the second group.
+  # That is #56: there is no container image for `m1-san`, the ASAN and
+  # UBSAN build on macOS ARM, so a sanitizer finding that only reproduces
+  # on Apple silicon stayed invisible to this workflow.
+  #
+  # Two secondary gains.  The name-to-image mapping stops being ours to
+  # maintain when R-hub adds or renames an image, and an unknown name is
+  # rejected against the real list — by name, in seconds — rather than
+  # failing later and opaquely on an image pull.  So no hand-rolled
+  # validation remains here.
+  #
+  # Each matrix entry carries a `job-config` blob that the r-hub/actions
+  # steps below take as an input.  Passing it is not decoration.  R-hub
+  # attaches `pre-check` scripts to some platforms, and `run-check` reads
+  # them from exactly that blob: valgrind picks up a package's
+  # tools/valgrind.supp there, and the whole sanitizer toolchain on
+  # `m1-san` is installed by one.  Omitting it on the latter would check
+  # an ordinary macOS build under a name promising sanitizers.
 
   matrix:
 
@@ -176,53 +205,59 @@ jobs:
     timeout-minutes: 60
 
     outputs:
-      platforms: ${{ steps.build.outputs.platforms }}
-      has-platforms: ${{ steps.build.outputs.has-platforms }}
+      containers: ${{ steps.setup.outputs.containers || '[]' }}
+      platforms: ${{ steps.setup.outputs.platforms || '[]' }}
 
     steps:
-      - name: Build release matrix
-        id: build
+
+      # The action takes one comma-separated string, while the input is
+      # documented as newline-separated, so both separators are accepted
+      # and normalised to the one it wants.
+      - name: Normalise the platform list
+        id: parse
         env:
           INPUT: ${{ inputs.release-platforms }}
         run: |
-          names=$(printf '%s' "$INPUT" | tr -d '\r' \
-            | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | sed '/^$/d')
+          config=$(printf '%s' "$INPUT" | tr -d '\r' | tr ',' '\n' \
+            | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | sed '/^$/d' \
+            | paste -sd, -)
 
-          if [ -z "$names" ]; then
+          if [ -z "$config" ]; then
             echo "release-platforms is empty — nothing to check."
-            echo "platforms=[]" >> "$GITHUB_OUTPUT"
-            echo "has-platforms=false" >> "$GITHUB_OUTPUT"
-            exit 0
+          else
+            echo "Checking in: $config"
           fi
 
-          # A typo would otherwise surface as an opaque image-pull
-          # failure, so reject anything that cannot be a container name
-          # before we hand it to `container:`.
-          bad=$(printf '%s\n' "$names" | grep -vE '^[a-z0-9][a-z0-9._-]*$' || true)
-          if [ -n "$bad" ]; then
-            echo "::error::release-platforms holds entries that are not R-hub container names: $(printf '%s' "$bad" | tr '\n' ' ')"
-            exit 1
-          fi
+          echo "config=${config}" >> "$GITHUB_OUTPUT"
 
-          json=$(printf '%s\n' "$names" | jq -R -s -c '
-            split("\n")
-            | map(select(length > 0))
-            | map({
-                label: .,
-                container: ("ghcr.io/r-hub/containers/" + . + ":latest")
-              })')
+      # Skipped rather than called with an empty config.  The action
+      # handles one correctly — it returns two empty matrices — but it
+      # spends two container pulls to do so, and an empty list is the
+      # documented default rather than an edge case, so the answer is
+      # worth reaching without them.  A skipped step has no outputs,
+      # which is what the `|| '[]'` above turns back into the same two
+      # empty matrices, and hence two skipped jobs.
+      - id: setup
+        if: steps.parse.outputs.config != ''
+        uses: r-hub/actions/setup@v1
+        with:
+          config: ${{ steps.parse.outputs.config }}
 
-          echo "Checking in: $(printf '%s' "$names" | tr '\n' ' ')"
-          echo "platforms=${json}" >> "$GITHUB_OUTPUT"
-          echo "has-platforms=true" >> "$GITHUB_OUTPUT"
+  # ── One R CMD check per container flavour ───────────────────────────
 
-  # ── One R CMD check per flavour, inside its R-hub container ─────────
-
-  release:
+  release-containers:
 
     needs: matrix
 
-    if: needs.matrix.outputs.has-platforms == 'true'
+    # Two clauses because a skipped `matrix` job — no release label, or a
+    # merge_group ref — reports its outputs as empty strings rather than
+    # as `[]`, so the `[]` test alone reads true there.  Skip propagation
+    # through `needs:` already covers that case, but it stops the moment
+    # a status function joins this condition, which is precisely what
+    # `release-all` below has to do.  Cheaper to not depend on it.
+    if: >-
+      needs.matrix.outputs.containers != '' &&
+      needs.matrix.outputs.containers != '[]'
 
     runs-on: ubuntu-latest
 
@@ -233,7 +268,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        config: ${{ fromJson(needs.matrix.outputs.platforms) }}
+        config: ${{ fromJson(needs.matrix.outputs.containers) }}
 
     container:
       image: ${{ matrix.config.container }}
@@ -256,8 +291,12 @@ jobs:
       # Suggests closure with _R_CHECK_DEPENDS_ONLY_ rather than by
       # installing less.  Overriding the deps or the args from here would
       # quietly defeat whichever flavour it contradicts, so both steps run
-      # on their defaults and let the container decide.
+      # on their defaults and let the container decide.  The `job-config`
+      # input does not carry either: setup-deps ignores it outright, and
+      # run-check reads only `pre-check` out of it.
       - uses: r-hub/actions/setup-deps@v1
+        with:
+          job-config: ${{ matrix.config.job-config }}
 
       # Sanitizer, valgrind and rchk findings do not fail R CMD check —
       # they land in the .Rout files while the check itself exits 0.  This
@@ -266,6 +305,53 @@ jobs:
       # directly.  Those scans key off `matrix.config.label`, so the
       # matrix has to be named `config` and carry `label`.
       - uses: r-hub/actions/run-check@v1
+        with:
+          job-config: ${{ matrix.config.job-config }}
+
+  # ── One R CMD check per virtual-machine platform ────────────────────
+  #
+  # Same steps as the container legs, less the `container:` — the runner
+  # is whatever `os` the platform resolved to — plus setup-r, since a
+  # bare GitHub runner ships no R and the containers do.
+
+  release-vms:
+
+    needs: matrix
+
+    # Empty-string clause as above.
+    if: >-
+      needs.matrix.outputs.platforms != '' &&
+      needs.matrix.outputs.platforms != '[]'
+
+    runs-on: ${{ matrix.config.os }}
+
+    name: ${{ matrix.config.label }}
+
+    timeout-minutes: 180
+
+    strategy:
+      fail-fast: false
+      matrix:
+        config: ${{ fromJson(needs.matrix.outputs.platforms) }}
+
+    env:
+      GITHUB_PAT: ${{ secrets.BLOCKR_PAT || github.token }}
+      R_KEEP_PKG_SOURCE: yes
+
+    steps:
+      - uses: r-hub/actions/checkout@v1
+
+      - uses: r-hub/actions/setup-r@v1
+        with:
+          job-config: ${{ matrix.config.job-config }}
+
+      - uses: r-hub/actions/setup-deps@v1
+        with:
+          job-config: ${{ matrix.config.job-config }}
+
+      - uses: r-hub/actions/run-check@v1
+        with:
+          job-config: ${{ matrix.config.job-config }}
 
   # ── CRAN-style reverse dependency check ─────────────────────────────
   #
@@ -357,14 +443,15 @@ jobs:
   # a row per flavour.  Treats `skipped` — no label, no platforms configured,
   # or a merge_group ref — as success.
   #
-  # Needs `matrix` as well as `release`, and not only for ordering: when
-  # the matrix job fails its input validation, `release` never runs and
-  # is reported as skipped, so aggregating `release` alone would turn a
-  # rejected platform list into a green required check.
+  # Needs `matrix` as well as the two check jobs, and not only for
+  # ordering: when the matrix job fails to resolve the platform list,
+  # neither check job runs and both are reported as skipped, so
+  # aggregating those alone would turn a rejected platform name into a
+  # green required check.
 
   release-all:
 
-    needs: [matrix, release]
+    needs: [matrix, release-containers, release-vms]
     if: always()
 
     runs-on: ubuntu-latest
@@ -375,11 +462,13 @@ jobs:
       - name: Aggregate release matrix
         env:
           MATRIX_RESULT: ${{ needs.matrix.result }}
-          RELEASE_RESULT: ${{ needs.release.result }}
+          CONTAINERS_RESULT: ${{ needs.release-containers.result }}
+          VMS_RESULT: ${{ needs.release-vms.result }}
         run: |
-          echo "matrix job result:     $MATRIX_RESULT"
-          echo "release matrix result: $RELEASE_RESULT"
-          for result in "$MATRIX_RESULT" "$RELEASE_RESULT"; do
+          echo "matrix job result:   $MATRIX_RESULT"
+          echo "containers result:   $CONTAINERS_RESULT"
+          echo "VM platforms result: $VMS_RESULT"
+          for result in "$MATRIX_RESULT" "$CONTAINERS_RESULT" "$VMS_RESULT"; do
             case "$result" in
               success|skipped) ;;
               *) exit 1 ;;

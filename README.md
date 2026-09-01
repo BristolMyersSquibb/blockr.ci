@@ -84,10 +84,14 @@ Suggests-free build and `rchk`. For a package with compiled code those
 are where a submission gets rejected, and without this workflow the
 first signal is CRAN's own check page, after the upload.
 
-The checks run in the public [R-hub containers](https://r-hub.github.io/containers/),
-one image per flavour. No R-hub account and no `rhub` package are
-involved. Give this one a workflow file of its own rather than a second
-`jobs:` entry in `ci.yaml` — see [Why a separate file](#why-a-separate-file):
+The flavours come from R-hub in two shapes. Most are public
+[containers](https://r-hub.github.io/containers/) pulled straight from
+ghcr.io; the rest — `m1-san`, `windows`, `macos`, `macos-arm64` — are
+virtual machines and run on a GitHub runner directly. Both shapes are
+resolved by `r-hub/actions/setup`, so neither needs an R-hub account nor
+the `rhub` package. Give this one a workflow file of its own rather than
+a second `jobs:` entry in `ci.yaml` — see
+[Why a separate file](#why-a-separate-file):
 
 ```yaml
 on:
@@ -105,6 +109,7 @@ jobs:
         clang-asan
         gcc-asan
         clang-ubsan
+        m1-san
         valgrind
         rchk
         nosuggests
@@ -131,6 +136,7 @@ compiled code.
 | Property of the package | Flavours worth listing |
 |---|---|
 | `src/` or `LinkingTo` | `clang-asan`, `gcc-asan`, `clang-ubsan`, `valgrind` |
+| Alignment or endianness assumptions in that C | `m1-san` |
 | Direct R C API use | `rchk` |
 | Non-empty `Suggests` | `nosuggests` |
 | Numeric sensitivity, BLAS, endianness | `nold`, `atlas`, `mkl` — judgement, not derivable |
@@ -140,6 +146,21 @@ suggested package is a routine CRAN rejection, so a package listing only
 `nosuggests` still gets a useful leg. The `rchk` row is worth separating
 from "has compiled code" — a package can carry compiled code that never
 touches the R API, and `rchk` only means something when it does.
+
+The `m1-san` row is the one that is not a container. It is ASAN plus
+UBSAN on macOS ARM, and it earns a separate row from the Linux
+sanitizers because it is a different architecture rather than a second
+opinion on the same one — a finding that only reproduces on Apple
+silicon is invisible to `clang-asan`. Being a virtual machine, it is
+also the slowest and priciest leg in the list, so it belongs on a
+package that vendors C rather than on every list by default.
+
+Names are matched against R-hub's own platform list, which means CRAN
+names and aliases resolve too: `asan` reaches `clang-asan`, and
+`r-oldrel-windows` reaches Windows on oldrel. An unrecognised name fails
+the `matrix` job by name in seconds. The resolved name is what the check
+context is called, R version included where the platform carries one —
+`m1-san` reports as `release / m1-san (R-devel)`.
 
 The input defaults to empty, which skips the matrix and reports success.
 A consumer can wire the caller in, add the required check, and choose a
@@ -444,7 +465,7 @@ release.
 
 | Input | Type | Default | Purpose |
 |---|---|---|---|
-| `release-platforms` | newline-separated list | `''` | R-hub container flavours to check in, each naming an image under `ghcr.io/r-hub/containers` — `clang-asan`, `valgrind`, `rchk`, `nosuggests`, … Empty skips the matrix and reports success. See [Choosing the platform list](#choosing-the-platform-list). |
+| `release-platforms` | newline-separated list | `''` | R-hub platforms to check in, named as R-hub names them — `clang-asan`, `valgrind`, `rchk`, `nosuggests`, `m1-san`, … Commas work too. Container and virtual-machine platforms both resolve; an unknown name fails the matrix. Empty skips the matrix and reports success. See [Choosing the platform list](#choosing-the-platform-list). |
 | `recheck-which` | string | `''` | Depth of the CRAN-style reverse dependency check run via `r-devel/recheck`: `strong` (Depends, Imports, LinkingTo) or `most` (those plus Suggests). Empty disables it. When set, the check still runs only if the package actually has CRAN dependents. Never gates — see [Reverse dependencies before a CRAN submission](#reverse-dependencies-before-a-cran-submission). |
 
 ### `pkgdown.yaml`
