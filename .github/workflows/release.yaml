@@ -62,17 +62,19 @@
 # worth checking; a release tracking *issue* has no commit to report a
 # status against and could not back a required check at all.
 #
-# The inner condition is `github.event.action == 'labeled'` plus the
-# label name, rather than merely "the label is present".  Labels persist
-# across pushes, so a plain `contains(…labels.*.name, 'release')` would
-# re-run every sanitizer and valgrind leg on each push to the branch —
-# which is what gating on the `labeled` *event* is meant to prevent.
-# Testing the action moves that intent inside, where it survives the
-# caller having to listen for the ordinary pull-request events too.
+# The label marks the pull request as a release candidate — a mode, not
+# a one-shot "run now" button.  The condition is therefore that the
+# label is *present*, which holds on every subsequent push, and the
+# `labeled` type in the caller's `on:` block exists so that applying the
+# label starts a run on a branch that is already pushed.
 #
-# The consequence is worth stating plainly: a push after a labelled run
-# reports `release-all` success without re-running anything.  Re-apply
-# the label after the final push, before submitting.
+# Running on each push is the point rather than a cost.  The tarball is
+# built from a commit on this pull request, before it merges, so every
+# push produces a new release candidate; checking only the commit that
+# happened to be current when the label went on would leave the
+# submitted one unchecked.  That also keeps `release-all` an honest
+# gate: it is green for the head commit because the flavours passed on
+# it, not because nothing ran.
 #
 # ── Why `merge_group` passes through ─────────────────────────────────
 #
@@ -147,8 +149,7 @@ jobs:
 
     if: >-
       github.event_name == 'pull_request' &&
-      github.event.action == 'labeled' &&
-      github.event.label.name == 'release'
+      contains(github.event.pull_request.labels.*.name, 'release')
 
     runs-on: ubuntu-latest
 

@@ -165,18 +165,23 @@ request is the commit being submitted, so it is the thing worth
 checking; a release tracking *issue* has no commit to report a status
 against and could not back a required check at all.
 
-Two properties follow from the trigger, both deliberate:
+The label marks the pull request as a release candidate — a mode rather
+than a one-shot "run now" button. It stays on for the life of the
+branch, and the flavours re-run on every push while it is there.
 
-- Only applying the label starts a run. Labels persist across pushes, so
-  reacting to the label merely being *present* would re-run every
-  sanitizer and valgrind leg on each push to the branch.
-- A push after a labelled run reports `release / release-all` success
-  without re-running anything. **Re-apply the label after the final
-  push, before submitting.**
+Running on each push is the point rather than a cost. The tarball is
+built from a commit on this pull request, before it merges, so every
+push produces a new release candidate; checking only the commit that
+happened to be current when the label went on would leave the submitted
+one unchecked. It also keeps `release / release-all` an honest gate —
+green for the head commit because the flavours passed on it, not because
+nothing ran.
 
-That makes the required check a reminder rather than a gate: omitting
-the label silently skips the checks. For something this expensive that
-is the intended trade.
+The check still reports success on an unlabelled pull request, so
+forgetting the label skips the checks silently rather than blocking the
+merge. That is the one soft edge in the design, and it is deliberate:
+the alternative is charging every ordinary pull request for a valgrind
+run.
 
 On `merge_group` the workflow passes through without doing the work,
 mirroring `revdep.yaml`, which does the reverse. A label-gated condition
