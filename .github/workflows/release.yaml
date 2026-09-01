@@ -92,22 +92,24 @@
 # pull request; re-running them at merge time would pay twice for the
 # same answer.
 #
-# The queue side of that trade lives in ci.yaml and revdep.yaml, which
-# both stand down for a release pull request: the check matrix has
-# already run on the pull-request ref, and our own reverse-dependency
-# legs are the wrong question for a submission.  So the queue leg of a
-# release is deliberately close to empty.
+# Note the traffic is one-way: this workflow steps aside at the queue,
+# but ci.yaml's check matrix and revdep.yaml both still run there for a
+# release pull request, exactly as for any other.  They gate the merge
+# commit rather than the submission, and skipping them would reopen the
+# red-main gap the queue exists to close.
 #
 # ── Reverse dependencies ─────────────────────────────────────────────
 #
 # A release wants to know whether it breaks what CRAN currently ships,
 # while revdep.yaml installs each downstream from its GitHub branch and
 # answers the development-state question instead.  The CRAN-shaped
-# answer is r-devel/recheck, called below when `recheck-which` is set;
-# revdep.yaml stands down for a release pull request so the two never
-# both run.  Upstream rules recheck out as a gate — the results turn on
-# unrelated failures in other people's packages — so it is read by a
-# human rather than required, and stays outside `release-all`.
+# answer is r-devel/recheck, called below when `recheck-which` is set.
+# The two coexist rather than replacing one another: recheck answers for
+# the submission, on the pull-request ref, and revdep.yaml keeps
+# answering for the merge, at the queue.  Upstream rules recheck out as
+# a gate — the results turn on unrelated failures in other people's
+# packages — so it is read by a human rather than required, and stays
+# outside `release-all`.
 #
 # Each container manages its own toolchain and setup-deps installs no
 # Quarto, so a consumer whose vignettes are .qmd rather than .Rmd fails
@@ -271,8 +273,9 @@ jobs:
   # what CRAN currently ships -- which revdep.yaml cannot, since it
   # installs each downstream from its GitHub branch.  A sibling's `main`
   # may already carry an adaptation the published version lacks, and
-  # those diverge precisely when it matters.  So revdep.yaml stands down
-  # for a release pull request and this runs instead.
+  # those diverge precisely when it matters.  This runs alongside
+  # revdep.yaml rather than in place of it -- the other one is still the
+  # right check for the merge.
   #
   # Deliberately outside `release-all`, and so outside the required
   # check.  Upstream rules it out as a gate: the result "is typically too

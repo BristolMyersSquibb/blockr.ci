@@ -298,39 +298,35 @@ platform or revdep package doesn't churn the required-checks list.
 
 ### Release mode
 
-A pull request labelled `release` inverts that split. The tarball is
+A pull request labelled `release` adds to that split. The tarball is
 built from a commit on the pull request and submitted **before** the
 branch merges, so anything the merge queue would tell you arrives too
-late to act on. Everything that gates a submission therefore moves onto
-the pull-request ref and runs on every push:
+late to act on. Everything that gates a submission therefore also runs
+on the pull-request ref, on every push:
 
-| Job | Ordinary PR | Release PR | Merge queue | Merge queue, release PR |
-|---|---|---|---|---|
-| `lint`, `smoke`, `pkgdown-dev`, `coverage`, `docs` | runs | runs | skipped | skipped |
-| `ci / check` (macOS, Windows, devel, oldrel) | skipped | **runs** | runs | **skipped** |
-| `revdep` (downstream GitHub branches) | skipped | skipped | runs | **skipped** |
-| `release` (R-hub flavours) | skipped | **runs** | skipped | skipped |
-| `recheck` (CRAN-style revdeps) | skipped | **runs**, if the package has CRAN dependents | skipped | skipped |
+| Job | Ordinary PR | Release PR | Merge queue |
+|---|---|---|---|
+| `lint`, `smoke`, `pkgdown-dev`, `coverage`, `docs` | runs | runs | skipped |
+| `ci / check` (macOS, Windows, devel, oldrel) | skipped | **runs** | runs |
+| `release` (R-hub flavours) | skipped | **runs** | skipped |
+| `recheck` (CRAN-style revdeps) | skipped | **runs**, if the package has CRAN dependents | skipped |
+| `revdep` (downstream GitHub branches) | skipped | skipped | runs |
 
-Nothing expensive runs twice: each job moves to the ref where its answer
-is still actionable rather than being added there. Our own `revdep`
-stands down entirely, because a release has to be measured against what
-CRAN currently ships rather than against the siblings' development
-branches — see [Reverse dependencies before a CRAN submission](#reverse-dependencies-before-a-cran-submission).
+The label is read straight from the event payload —
+`contains(github.event.pull_request.labels.*.name, 'release')` — so the
+whole mechanism is one condition per job, with no detection step
+anywhere.
 
-On a pull-request ref the label is in the event payload, so the jobs
-read it from there. On a `merge_group` ref it is invisible — there is no
-pull request there at all — so the queue-side half recovers the
-pull-request number from the queue ref
-(`gh-readonly-queue/<base>/pr-<n>-<sha>`) and reads the labels from the
-API. That is the `release-mode` action, using the same trick
-`parse-deps` already uses to find a PR body under the queue. It runs
-only on queue refs, so an ordinary pull request gains neither a job nor
-a token scope.
-
-A lookup that cannot answer reports "not a release", and the conditions
-are written so that this falls back to *running* the checks: a failed
-detection costs a redundant matrix, never a silently skipped one.
+The queue keeps running the full pipeline for a release pull request,
+same as any other. Skipping the `check` matrix there would save a run,
+but the queue tests the would-be merge commit rather than the pull
+request head, and dropping it would reopen exactly the red-`main` gap
+described below. Our `revdep` likewise keeps running at the queue: it
+gates the merge, while `recheck` answers the different question the
+submission asks — see [Reverse dependencies before a CRAN
+submission](#reverse-dependencies-before-a-cran-submission). A release
+pull request is rare enough that paying for the queue leg twice over is
+the cheaper mistake.
 
 ### Merge queue
 
