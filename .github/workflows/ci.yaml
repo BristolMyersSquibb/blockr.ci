@@ -547,9 +547,60 @@ jobs:
 
   # ── Full R CMD check (multi-platform, merge queue gate) ──────────────
 
+  # ── Is the pull request behind this run a release candidate? ────────
+  #
+  # A release tarball is built from a commit on its pull request, before
+  # the branch merges, so everything that gates the submission has to run
+  # on the pull-request ref.  That inverts where the check matrix belongs:
+  # on a release pull request it runs per push and is skipped again at the
+  # queue, having already answered for that commit.
+  #
+  # The label is invisible on a merge_group ref, so the answer comes from
+  # the API — see the release-mode action, which recovers the pull-request
+  # number from the queue ref the way parse-deps already does.
+
+  release-mode:
+
+    # Only the queue needs the lookup.  On a pull_request the labels are
+    # in the event payload, so `check` reads them from there directly;
+    # asking the API for what the payload already holds would put an
+    # extra job row and a `pull-requests: read` scope on every run in the
+    # fleet to learn nothing.
+    if: github.event_name != 'pull_request'
+
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 60
+
+    outputs:
+      is-release: ${{ steps.detect.outputs.is-release }}
+
+    steps:
+      - uses: BristolMyersSquibb/blockr.ci/.github/actions/release-mode@main
+        id: detect
+        with:
+          token: ${{ secrets.BLOCKR_PAT || github.token }}
+
   check:
 
-    if: github.event_name != 'pull_request'
+    needs: release-mode
+
+    # Run where the answer is still actionable: at the queue for an
+    # ordinary pull request, on the pull-request ref for a release one.
+    # Never both — the release candidate would pay twice for the same
+    # matrix, and the queue leg lands after the submission anyway.
+    #
+    # Led by `!cancelled()` because release-mode is skipped on a
+    # pull_request ref, and a skipped `needs` would otherwise skip this
+    # job with it.  That also decides the fail-safe direction: if the
+    # lookup errors, `is-release` is empty, `!= 'true'` holds, and the
+    # queue leg runs.  A redundant matrix, never a silently skipped one.
+    if: >-
+      !cancelled() &&
+      ((github.event_name == 'pull_request' &&
+        contains(github.event.pull_request.labels.*.name, 'release')) ||
+       (github.event_name != 'pull_request' &&
+        needs.release-mode.outputs.is-release != 'true'))
 
     runs-on: ${{ matrix.config.os }}
 
@@ -613,7 +664,7 @@ jobs:
 
   check-all:
 
-    needs: check
+    needs: [release-mode, check]
     if: always()
 
     runs-on: ubuntu-latest
@@ -623,10 +674,17 @@ jobs:
     steps:
       - name: Aggregate check matrix
         env:
+          MODE_RESULT: ${{ needs.release-mode.result }}
           CHECK_RESULT: ${{ needs.check.result }}
         run: |
-          echo "check matrix result: $CHECK_RESULT"
-          case "$CHECK_RESULT" in
-            success|skipped) exit 0 ;;
-            *) exit 1 ;;
-          esac
+          echo "release-mode result:  $MODE_RESULT"
+          echo "check matrix result:  $CHECK_RESULT"
+          # The detection job is aggregated too: when it fails, `check`
+          # is skipped rather than run, and aggregating the matrix alone
+          # would turn that into a green required check.
+          for result in "$MODE_RESULT" "$CHECK_RESULT"; do
+            case "$result" in
+              success|skipped) ;;
+              *) exit 1 ;;
+            esac
+          done

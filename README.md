@@ -108,6 +108,7 @@ jobs:
         valgrind
         rchk
         nosuggests
+      recheck-which: strong
     secrets:
       BLOCKR_PAT: ${{ secrets.BLOCKR_PAT }}
 ```
@@ -284,20 +285,52 @@ mostly one-time, and several pieces are load-bearing for security. See
 | Trigger | Jobs |
 |---|---|
 | `pull_request` | `lint`, `smoke`, `pkgdown-dev`, `coverage`, `docs` (parallel) |
-| `pull_request` labelled `release` | `release` matrix → `release-all` (if configured) |
 | `merge_group` | `check` matrix → `check-all`; `revdep` matrix → `revdep-all` (if configured) |
 | `push: main` | `pkgdown.yaml` deploy (if configured) |
 
 PR jobs run in parallel for fast feedback. The expensive multi-platform
 `check` matrix and reverse-dependency checks are reserved for the merge
-queue — they gate the merge but never block PR iteration. The CRAN
-flavour checks are expensive too, and go the other way: they run on the
-pull request, where their output is read before a submission, and pass
-through at the queue.
+queue — they gate the merge but never block PR iteration.
 
 The `check-all`, `revdep-all` and `release-all` jobs aggregate their
 respective matrices into a single stable name, so adding/removing a
 platform or revdep package doesn't churn the required-checks list.
+
+### Release mode
+
+A pull request labelled `release` inverts that split. The tarball is
+built from a commit on the pull request and submitted **before** the
+branch merges, so anything the merge queue would tell you arrives too
+late to act on. Everything that gates a submission therefore moves onto
+the pull-request ref and runs on every push:
+
+| Job | Ordinary PR | Release PR | Merge queue | Merge queue, release PR |
+|---|---|---|---|---|
+| `lint`, `smoke`, `pkgdown-dev`, `coverage`, `docs` | runs | runs | skipped | skipped |
+| `ci / check` (macOS, Windows, devel, oldrel) | skipped | **runs** | runs | **skipped** |
+| `revdep` (downstream GitHub branches) | skipped | skipped | runs | **skipped** |
+| `release` (R-hub flavours) | skipped | **runs** | skipped | skipped |
+| `recheck` (CRAN-style revdeps) | skipped | **runs** | skipped | skipped |
+
+Nothing expensive runs twice: each job moves to the ref where its answer
+is still actionable rather than being added there. Our own `revdep`
+stands down entirely, because a release has to be measured against what
+CRAN currently ships rather than against the siblings' development
+branches — see [Reverse dependencies before a CRAN submission](#reverse-dependencies-before-a-cran-submission).
+
+On a pull-request ref the label is in the event payload, so the jobs
+read it from there. On a `merge_group` ref it is invisible — there is no
+pull request there at all — so the queue-side half recovers the
+pull-request number from the queue ref
+(`gh-readonly-queue/<base>/pr-<n>-<sha>`) and reads the labels from the
+API. That is the `release-mode` action, using the same trick
+`parse-deps` already uses to find a PR body under the queue. It runs
+only on queue refs, so an ordinary pull request gains neither a job nor
+a token scope.
+
+A lookup that cannot answer reports "not a release", and the conditions
+are written so that this falls back to *running* the checks: a failed
+detection costs a redundant matrix, never a silently skipped one.
 
 ### Merge queue
 
@@ -356,18 +389,18 @@ lacks.
 The CRAN-shaped answer already exists as
 [`r-devel/recheck`](https://github.com/r-devel/recheck), a reusable
 workflow running a CRAN-style reverse dependency check in the
-`rcheckserver` container. Consumers wire it up with a twelve-line
-`recheck.yml` taking `which: strong | most`, as its README documents.
-It is not wrapped here: the consumer-side file is small, upstream
-maintains the workflow it calls, and a wrapper would only add a version
-to track.
+`rcheckserver` container. Set `recheck-which` to `strong` or `most` and
+`release.yaml` calls it on every push to a labelled release pull
+request, alongside the flavour matrix.
 
-Run it by `workflow_dispatch` against the release branch and read the
-summary and per-package artifacts by hand. It is deliberately not in
-`required_status_checks` — upstream rules it out as a gate, since a
-reverse dependency check "is typically too volatile to use as an
-automatic pass/fail CI test", turning on platform, hardware, network and
-unrelated failures in other people's packages.
+It runs automatically but does **not** gate. The job sits outside
+`release-all`, so it never appears in `required_status_checks` — upstream
+rules it out as a gate, since a reverse dependency check "is typically
+too volatile to use as an automatic pass/fail CI test", turning on
+platform, hardware, network and unrelated failures in other people's
+packages. Running it per push keeps the summary and the per-package
+artifacts fresh for whichever commit gets submitted; reading them is a
+person's job.
 
 Two caveats worth carrying wherever its results are quoted. It runs
 `r-release` on Ubuntu rather than CRAN's `r-devel` on `debian:testing`,
@@ -400,6 +433,7 @@ release.
 | Input | Type | Default | Purpose |
 |---|---|---|---|
 | `release-platforms` | newline-separated list | `''` | R-hub container flavours to check in, each naming an image under `ghcr.io/r-hub/containers` — `clang-asan`, `valgrind`, `rchk`, `nosuggests`, … Empty skips the matrix and reports success. See [Choosing the platform list](#choosing-the-platform-list). |
+| `recheck-which` | string | `''` | Run a CRAN-style reverse dependency check via `r-devel/recheck` over this many downstream packages: `strong` (Depends, Imports, LinkingTo) or `most` (those plus Suggests). Empty skips it, which is also right for a first release. Never gates — see [Reverse dependencies before a CRAN submission](#reverse-dependencies-before-a-cran-submission). |
 
 ### `pkgdown.yaml`
 
@@ -447,7 +481,7 @@ jobs:
 - **Docs freshness** — regenerate `man/` + `NAMESPACE` with the roxygen2 version pinned in `DESCRIPTION` (`Config/roxygen2/version`, or legacy `RoxygenNote`) and fail on drift — PR gate
 - **Full check** — 4-platform matrix (macOS, Windows, Ubuntu devel, Ubuntu oldrel) — merge-queue gate
 - **Reverse-dependency checks** against configurable downstream packages — merge-queue gate
-- **CRAN pre-submission checks** — AddressSanitizer, UndefinedBehaviorSanitizer, valgrind, `rchk` and the Suggests-free build, in the R-hub containers, on a labelled release-prep PR — separate reusable workflow
+- **CRAN pre-submission checks** — AddressSanitizer, UndefinedBehaviorSanitizer, valgrind, `rchk` and the Suggests-free build in the R-hub containers, plus a CRAN-style reverse dependency check, on every push to a labelled release PR — see [Release mode](#release-mode)
 - **pkgdown deploy** — site build + deploy to `gh-pages` on push to `main`
 - **Pinned Quarto** — jobs that install Quarto (any package holding a `.qmd`) pass an explicit version instead of the action's `release` default, which resolves the version through an unretried `curl` to quarto.org and has twice killed a green run — see [Quarto pin](#quarto-pin)
 - **Hard-dependency resolution on `lint` and `docs`** — neither job runs the suite or builds a site, so both skip the `Suggests` closure and the 125 MB Chromium that a `chromote` / `shinytest2` suggestion drags in — see [Suggests on the lint and docs jobs](#suggests-on-the-lint-and-docs-jobs)

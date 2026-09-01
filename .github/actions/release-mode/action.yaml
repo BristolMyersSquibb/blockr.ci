@@ -1,0 +1,46 @@
+name: Detect release mode
+description: >
+  Reports whether the pull request behind this run carries the release
+  label.  A release pull request runs the expensive checks on its own
+  ref, before the tarball is submitted, and skips them again at the
+  merge queue -- so both ci.yaml and revdep.yaml need the answer, on
+  refs where the label is not in the event payload.
+
+inputs:
+  label:
+    description: >
+      Label that marks a pull request as a release candidate.
+    required: false
+    default: release
+  pr-number:
+    description: >
+      Pull request number (e.g. github.event.pull_request.number).  Leave
+      empty on merge_group, where the action recovers it from the queue
+      ref instead.
+    required: false
+    default: ''
+  token:
+    description: >
+      Token for the label lookup.  Needs `pull-requests: read`.
+    required: false
+    default: ''
+
+outputs:
+  is-release:
+    description: >
+      `true` when the pull request carries the label, `false` otherwise
+      and whenever the answer cannot be established.
+    value: ${{ steps.detect.outputs.is-release }}
+
+runs:
+  using: composite
+  steps:
+    - name: Detect
+      id: detect
+      shell: bash
+      env:
+        LABEL: ${{ inputs.label }}
+        PR_NUMBER: ${{ inputs.pr-number }}
+        GH_TOKEN: ${{ inputs.token || github.token }}
+        SCRIPT_DIR: ${{ github.action_path }}
+      run: bash "$SCRIPT_DIR/release-mode.sh"

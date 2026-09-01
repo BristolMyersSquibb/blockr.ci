@@ -92,15 +92,22 @@
 # pull request; re-running them at merge time would pay twice for the
 # same answer.
 #
-# ── Reverse dependencies are deliberately out of scope ───────────────
+# The queue side of that trade lives in ci.yaml and revdep.yaml, which
+# both stand down for a release pull request: the check matrix has
+# already run on the pull-request ref, and our own reverse-dependency
+# legs are the wrong question for a submission.  So the queue leg of a
+# release is deliberately close to empty.
+#
+# ── Reverse dependencies ─────────────────────────────────────────────
 #
 # A release wants to know whether it breaks what CRAN currently ships,
 # while revdep.yaml installs each downstream from its GitHub branch and
 # answers the development-state question instead.  The CRAN-shaped
-# answer is r-devel/recheck, wired up consumer-side on
-# `workflow_dispatch`.  Upstream rules it out as a gate — the results
-# turn on unrelated failures in other people's packages — so it is read
-# by a human rather than required.  See the README.
+# answer is r-devel/recheck, called below when `recheck-which` is set;
+# revdep.yaml stands down for a release pull request so the two never
+# both run.  Upstream rules recheck out as a gate — the results turn on
+# unrelated failures in other people's packages — so it is read by a
+# human rather than required, and stays outside `release-all`.
 #
 # Each container manages its own toolchain and setup-deps installs no
 # Quarto, so a consumer whose vignettes are .qmd rather than .Rmd fails
@@ -125,6 +132,17 @@ on:
           default, skips the matrix and reports success, so a consumer
           can wire the caller in and choose a list later.  See the README
           for which flavours a package's properties call for.
+        type: string
+        default: ''
+        required: false
+
+      recheck-which:
+        description: >
+          Run a CRAN-style reverse dependency check via r-devel/recheck,
+          over this many downstream packages: `strong` (Depends, Imports,
+          LinkingTo) or `most` (those plus Suggests).  Empty, the default,
+          skips it -- which is also the right setting for a first release,
+          where nothing on CRAN depends on the package yet.
         type: string
         default: ''
         required: false
@@ -246,6 +264,34 @@ jobs:
       # directly.  Those scans key off `matrix.config.label`, so the
       # matrix has to be named `config` and carry `label`.
       - uses: r-hub/actions/run-check@v1
+
+  # ── CRAN-style reverse dependency check ─────────────────────────────
+  #
+  # Answers the question a submission actually asks -- does this break
+  # what CRAN currently ships -- which revdep.yaml cannot, since it
+  # installs each downstream from its GitHub branch.  A sibling's `main`
+  # may already carry an adaptation the published version lacks, and
+  # those diverge precisely when it matters.  So revdep.yaml stands down
+  # for a release pull request and this runs instead.
+  #
+  # Deliberately outside `release-all`, and so outside the required
+  # check.  Upstream rules it out as a gate: the result "is typically too
+  # volatile to use as an automatic pass/fail CI test", turning on
+  # platform, hardware, network and unrelated failures in other people's
+  # packages.  Running it per push keeps the summary and the per-package
+  # artifacts fresh for whichever commit gets submitted; reading them is
+  # a person's job.
+
+  recheck:
+
+    if: >-
+      github.event_name == 'pull_request' &&
+      contains(github.event.pull_request.labels.*.name, 'release') &&
+      inputs.recheck-which != ''
+
+    uses: r-devel/recheck/.github/workflows/recheck.yml@v1
+    with:
+      which: ${{ inputs.recheck-which }}
 
   # ── Aggregate the matrix result for the required-checks list ────────
   #
