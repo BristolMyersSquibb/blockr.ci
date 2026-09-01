@@ -310,7 +310,7 @@ the pull-request ref and runs on every push:
 | `ci / check` (macOS, Windows, devel, oldrel) | skipped | **runs** | runs | **skipped** |
 | `revdep` (downstream GitHub branches) | skipped | skipped | runs | **skipped** |
 | `release` (R-hub flavours) | skipped | **runs** | skipped | skipped |
-| `recheck` (CRAN-style revdeps) | skipped | **runs** | skipped | skipped |
+| `recheck` (CRAN-style revdeps) | skipped | **runs**, if the package has CRAN dependents | skipped | skipped |
 
 Nothing expensive runs twice: each job moves to the ref where its answer
 is still actionable rather than being added there. Our own `revdep`
@@ -393,6 +393,22 @@ workflow running a CRAN-style reverse dependency check in the
 `release.yaml` calls it on every push to a labelled release pull
 request, alongside the flavour matrix.
 
+Two settings, split along whether there is a judgement to make. The
+`recheck-which` input sets the depth, which is a genuine choice. Whether
+the package has any CRAN dependents at all is not — it is a fact, and unlike
+the platform list it moves without anyone touching the repo, since a
+package with no dependents today gains its first next month. So the
+workflow derives that half: it asks CRAN for the package's reverse
+dependencies and skips `recheck` when there are none.
+
+That makes the setting safe to turn on before it does anything. A first
+release, where nothing on CRAN depends on the package yet, skips in
+seconds rather than building a container to check nothing — and starts
+checking dependents by itself once they exist, with no second edit to
+remember. The `strong` and `most` values are R's own
+`tools::package_dependencies()` shorthands, passed through untranslated,
+so the depth here and the depth upstream cannot drift apart.
+
 It runs automatically but does **not** gate. The job sits outside
 `release-all`, so it never appears in `required_status_checks` — upstream
 rules it out as a gate, since a reverse dependency check "is typically
@@ -433,7 +449,7 @@ release.
 | Input | Type | Default | Purpose |
 |---|---|---|---|
 | `release-platforms` | newline-separated list | `''` | R-hub container flavours to check in, each naming an image under `ghcr.io/r-hub/containers` — `clang-asan`, `valgrind`, `rchk`, `nosuggests`, … Empty skips the matrix and reports success. See [Choosing the platform list](#choosing-the-platform-list). |
-| `recheck-which` | string | `''` | Run a CRAN-style reverse dependency check via `r-devel/recheck` over this many downstream packages: `strong` (Depends, Imports, LinkingTo) or `most` (those plus Suggests). Empty skips it, which is also right for a first release. Never gates — see [Reverse dependencies before a CRAN submission](#reverse-dependencies-before-a-cran-submission). |
+| `recheck-which` | string | `''` | Depth of the CRAN-style reverse dependency check run via `r-devel/recheck`: `strong` (Depends, Imports, LinkingTo) or `most` (those plus Suggests). Empty disables it. When set, the check still runs only if the package actually has CRAN dependents. Never gates — see [Reverse dependencies before a CRAN submission](#reverse-dependencies-before-a-cran-submission). |
 
 ### `pkgdown.yaml`
 

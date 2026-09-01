@@ -282,12 +282,66 @@ jobs:
   # artifacts fresh for whichever commit gets submitted; reading them is
   # a person's job.
 
-  recheck:
+  # Whether anything on CRAN depends on this package is a fact rather
+  # than a judgement, and unlike the platform list it moves without
+  # anyone touching the repo -- a package with no dependents today gains
+  # its first next month.  So `recheck-which` configures the depth, which
+  # is a real choice, and the existence question is derived here.  A
+  # repo that opted in before it had dependents therefore starts
+  # checking them on its own, and a first release skips in seconds
+  # instead of building a container to check nothing.
+  #
+  # The `strong` and `most` values recheck takes are R's own
+  # `tools::package_dependencies()` shorthands, so the input is passed
+  # through untranslated and the two definitions cannot drift.
+
+  revdeps:
 
     if: >-
       github.event_name == 'pull_request' &&
       contains(github.event.pull_request.labels.*.name, 'release') &&
       inputs.recheck-which != ''
+
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 60
+
+    outputs:
+      has-revdeps: ${{ steps.count.outputs.has-revdeps }}
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: r-lib/actions/setup-r@v2
+
+      # Asks CRAN directly rather than the runner's configured mirror:
+      # the question is what CRAN currently ships, and a snapshotting
+      # binary mirror can answer it as of some other day.
+      - name: Count CRAN reverse dependencies
+        id: count
+        env:
+          RECHECK_WHICH: ${{ inputs.recheck-which }}
+        run: |
+          Rscript -e '
+            pkg <- read.dcf("DESCRIPTION", "Package")[[1]]
+            which <- Sys.getenv("RECHECK_WHICH")
+            db <- available.packages(repos = "https://cloud.r-project.org")
+            rd <- tools::package_dependencies(
+              pkg, db = db, reverse = TRUE, which = which
+            )[[1]]
+            n <- length(rd)
+            cat(sprintf("%s has %d reverse (%s) dependencies on CRAN\n",
+                        pkg, n, which))
+            if (n > 0) cat(strwrap(paste(rd, collapse = ", ")), sep = "\n")
+            cat(paste0("has-revdeps=", if (n > 0) "true" else "false", "\n"),
+                file = Sys.getenv("GITHUB_OUTPUT"), append = TRUE)
+          '
+
+  recheck:
+
+    needs: revdeps
+
+    if: needs.revdeps.outputs.has-revdeps == 'true'
 
     uses: r-devel/recheck/.github/workflows/recheck.yml@v1
     with:
