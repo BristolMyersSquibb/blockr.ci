@@ -121,46 +121,137 @@
 <p>Pass secrets by name. <code>secrets: inherit</code> does not forward secrets across organisations — the inherited values silently arrive blank in the called job.</p>
 </div>
 <div class="section level3">
+<h3 id="releaseyaml--cran-pre-submission-checks-optional">
+<code>release.yaml</code> — CRAN pre-submission checks (optional)<a class="anchor" aria-label="anchor" href="#releaseyaml--cran-pre-submission-checks-optional"></a>
+</h3>
+<p>CRAN runs check flavours the <code>ci.yaml</code> matrix does not: AddressSanitizer, UndefinedBehaviorSanitizer, valgrind, a no-long-double build, a Suggests-free build and <code>rchk</code>. For a package with compiled code those are where a submission gets rejected, and without this workflow the first signal is CRAN’s own check page, after the upload.</p>
+<p>The checks run in the public <a href="https://r-hub.github.io/containers/" class="external-link">R-hub containers</a>, one image per flavour. No R-hub account and no <code>rhub</code> package are involved. Give this one a workflow file of its own rather than a second <code>jobs:</code> entry in <code>ci.yaml</code> — see <a href="#why-a-separate-file">Why a separate file</a>:</p>
+<div class="sourceCode" id="cb4"><pre class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb4-1"><a href="#cb4-1" tabindex="-1"></a><span class="fu">on</span><span class="kw">:</span></span>
+<span id="cb4-2"><a href="#cb4-2" tabindex="-1"></a><span class="at">  </span><span class="fu">pull_request</span><span class="kw">:</span></span>
+<span id="cb4-3"><a href="#cb4-3" tabindex="-1"></a><span class="at">    </span><span class="fu">types</span><span class="kw">:</span><span class="at"> </span><span class="kw">[</span><span class="at">opened</span><span class="kw">,</span><span class="at"> reopened</span><span class="kw">,</span><span class="at"> synchronize</span><span class="kw">,</span><span class="at"> labeled</span><span class="kw">]</span></span>
+<span id="cb4-4"><a href="#cb4-4" tabindex="-1"></a><span class="at">  </span><span class="fu">merge_group</span><span class="kw">:</span></span>
+<span id="cb4-5"><a href="#cb4-5" tabindex="-1"></a></span>
+<span id="cb4-6"><a href="#cb4-6" tabindex="-1"></a><span class="fu">name</span><span class="kw">:</span><span class="at"> release</span></span>
+<span id="cb4-7"><a href="#cb4-7" tabindex="-1"></a></span>
+<span id="cb4-8"><a href="#cb4-8" tabindex="-1"></a><span class="fu">jobs</span><span class="kw">:</span></span>
+<span id="cb4-9"><a href="#cb4-9" tabindex="-1"></a><span class="at">  </span><span class="fu">release</span><span class="kw">:</span></span>
+<span id="cb4-10"><a href="#cb4-10" tabindex="-1"></a><span class="at">    </span><span class="fu">uses</span><span class="kw">:</span><span class="at"> BristolMyersSquibb/blockr.ci/.github/workflows/release.yaml@main</span></span>
+<span id="cb4-11"><a href="#cb4-11" tabindex="-1"></a><span class="at">    </span><span class="fu">with</span><span class="kw">:</span></span>
+<span id="cb4-12"><a href="#cb4-12" tabindex="-1"></a><span class="fu">      release-platforms</span><span class="kw">: </span><span class="ch">|</span></span>
+<span id="cb4-13"><a href="#cb4-13" tabindex="-1"></a>        clang-asan</span>
+<span id="cb4-14"><a href="#cb4-14" tabindex="-1"></a>        gcc-asan</span>
+<span id="cb4-15"><a href="#cb4-15" tabindex="-1"></a>        clang-ubsan</span>
+<span id="cb4-16"><a href="#cb4-16" tabindex="-1"></a>        valgrind</span>
+<span id="cb4-17"><a href="#cb4-17" tabindex="-1"></a>        rchk</span>
+<span id="cb4-18"><a href="#cb4-18" tabindex="-1"></a>        nosuggests</span>
+<span id="cb4-19"><a href="#cb4-19" tabindex="-1"></a><span class="at">      </span><span class="fu">recheck-which</span><span class="kw">:</span><span class="at"> strong</span></span>
+<span id="cb4-20"><a href="#cb4-20" tabindex="-1"></a><span class="at">    </span><span class="fu">secrets</span><span class="kw">:</span></span>
+<span id="cb4-21"><a href="#cb4-21" tabindex="-1"></a><span class="at">      </span><span class="fu">BLOCKR_PAT</span><span class="kw">:</span><span class="at"> ${{ secrets.BLOCKR_PAT }}</span></span></code></pre></div>
+<p>Leave the caller ungated. An <code>if:</code> there removes the nested contexts altogether, which makes <code>release / release-all</code> impossible to require — the same trap the <code>revdep</code> caller sits in, measured in <a href="https://github.com/BristolMyersSquibb/blockr.ci/issues/52" class="external-link">#52</a>. Only the inner jobs are conditional, so <code>release-all</code> reports on every ref.</p>
+<div class="section level4">
+<h4 id="choosing-the-platform-list">Choosing the platform list<a class="anchor" aria-label="anchor" href="#choosing-the-platform-list"></a>
+</h4>
+<p>The list is per-repo rather than derived, because the relevant flavours are partly a maintainer judgement no heuristic recovers. It is also stable in a way <code>revdep-packages</code> is not: a dependency graph moves under you, while a platform list only changes when a package gains or loses compiled code.</p>
+<table class="table">
+<colgroup>
+<col width="50%">
+<col width="50%">
+</colgroup>
+<thead><tr>
+<th>Property of the package</th>
+<th>Flavours worth listing</th>
+</tr></thead>
+<tbody>
+<tr>
+<td>
+<code>src/</code> or <code>LinkingTo</code>
+</td>
+<td>
+<code>clang-asan</code>, <code>gcc-asan</code>, <code>clang-ubsan</code>, <code>valgrind</code>
+</td>
+</tr>
+<tr>
+<td>Direct R C API use</td>
+<td><code>rchk</code></td>
+</tr>
+<tr>
+<td>Non-empty <code>Suggests</code>
+</td>
+<td><code>nosuggests</code></td>
+</tr>
+<tr>
+<td>Numeric sensitivity, BLAS, endianness</td>
+<td>
+<code>nold</code>, <code>atlas</code>, <code>mkl</code> — judgement, not derivable</td>
+</tr>
+</tbody>
+</table>
+<p>The <code>nosuggests</code> row applies to pure-R packages too: unguarded use of a suggested package is a routine CRAN rejection, so a package listing only <code>nosuggests</code> still gets a useful leg. The <code>rchk</code> row is worth separating from “has compiled code” — a package can carry compiled code that never touches the R API, and <code>rchk</code> only means something when it does.</p>
+<p>The input defaults to empty, which skips the matrix and reports success. A consumer can wire the caller in, add the required check, and choose a list later.</p>
+<p>Foreign-architecture flavours (<code>s390x</code>, for big-endian checks) are out of scope here. Running one needs <code>binfmt</code> registered before the job container starts, and a reusable workflow has no step that runs earlier than its own container setup.</p>
+<p>Quarto is the other gap. Each container manages its own toolchain, and <code>r-hub/actions/setup-deps</code> installs no Quarto, so a consumer whose vignettes are <code>.qmd</code> rather than <code>.Rmd</code> will fail the vignette build on every flavour that does not already pass <code>--no-build-vignettes</code>. That rules the workflow out for <code>blockr.core</code> and <code>blockr.dag</code> as they stand; <code>typedjson</code>, the package this was built for, is <code>.Rmd</code> throughout. This is also why <code>release.yaml</code> carries no <code>QUARTO_VERSION</code> and stays out of the <a href="#quarto-pin">Quarto pin</a> bump list.</p>
+</div>
+<div class="section level4">
+<h4 id="running-the-checks">Running the checks<a class="anchor" aria-label="anchor" href="#running-the-checks"></a>
+</h4>
+<p>Apply the <code>release</code> label to the release-prep pull request. The pull request is the commit being submitted, so it is the thing worth checking; a release tracking <em>issue</em> has no commit to report a status against and could not back a required check at all.</p>
+<p>The label marks the pull request as a release candidate — a mode rather than a one-shot “run now” button. It stays on for the life of the branch, and the flavours re-run on every push while it is there.</p>
+<p>Running on each push is the point rather than a cost. The tarball is built from a commit on this pull request, before it merges, so every push produces a new release candidate; checking only the commit that happened to be current when the label went on would leave the submitted one unchecked. It also keeps <code>release / release-all</code> an honest gate — green for the head commit because the flavours passed on it, not because nothing ran.</p>
+<p>The check still reports success on an unlabelled pull request, so forgetting the label skips the checks silently rather than blocking the merge. That is the one soft edge in the design, and it is deliberate: the alternative is charging every ordinary pull request for a valgrind run.</p>
+<p>On <code>merge_group</code> the workflow passes through without doing the work, mirroring <code>revdep.yaml</code>, which does the reverse. A label-gated condition produces nothing on a <code>merge_group</code> ref — there is no pull request and no label there — so the real work could not run at the queue even in principle, and a required context that is never created burns the queue’s <code>check_response_timeout_minutes</code> instead of merging.</p>
+</div>
+<div class="section level4">
+<h4 id="why-a-separate-file">Why a separate file<a class="anchor" aria-label="anchor" href="#why-a-separate-file"></a>
+</h4>
+<p>Adding <code>labeled</code> to <code>ci.yaml</code>’s <code>on:</code> block would re-run all of <code>ci</code> on every label change on every pull request, and a <code>jobs:</code> entry there would report as <code>ci / …</code> instead of keeping the context at <code>release / release-all</code>.</p>
+</div>
+<div class="section level4">
+<h4 id="reverse-dependencies-at-release-time">Reverse dependencies at release time<a class="anchor" aria-label="anchor" href="#reverse-dependencies-at-release-time"></a>
+</h4>
+<p>This workflow covers the platform flavours only. Reverse dependencies at release time are a different question from the one <code>revdep.yaml</code> answers — see <a href="#reverse-dependencies-before-a-cran-submission">Reverse dependencies before a CRAN submission</a>.</p>
+</div>
+</div>
+<div class="section level3">
 <h3 id="connect-deployyaml--pull-mode-posit-connect-deploys">
 <code>connect-deploy.yaml</code> — pull-mode Posit Connect deploys<a class="anchor" aria-label="anchor" href="#connect-deployyaml--pull-mode-posit-connect-deploys"></a>
 </h3>
 <p>Publishes git-backed (“pull-mode”) deployments to Posit Connect, for a Connect that sits on an internal network a GitHub runner cannot reach. Deployment is inverted: Connect polls a branch and redeploys when it advances. The workflow regenerates the per-deploy <code>manifest.json</code> and commits it — from inside the merge queue — to a derived <code>connect-&lt;base&gt;</code> branch (<code>connect-main</code>, <code>connect-test</code>) that Connect watches. Source branches stay clean, with no manifest and no per-PR manifest churn.</p>
 <p>Caller workflow in the deployment repo (default <code>auth: app</code> — push <code>connect-*</code> with a GitHub App, paired with a locked <code>connect-*</code> ruleset):</p>
-<div class="sourceCode" id="cb4"><pre class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb4-1"><a href="#cb4-1" tabindex="-1"></a><span class="fu">name</span><span class="kw">:</span><span class="at"> connect-deploy</span></span>
-<span id="cb4-2"><a href="#cb4-2" tabindex="-1"></a><span class="fu">on</span><span class="kw">:</span></span>
-<span id="cb4-3"><a href="#cb4-3" tabindex="-1"></a><span class="at">  </span><span class="fu">pull_request</span><span class="kw">:</span></span>
-<span id="cb4-4"><a href="#cb4-4" tabindex="-1"></a><span class="at">  </span><span class="fu">merge_group</span><span class="kw">:</span></span>
-<span id="cb4-5"><a href="#cb4-5" tabindex="-1"></a></span>
-<span id="cb4-6"><a href="#cb4-6" tabindex="-1"></a><span class="fu">jobs</span><span class="kw">:</span></span>
-<span id="cb4-7"><a href="#cb4-7" tabindex="-1"></a><span class="at">  </span><span class="fu">connect-deploy</span><span class="kw">:</span></span>
-<span id="cb4-8"><a href="#cb4-8" tabindex="-1"></a><span class="at">    </span><span class="fu">uses</span><span class="kw">:</span><span class="at"> BristolMyersSquibb/blockr.ci/.github/workflows/connect-deploy.yaml@main</span></span>
-<span id="cb4-9"><a href="#cb4-9" tabindex="-1"></a><span class="at">    </span><span class="fu">permissions</span><span class="kw">:</span></span>
-<span id="cb4-10"><a href="#cb4-10" tabindex="-1"></a><span class="at">      </span><span class="fu">contents</span><span class="kw">:</span><span class="at"> read</span></span>
-<span id="cb4-11"><a href="#cb4-11" tabindex="-1"></a><span class="at">    </span><span class="fu">with</span><span class="kw">:</span></span>
-<span id="cb4-12"><a href="#cb4-12" tabindex="-1"></a><span class="at">      </span><span class="fu">r-version</span><span class="kw">:</span><span class="at"> </span><span class="st">"4.4.2"</span></span>
-<span id="cb4-13"><a href="#cb4-13" tabindex="-1"></a><span class="at">    </span><span class="fu">secrets</span><span class="kw">:</span></span>
-<span id="cb4-14"><a href="#cb4-14" tabindex="-1"></a><span class="at">      </span><span class="fu">APP_ID</span><span class="kw">:</span><span class="at"> ${{ secrets.CONNECT_DEPLOY_APP_ID }}</span></span>
-<span id="cb4-15"><a href="#cb4-15" tabindex="-1"></a><span class="at">      </span><span class="fu">APP_PRIVATE_KEY</span><span class="kw">:</span><span class="at"> ${{ secrets.CONNECT_DEPLOY_APP_PRIVATE_KEY }}</span></span></code></pre></div>
+<div class="sourceCode" id="cb5"><pre class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb5-1"><a href="#cb5-1" tabindex="-1"></a><span class="fu">name</span><span class="kw">:</span><span class="at"> connect-deploy</span></span>
+<span id="cb5-2"><a href="#cb5-2" tabindex="-1"></a><span class="fu">on</span><span class="kw">:</span></span>
+<span id="cb5-3"><a href="#cb5-3" tabindex="-1"></a><span class="at">  </span><span class="fu">pull_request</span><span class="kw">:</span></span>
+<span id="cb5-4"><a href="#cb5-4" tabindex="-1"></a><span class="at">  </span><span class="fu">merge_group</span><span class="kw">:</span></span>
+<span id="cb5-5"><a href="#cb5-5" tabindex="-1"></a></span>
+<span id="cb5-6"><a href="#cb5-6" tabindex="-1"></a><span class="fu">jobs</span><span class="kw">:</span></span>
+<span id="cb5-7"><a href="#cb5-7" tabindex="-1"></a><span class="at">  </span><span class="fu">connect-deploy</span><span class="kw">:</span></span>
+<span id="cb5-8"><a href="#cb5-8" tabindex="-1"></a><span class="at">    </span><span class="fu">uses</span><span class="kw">:</span><span class="at"> BristolMyersSquibb/blockr.ci/.github/workflows/connect-deploy.yaml@main</span></span>
+<span id="cb5-9"><a href="#cb5-9" tabindex="-1"></a><span class="at">    </span><span class="fu">permissions</span><span class="kw">:</span></span>
+<span id="cb5-10"><a href="#cb5-10" tabindex="-1"></a><span class="at">      </span><span class="fu">contents</span><span class="kw">:</span><span class="at"> read</span></span>
+<span id="cb5-11"><a href="#cb5-11" tabindex="-1"></a><span class="at">    </span><span class="fu">with</span><span class="kw">:</span></span>
+<span id="cb5-12"><a href="#cb5-12" tabindex="-1"></a><span class="at">      </span><span class="fu">r-version</span><span class="kw">:</span><span class="at"> </span><span class="st">"4.4.2"</span></span>
+<span id="cb5-13"><a href="#cb5-13" tabindex="-1"></a><span class="at">    </span><span class="fu">secrets</span><span class="kw">:</span></span>
+<span id="cb5-14"><a href="#cb5-14" tabindex="-1"></a><span class="at">      </span><span class="fu">APP_ID</span><span class="kw">:</span><span class="at"> ${{ secrets.CONNECT_DEPLOY_APP_ID }}</span></span>
+<span id="cb5-15"><a href="#cb5-15" tabindex="-1"></a><span class="at">      </span><span class="fu">APP_PRIVATE_KEY</span><span class="kw">:</span><span class="at"> ${{ secrets.CONNECT_DEPLOY_APP_PRIVATE_KEY }}</span></span></code></pre></div>
 <p>For a repo whose org permits deploy keys but not Apps, use <code>auth: deploy-key</code> — push <code>connect-*</code> over SSH with a repo deploy key on the <code>connect-*</code> bypass. Same locked-branch guarantee as the App, with the least setup:</p>
-<div class="sourceCode" id="cb5"><pre class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb5-1"><a href="#cb5-1" tabindex="-1"></a><span class="fu">jobs</span><span class="kw">:</span></span>
-<span id="cb5-2"><a href="#cb5-2" tabindex="-1"></a><span class="at">  </span><span class="fu">connect-deploy</span><span class="kw">:</span></span>
-<span id="cb5-3"><a href="#cb5-3" tabindex="-1"></a><span class="at">    </span><span class="fu">uses</span><span class="kw">:</span><span class="at"> BristolMyersSquibb/blockr.ci/.github/workflows/connect-deploy.yaml@main</span></span>
-<span id="cb5-4"><a href="#cb5-4" tabindex="-1"></a><span class="at">    </span><span class="fu">permissions</span><span class="kw">:</span></span>
-<span id="cb5-5"><a href="#cb5-5" tabindex="-1"></a><span class="at">      </span><span class="fu">contents</span><span class="kw">:</span><span class="at"> read</span></span>
-<span id="cb5-6"><a href="#cb5-6" tabindex="-1"></a><span class="at">    </span><span class="fu">with</span><span class="kw">:</span></span>
-<span id="cb5-7"><a href="#cb5-7" tabindex="-1"></a><span class="at">      </span><span class="fu">auth</span><span class="kw">:</span><span class="at"> deploy-key</span></span>
-<span id="cb5-8"><a href="#cb5-8" tabindex="-1"></a><span class="at">      </span><span class="fu">r-version</span><span class="kw">:</span><span class="at"> </span><span class="st">"4.4.2"</span></span>
-<span id="cb5-9"><a href="#cb5-9" tabindex="-1"></a><span class="at">    </span><span class="fu">secrets</span><span class="kw">:</span></span>
-<span id="cb5-10"><a href="#cb5-10" tabindex="-1"></a><span class="at">      </span><span class="fu">DEPLOY_KEY</span><span class="kw">:</span><span class="at"> ${{ secrets.CONNECT_DEPLOY_SSH_KEY }}</span></span></code></pre></div>
-<p>For a repo that can provision neither an App nor a deploy key (e.g. a locked-down EMU org where both are gated), use <code>auth: token</code> — push <code>connect-*</code> with the workflow’s own <code>GITHUB_TOKEN</code>, no App, no environment, no secrets, paired with an <strong>unprotected</strong> <code>connect-*</code>:</p>
 <div class="sourceCode" id="cb6"><pre class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb6-1"><a href="#cb6-1" tabindex="-1"></a><span class="fu">jobs</span><span class="kw">:</span></span>
 <span id="cb6-2"><a href="#cb6-2" tabindex="-1"></a><span class="at">  </span><span class="fu">connect-deploy</span><span class="kw">:</span></span>
 <span id="cb6-3"><a href="#cb6-3" tabindex="-1"></a><span class="at">    </span><span class="fu">uses</span><span class="kw">:</span><span class="at"> BristolMyersSquibb/blockr.ci/.github/workflows/connect-deploy.yaml@main</span></span>
 <span id="cb6-4"><a href="#cb6-4" tabindex="-1"></a><span class="at">    </span><span class="fu">permissions</span><span class="kw">:</span></span>
-<span id="cb6-5"><a href="#cb6-5" tabindex="-1"></a><span class="at">      </span><span class="fu">contents</span><span class="kw">:</span><span class="at"> write</span></span>
+<span id="cb6-5"><a href="#cb6-5" tabindex="-1"></a><span class="at">      </span><span class="fu">contents</span><span class="kw">:</span><span class="at"> read</span></span>
 <span id="cb6-6"><a href="#cb6-6" tabindex="-1"></a><span class="at">    </span><span class="fu">with</span><span class="kw">:</span></span>
-<span id="cb6-7"><a href="#cb6-7" tabindex="-1"></a><span class="at">      </span><span class="fu">auth</span><span class="kw">:</span><span class="at"> token</span></span>
-<span id="cb6-8"><a href="#cb6-8" tabindex="-1"></a><span class="at">      </span><span class="fu">r-version</span><span class="kw">:</span><span class="at"> </span><span class="st">"4.4.2"</span></span></code></pre></div>
+<span id="cb6-7"><a href="#cb6-7" tabindex="-1"></a><span class="at">      </span><span class="fu">auth</span><span class="kw">:</span><span class="at"> deploy-key</span></span>
+<span id="cb6-8"><a href="#cb6-8" tabindex="-1"></a><span class="at">      </span><span class="fu">r-version</span><span class="kw">:</span><span class="at"> </span><span class="st">"4.4.2"</span></span>
+<span id="cb6-9"><a href="#cb6-9" tabindex="-1"></a><span class="at">    </span><span class="fu">secrets</span><span class="kw">:</span></span>
+<span id="cb6-10"><a href="#cb6-10" tabindex="-1"></a><span class="at">      </span><span class="fu">DEPLOY_KEY</span><span class="kw">:</span><span class="at"> ${{ secrets.CONNECT_DEPLOY_SSH_KEY }}</span></span></code></pre></div>
+<p>For a repo that can provision neither an App nor a deploy key (e.g. a locked-down EMU org where both are gated), use <code>auth: token</code> — push <code>connect-*</code> with the workflow’s own <code>GITHUB_TOKEN</code>, no App, no environment, no secrets, paired with an <strong>unprotected</strong> <code>connect-*</code>:</p>
+<div class="sourceCode" id="cb7"><pre class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb7-1"><a href="#cb7-1" tabindex="-1"></a><span class="fu">jobs</span><span class="kw">:</span></span>
+<span id="cb7-2"><a href="#cb7-2" tabindex="-1"></a><span class="at">  </span><span class="fu">connect-deploy</span><span class="kw">:</span></span>
+<span id="cb7-3"><a href="#cb7-3" tabindex="-1"></a><span class="at">    </span><span class="fu">uses</span><span class="kw">:</span><span class="at"> BristolMyersSquibb/blockr.ci/.github/workflows/connect-deploy.yaml@main</span></span>
+<span id="cb7-4"><a href="#cb7-4" tabindex="-1"></a><span class="at">    </span><span class="fu">permissions</span><span class="kw">:</span></span>
+<span id="cb7-5"><a href="#cb7-5" tabindex="-1"></a><span class="at">      </span><span class="fu">contents</span><span class="kw">:</span><span class="at"> write</span></span>
+<span id="cb7-6"><a href="#cb7-6" tabindex="-1"></a><span class="at">    </span><span class="fu">with</span><span class="kw">:</span></span>
+<span id="cb7-7"><a href="#cb7-7" tabindex="-1"></a><span class="at">      </span><span class="fu">auth</span><span class="kw">:</span><span class="at"> token</span></span>
+<span id="cb7-8"><a href="#cb7-8" tabindex="-1"></a><span class="at">      </span><span class="fu">r-version</span><span class="kw">:</span><span class="at"> </span><span class="st">"4.4.2"</span></span></code></pre></div>
 <p>The job is a no-op on <code>pull_request</code> (so the required check stays green and the PR is queueable) and the real publisher on <code>merge_group</code>. In app mode, pass secrets by name. The <code>permissions:</code> differ by mode — see <a href="#auth-modes">Auth modes</a> for why, and for the security pairing each mode requires.</p>
 <p>The full consumer-side configuration — GitHub App, branch ruleset, protected environment, required checks — is operational repo settings, mostly one-time, and several pieces are load-bearing for security. See <a href="#connect-deployment-setup">Connect deployment setup</a>.</p>
 </div>
@@ -196,17 +287,76 @@
 </tbody>
 </table>
 <p>PR jobs run in parallel for fast feedback. The expensive multi-platform <code>check</code> matrix and reverse-dependency checks are reserved for the merge queue — they gate the merge but never block PR iteration.</p>
-<p><code>check-all</code> and <code>revdep-all</code> aggregate their respective matrices into a single stable name, so adding/removing a platform or revdep package doesn’t churn the required-checks list.</p>
+<p>The <code>check-all</code>, <code>revdep-all</code> and <code>release-all</code> jobs aggregate their respective matrices into a single stable name, so adding/removing a platform or revdep package doesn’t churn the required-checks list.</p>
+<div class="section level3">
+<h3 id="release-mode">Release mode<a class="anchor" aria-label="anchor" href="#release-mode"></a>
+</h3>
+<p>A pull request labelled <code>release</code> adds to that split. The tarball is built from a commit on the pull request and submitted <strong>before</strong> the branch merges, so anything the merge queue would tell you arrives too late to act on. Everything that gates a submission therefore also runs on the pull-request ref, on every push:</p>
+<table class="table">
+<colgroup>
+<col width="25%">
+<col width="25%">
+<col width="25%">
+<col width="25%">
+</colgroup>
+<thead><tr>
+<th>Job</th>
+<th>Ordinary PR</th>
+<th>Release PR</th>
+<th>Merge queue</th>
+</tr></thead>
+<tbody>
+<tr>
+<td>
+<code>lint</code>, <code>smoke</code>, <code>pkgdown-dev</code>, <code>coverage</code>, <code>docs</code>
+</td>
+<td>runs</td>
+<td>runs</td>
+<td>skipped</td>
+</tr>
+<tr>
+<td>
+<code>ci / check</code> (macOS, Windows, devel, oldrel)</td>
+<td>skipped</td>
+<td><strong>runs</strong></td>
+<td>runs</td>
+</tr>
+<tr>
+<td>
+<code>release</code> (R-hub flavours)</td>
+<td>skipped</td>
+<td><strong>runs</strong></td>
+<td>skipped</td>
+</tr>
+<tr>
+<td>
+<code>recheck</code> (CRAN-style revdeps)</td>
+<td>skipped</td>
+<td>
+<strong>runs</strong>, if the package has CRAN dependents</td>
+<td>skipped</td>
+</tr>
+<tr>
+<td>
+<code>revdep</code> (downstream GitHub branches)</td>
+<td>skipped</td>
+<td>skipped</td>
+<td>runs</td>
+</tr>
+</tbody>
+</table>
+<p>The label is read straight from the event payload — <code>contains(github.event.pull_request.labels.*.name, 'release')</code> — so the whole mechanism is one condition per job, with no detection step anywhere.</p>
+<p>The queue keeps running the full pipeline for a release pull request, same as any other. Skipping the <code>check</code> matrix there would save a run, but the queue tests the would-be merge commit rather than the pull request head, and dropping it would reopen exactly the red-<code>main</code> gap described below. Our <code>revdep</code> likewise keeps running at the queue: it gates the merge, while <code>recheck</code> answers the different question the submission asks — see <a href="#reverse-dependencies-before-a-cran-submission">Reverse dependencies before a CRAN submission</a>. A release pull request is rare enough that paying for the queue leg twice over is the cheaper mistake.</p>
+</div>
 <div class="section level3">
 <h3 id="merge-queue">Merge queue<a class="anchor" aria-label="anchor" href="#merge-queue"></a>
 </h3>
 <p>Without GitHub’s merge queue enabled, <code>merge_group</code> events never fire and the multi-platform <code>check</code> matrix never runs — a green PR can then produce a red <code>main</code> when one of the matrix platforms fails. Enabling the merge queue closes that gap: the queue runs the full pipeline against the would-be merge commit and blocks the merge on failure.</p>
 <p>To enable, in the consumer repo’s branch protection settings for <code>main</code>:</p>
 <ol style="list-style-type: decimal">
+<li><p><strong>Require a pull request before merging</strong>.</p></li>
 <li>
-<strong>Require a pull request before merging</strong>.</li>
-<li>
-<strong>Require status checks to pass</strong> — list these stable names:
+<p><strong>Require status checks to pass</strong> — list these stable names:</p>
 <ul>
 <li><code>ci / lint</code></li>
 <li><code>ci / smoke</code></li>
@@ -216,12 +366,25 @@
 <li><code>ci / check-all</code></li>
 <li>
 <code>revdep / revdep-all</code> (if <code>revdep.yaml</code> is configured)</li>
-</ul>
-Skipped jobs satisfy required checks, so the queue accepts the PR-only jobs as <code>skipped</code> on <code>merge_group</code> refs (and vice versa for <code>check-all</code> / <code>revdep-all</code> on PR refs).</li>
 <li>
-<strong>Require merge queue</strong> — leave the merge method as <strong>merge commit</strong> (squash and rebase strip the merge metadata downstream branches use to stay aligned).</li>
+<code>release / release-all</code> (if <code>release.yaml</code> is configured)</li>
+</ul>
+<p>Skipped jobs satisfy required checks, so the queue accepts the PR-only jobs as <code>skipped</code> on <code>merge_group</code> refs (and vice versa for <code>check-all</code> / <code>revdep-all</code> on PR refs).</p>
+<p>Adding a context to this list is per-repo GitHub-side config that no workflow can do for itself. Add <code>release / release-all</code> only once the caller is wired in and reporting — a required context that is never created sits at “Expected — waiting for status” rather than being treated as skipped, which is <a href="https://github.com/BristolMyersSquibb/blockr.ci/issues/52" class="external-link">#52</a>. The <code>merge_group</code> half of <code>release.yaml</code>’s pass-through follows from that finding plus <code>check_response_timeout_minutes</code> rather than from a run anyone has watched, so confirm it on the first repo that adopts this before adding the context to another ruleset.</p>
+</li>
+<li><p><strong>Require merge queue</strong> — leave the merge method as <strong>merge commit</strong> (squash and rebase strip the merge metadata downstream branches use to stay aligned).</p></li>
 </ol>
 <p>Stacked PRs (PRs whose base is not <code>main</code>) still merge as plain pushes to the parent feature branch and bypass the queue — that is intentional; the queue is reserved for <code>main</code>.</p>
+</div>
+<div class="section level3">
+<h3 id="reverse-dependencies-before-a-cran-submission">Reverse dependencies before a CRAN submission<a class="anchor" aria-label="anchor" href="#reverse-dependencies-before-a-cran-submission"></a>
+</h3>
+<p>The <code>revdep.yaml</code> workflow answers the development-state question: it installs each downstream package from its GitHub branch, so it catches a change that breaks the siblings as they stand today. That is the right check for ordinary development and should keep running as it does. A release has to ask something else — whether the change breaks what CRAN currently ships — and the two diverge precisely when it matters, since a sibling’s <code>main</code> may already carry an adaptation the published version lacks.</p>
+<p>The CRAN-shaped answer already exists as <a href="https://github.com/r-devel/recheck" class="external-link"><code>r-devel/recheck</code></a>, a reusable workflow running a CRAN-style reverse dependency check in the <code>rcheckserver</code> container. Set <code>recheck-which</code> to <code>strong</code> or <code>most</code> and <code>release.yaml</code> calls it on every push to a labelled release pull request, alongside the flavour matrix.</p>
+<p>Two settings, split along whether there is a judgement to make. The <code>recheck-which</code> input sets the depth, which is a genuine choice. Whether the package has any CRAN dependents at all is not — it is a fact, and unlike the platform list it moves without anyone touching the repo, since a package with no dependents today gains its first next month. So the workflow derives that half: it asks CRAN for the package’s reverse dependencies and skips <code>recheck</code> when there are none.</p>
+<p>That makes the setting safe to turn on before it does anything. A first release, where nothing on CRAN depends on the package yet, skips in seconds rather than building a container to check nothing — and starts checking dependents by itself once they exist, with no second edit to remember. The <code>strong</code> and <code>most</code> values are R’s own <code><a href="https://rdrr.io/r/tools/package_dependencies.html" class="external-link">tools::package_dependencies()</a></code> shorthands, passed through untranslated, so the depth here and the depth upstream cannot drift apart.</p>
+<p>It runs automatically but does <strong>not</strong> gate. The job sits outside <code>release-all</code>, so it never appears in <code>required_status_checks</code> — upstream rules it out as a gate, since a reverse dependency check “is typically too volatile to use as an automatic pass/fail CI test”, turning on platform, hardware, network and unrelated failures in other people’s packages. Running it per push keeps the summary and the per-package artifacts fresh for whichever commit gets submitted; reading them is a person’s job.</p>
+<p>Two caveats worth carrying wherever its results are quoted. It runs <code>r-release</code> on Ubuntu rather than CRAN’s <code>r-devel</code> on <code>debian:testing</code>, because binary packages have to exist for the check to be practical at all, so results can differ from CRAN’s. And a package with no CRAN dependents has nothing to check, which is the normal case for a first release.</p>
 </div>
 </div>
 <div class="section level2">
@@ -310,6 +473,39 @@ Skipped jobs satisfy required checks, so the queue accepts the PR-only jobs as <
 </table>
 </div>
 <div class="section level3">
+<h3 id="releaseyaml">
+<code>release.yaml</code><a class="anchor" aria-label="anchor" href="#releaseyaml"></a>
+</h3>
+<table class="table">
+<colgroup>
+<col width="25%">
+<col width="25%">
+<col width="25%">
+<col width="25%">
+</colgroup>
+<thead><tr>
+<th>Input</th>
+<th>Type</th>
+<th>Default</th>
+<th>Purpose</th>
+</tr></thead>
+<tbody>
+<tr>
+<td><code>release-platforms</code></td>
+<td>newline-separated list</td>
+<td><code>''</code></td>
+<td>R-hub container flavours to check in, each naming an image under <code>ghcr.io/r-hub/containers</code> — <code>clang-asan</code>, <code>valgrind</code>, <code>rchk</code>, <code>nosuggests</code>, … Empty skips the matrix and reports success. See <a href="#choosing-the-platform-list">Choosing the platform list</a>.</td>
+</tr>
+<tr>
+<td><code>recheck-which</code></td>
+<td>string</td>
+<td><code>''</code></td>
+<td>Depth of the CRAN-style reverse dependency check run via <code>r-devel/recheck</code>: <code>strong</code> (Depends, Imports, LinkingTo) or <code>most</code> (those plus Suggests). Empty disables it. When set, the check still runs only if the package actually has CRAN dependents. Never gates — see <a href="#reverse-dependencies-before-a-cran-submission">Reverse dependencies before a CRAN submission</a>.</td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="section level3">
 <h3 id="pkgdownyaml">
 <code>pkgdown.yaml</code><a class="anchor" aria-label="anchor" href="#pkgdownyaml"></a>
 </h3>
@@ -376,17 +572,17 @@ Skipped jobs satisfy required checks, so the queue accepts the PR-only jobs as <
 <div class="section level3">
 <h3 id="example-with-inputs">Example with inputs<a class="anchor" aria-label="anchor" href="#example-with-inputs"></a>
 </h3>
-<div class="sourceCode" id="cb7"><pre class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb7-1"><a href="#cb7-1" tabindex="-1"></a><span class="fu">jobs</span><span class="kw">:</span></span>
-<span id="cb7-2"><a href="#cb7-2" tabindex="-1"></a><span class="at">  </span><span class="fu">ci</span><span class="kw">:</span></span>
-<span id="cb7-3"><a href="#cb7-3" tabindex="-1"></a><span class="at">    </span><span class="fu">uses</span><span class="kw">:</span><span class="at"> BristolMyersSquibb/blockr.ci/.github/workflows/ci.yaml@main</span></span>
-<span id="cb7-4"><a href="#cb7-4" tabindex="-1"></a><span class="at">    </span><span class="fu">with</span><span class="kw">:</span></span>
-<span id="cb7-5"><a href="#cb7-5" tabindex="-1"></a><span class="at">      </span><span class="fu">coverage-threshold</span><span class="kw">:</span><span class="at"> </span><span class="dv">80</span></span>
-<span id="cb7-6"><a href="#cb7-6" tabindex="-1"></a><span class="fu">      lintr-exclusions</span><span class="kw">: </span><span class="ch">|</span></span>
-<span id="cb7-7"><a href="#cb7-7" tabindex="-1"></a>        vignettes/foo.qmd</span>
-<span id="cb7-8"><a href="#cb7-8" tabindex="-1"></a>        vignettes/bar.qmd</span>
-<span id="cb7-9"><a href="#cb7-9" tabindex="-1"></a><span class="at">    </span><span class="fu">secrets</span><span class="kw">:</span></span>
-<span id="cb7-10"><a href="#cb7-10" tabindex="-1"></a><span class="at">      </span><span class="fu">CODECOV_TOKEN</span><span class="kw">:</span><span class="at"> ${{ secrets.CODECOV_TOKEN }}</span></span>
-<span id="cb7-11"><a href="#cb7-11" tabindex="-1"></a><span class="at">      </span><span class="fu">BLOCKR_PAT</span><span class="kw">:</span><span class="at"> ${{ secrets.BLOCKR_PAT }}</span></span></code></pre></div>
+<div class="sourceCode" id="cb8"><pre class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb8-1"><a href="#cb8-1" tabindex="-1"></a><span class="fu">jobs</span><span class="kw">:</span></span>
+<span id="cb8-2"><a href="#cb8-2" tabindex="-1"></a><span class="at">  </span><span class="fu">ci</span><span class="kw">:</span></span>
+<span id="cb8-3"><a href="#cb8-3" tabindex="-1"></a><span class="at">    </span><span class="fu">uses</span><span class="kw">:</span><span class="at"> BristolMyersSquibb/blockr.ci/.github/workflows/ci.yaml@main</span></span>
+<span id="cb8-4"><a href="#cb8-4" tabindex="-1"></a><span class="at">    </span><span class="fu">with</span><span class="kw">:</span></span>
+<span id="cb8-5"><a href="#cb8-5" tabindex="-1"></a><span class="at">      </span><span class="fu">coverage-threshold</span><span class="kw">:</span><span class="at"> </span><span class="dv">80</span></span>
+<span id="cb8-6"><a href="#cb8-6" tabindex="-1"></a><span class="fu">      lintr-exclusions</span><span class="kw">: </span><span class="ch">|</span></span>
+<span id="cb8-7"><a href="#cb8-7" tabindex="-1"></a>        vignettes/foo.qmd</span>
+<span id="cb8-8"><a href="#cb8-8" tabindex="-1"></a>        vignettes/bar.qmd</span>
+<span id="cb8-9"><a href="#cb8-9" tabindex="-1"></a><span class="at">    </span><span class="fu">secrets</span><span class="kw">:</span></span>
+<span id="cb8-10"><a href="#cb8-10" tabindex="-1"></a><span class="at">      </span><span class="fu">CODECOV_TOKEN</span><span class="kw">:</span><span class="at"> ${{ secrets.CODECOV_TOKEN }}</span></span>
+<span id="cb8-11"><a href="#cb8-11" tabindex="-1"></a><span class="at">      </span><span class="fu">BLOCKR_PAT</span><span class="kw">:</span><span class="at"> ${{ secrets.BLOCKR_PAT }}</span></span></code></pre></div>
 </div>
 </div>
 <div class="section level2">
@@ -407,6 +603,9 @@ Skipped jobs satisfy required checks, so the queue accepts the PR-only jobs as <
 <strong>Full check</strong> — 4-platform matrix (macOS, Windows, Ubuntu devel, Ubuntu oldrel) — merge-queue gate</li>
 <li>
 <strong>Reverse-dependency checks</strong> against configurable downstream packages — merge-queue gate</li>
+<li>
+<strong>CRAN pre-submission checks</strong> — AddressSanitizer, UndefinedBehaviorSanitizer, valgrind, <code>rchk</code> and the Suggests-free build in the R-hub containers, plus a CRAN-style reverse dependency check, on every push to a labelled release PR — see <a href="#release-mode">Release mode</a>
+</li>
 <li>
 <strong>pkgdown deploy</strong> — site build + deploy to <code>gh-pages</code> on push to <code>main</code>
 </li>
@@ -574,10 +773,10 @@ Remotes:
 <h3 id="per-pr-revdep-refs">Per-PR revdep refs<a class="anchor" aria-label="anchor" href="#per-pr-revdep-refs"></a>
 </h3>
 <p>The deps block in a PR body controls which ref of each revdep gets checked out for the <strong>revdep job</strong> — nothing else. It is not a mechanism for overriding forward dependencies; those belong in <code>Remotes:</code> in <code>DESCRIPTION</code>.</p>
-<div class="sourceCode" id="cb11"><pre class="sourceCode markdown"><code class="sourceCode markdown"><span id="cb11-1"><a href="#cb11-1" tabindex="-1"></a><span class="in">```deps</span></span>
-<span id="cb11-2"><a href="#cb11-2" tabindex="-1"></a><span class="in">BristolMyersSquibb/blockr.dag#111</span></span>
-<span id="cb11-3"><a href="#cb11-3" tabindex="-1"></a><span class="in">BristolMyersSquibb/blockr.ai@my-feature-branch</span></span>
-<span id="cb11-4"><a href="#cb11-4" tabindex="-1"></a><span class="in">```</span></span></code></pre></div>
+<div class="sourceCode" id="cb12"><pre class="sourceCode markdown"><code class="sourceCode markdown"><span id="cb12-1"><a href="#cb12-1" tabindex="-1"></a><span class="in">```deps</span></span>
+<span id="cb12-2"><a href="#cb12-2" tabindex="-1"></a><span class="in">BristolMyersSquibb/blockr.dag#111</span></span>
+<span id="cb12-3"><a href="#cb12-3" tabindex="-1"></a><span class="in">BristolMyersSquibb/blockr.ai@my-feature-branch</span></span>
+<span id="cb12-4"><a href="#cb12-4" tabindex="-1"></a><span class="in">```</span></span></code></pre></div>
 <p>Each line is <code>owner/repo@branch</code> or <code>owner/repo#PR-number</code>. The matching revdep job checks out that ref instead of the default branch.</p>
 <p><code>parse-deps</code> validates each entry against the package’s <code>DESCRIPTION</code>: if a deps-block entry’s package name appears in <code>Imports</code>/<code>Depends</code>/<code>LinkingTo</code>/<code>Suggests</code>/<code>Remotes</code>, parse-deps fails with a pointer to <code>Remotes:</code>. This catches the common mistake of trying to use the deps block to swap in a dev branch of a forward dep.</p>
 <p>The revdep job runs only in the merge queue, and it reads the deps block fresh from the PR body each time the queue runs. To change which ref gets checked out, edit the block and re-enqueue — there is no separate re-run trigger.</p>
@@ -590,9 +789,9 @@ Remotes:
 <li><p>Open your PR on <code>blockr.dock</code>. The configured <code>revdep-packages</code> input includes <code>BristolMyersSquibb/blockr.dag</code>, so the revdep job runs against <code>blockr.dag</code>’s default branch by default.</p></li>
 <li>
 <p>To pin it to a specific PR, add to the PR body:</p>
-<div class="sourceCode" id="cb12"><pre class="sourceCode markdown"><code class="sourceCode markdown"><span id="cb12-1"><a href="#cb12-1" tabindex="-1"></a><span class="in">```deps</span></span>
-<span id="cb12-2"><a href="#cb12-2" tabindex="-1"></a><span class="in">BristolMyersSquibb/blockr.dag#111</span></span>
-<span id="cb12-3"><a href="#cb12-3" tabindex="-1"></a><span class="in">```</span></span></code></pre></div>
+<div class="sourceCode" id="cb13"><pre class="sourceCode markdown"><code class="sourceCode markdown"><span id="cb13-1"><a href="#cb13-1" tabindex="-1"></a><span class="in">```deps</span></span>
+<span id="cb13-2"><a href="#cb13-2" tabindex="-1"></a><span class="in">BristolMyersSquibb/blockr.dag#111</span></span>
+<span id="cb13-3"><a href="#cb13-3" tabindex="-1"></a><span class="in">```</span></span></code></pre></div>
 </li>
 <li><p>When the PR is enqueued, the merge-queue revdep job reads the block and checks out <code>blockr.dag</code> PR #111 head instead of the default branch.</p></li>
 <li><p>To point at a different PR later, edit the block and re-enqueue.</p></li>
