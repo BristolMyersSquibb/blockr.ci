@@ -1,0 +1,387 @@
+# CRAN pre-submission checks for blockr.* packages
+#
+# The ci.yaml `check` matrix covers what GitHub's runners offer: macOS,
+# Windows and Linux on release / devel / oldrel.  CRAN also runs
+# AddressSanitizer, UndefinedBehaviorSanitizer, valgrind, a no-long-double
+# build, a Suggests-free build and `rchk`.  For a package with compiled
+# code those are where a submission gets rejected, and without this
+# workflow the first signal is CRAN's own check page, after the upload.
+#
+# The checks run in the public R-hub containers, one image per flavour,
+# under `container:`.  No R-hub account and no `rhub` package are
+# involved — the images are pulled straight from ghcr.io, and the
+# r-hub/actions steps below work with an empty `job-config`.
+#
+# Usage — consumer repo .github/workflows/release.yaml, a file of its
+# own rather than a second jobs: entry in ci.yaml:
+#
+#   on:
+#     pull_request:
+#       types: [opened, reopened, synchronize, labeled]
+#     merge_group:
+#
+#   name: release
+#
+#   jobs:
+#     release:
+#       uses: BristolMyersSquibb/blockr.ci/.github/workflows/release.yaml@main
+#       with:
+#         release-platforms: |
+#           clang-asan
+#           gcc-asan
+#           clang-ubsan
+#           valgrind
+#           rchk
+#           nosuggests
+#       secrets:
+#         BLOCKR_PAT: ${{ secrets.BLOCKR_PAT }}
+#
+# Pass secrets by name: `secrets: inherit` does not forward secrets
+# across organisations — the inherited values silently arrive blank in
+# the called job.
+#
+# A separate consumer-side file, rather than an entry in ci.yaml, for
+# two reasons.  Adding `labeled` to ci.yaml's `on:` block would re-run
+# all of ci on every label change on every pull request, and a jobs:
+# entry there would report as `ci / …` instead of keeping the context at
+# `release / release-all`.
+#
+# ── Why the caller carries no `if:` ──────────────────────────────────
+#
+# Per #52, gating the *caller* job removes the nested contexts entirely:
+# a skipped caller produces one check run named `release` and nothing
+# below it, so a required `release / release-all` would sit at
+# "Expected — waiting for status" and block every merge.  An absent
+# context is not a skipped one.  So the caller runs on every event and
+# only the inner `matrix` job is conditional, which leaves `release-all`
+# free to report on every ref.
+#
+# ── Trigger: a label on the release-prep pull request ────────────────
+#
+# The pull request is the commit being submitted, so it is the thing
+# worth checking; a release tracking *issue* has no commit to report a
+# status against and could not back a required check at all.
+#
+# The label marks the pull request as a release candidate — a mode, not
+# a one-shot "run now" button.  The condition is therefore that the
+# label is *present*, which holds on every subsequent push, and the
+# `labeled` type in the caller's `on:` block exists so that applying the
+# label starts a run on a branch that is already pushed.
+#
+# Running on each push is the point rather than a cost.  The tarball is
+# built from a commit on this pull request, before it merges, so every
+# push produces a new release candidate; checking only the commit that
+# happened to be current when the label went on would leave the
+# submitted one unchecked.  That also keeps `release-all` an honest
+# gate: it is green for the head commit because the flavours passed on
+# it, not because nothing ran.
+#
+# ── Why `merge_group` passes through ─────────────────────────────────
+#
+# This workflow is the mirror image of revdep.yaml.  Reverse
+# dependencies do the real work on `merge_group` and pass through on the
+# pull-request ref; release checks do the real work on the pull-request
+# ref and pass through on `merge_group`.  A label-gated condition
+# produces nothing on a `merge_group` ref — there is no pull request and
+# no label there — so the real work could not run at the queue even in
+# principle, and a required context that is never created burns the
+# queue's `check_response_timeout_minutes` instead of merging.
+#
+# Passing through costs nothing.  The point of these checks is to read
+# sanitizer and valgrind results before submitting, which happens on the
+# pull request; re-running them at merge time would pay twice for the
+# same answer.
+#
+# Note the traffic is one-way: this workflow steps aside at the queue,
+# but ci.yaml's check matrix and revdep.yaml both still run there for a
+# release pull request, exactly as for any other.  They gate the merge
+# commit rather than the submission, and skipping them would reopen the
+# red-main gap the queue exists to close.
+#
+# ── Reverse dependencies ─────────────────────────────────────────────
+#
+# A release wants to know whether it breaks what CRAN currently ships,
+# while revdep.yaml installs each downstream from its GitHub branch and
+# answers the development-state question instead.  The CRAN-shaped
+# answer is r-devel/recheck, called below when `recheck-which` is set.
+# The two coexist rather than replacing one another: recheck answers for
+# the submission, on the pull-request ref, and revdep.yaml keeps
+# answering for the merge, at the queue.  Upstream rules recheck out as
+# a gate — the results turn on unrelated failures in other people's
+# packages — so it is read by a human rather than required, and stays
+# outside `release-all`.
+#
+# Each container manages its own toolchain and setup-deps installs no
+# Quarto, so a consumer whose vignettes are .qmd rather than .Rmd fails
+# the vignette build on every flavour that does not already pass
+# --no-build-vignettes.  That is why no QUARTO_VERSION appears here.
+#
+# Every job here sets `timeout-minutes` — see ci.yaml for the reasoning.
+# The `release` job is the fleet's one deviation from the shared hour:
+# valgrind runs a test suite tens of times slower than native, and rchk
+# and the sanitizers all pay for an instrumented build from source, so
+# an hour sits close to legitimate runtime rather than far above it.
+
+on:
+  workflow_call:
+    inputs:
+
+      release-platforms:
+        description: >
+          Newline-separated list of R-hub container flavours to check in,
+          each naming an image under ghcr.io/r-hub/containers (e.g.
+          `clang-asan`, `valgrind`, `rchk`, `nosuggests`).  Empty, the
+          default, skips the matrix and reports success, so a consumer
+          can wire the caller in and choose a list later.  See the README
+          for which flavours a package's properties call for.
+        type: string
+        default: ''
+        required: false
+
+      recheck-which:
+        description: >
+          Run a CRAN-style reverse dependency check via r-devel/recheck,
+          over this many downstream packages: `strong` (Depends, Imports,
+          LinkingTo) or `most` (those plus Suggests).  Empty, the default,
+          skips it -- which is also the right setting for a first release,
+          where nothing on CRAN depends on the package yet.
+        type: string
+        default: ''
+        required: false
+
+    secrets:
+
+      BLOCKR_PAT:
+        description: >
+          PAT used for authenticated GitHub API calls in dependency
+          resolution, and for reaching packages named in Remotes that
+          live in private repositories.  Falls back to github.token when
+          not provided.
+        required: false
+
+name: release
+
+jobs:
+
+  # ── Build the per-flavour matrix from release-platforms ──────────────
+
+  matrix:
+
+    if: >-
+      github.event_name == 'pull_request' &&
+      contains(github.event.pull_request.labels.*.name, 'release')
+
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 60
+
+    outputs:
+      platforms: ${{ steps.build.outputs.platforms }}
+      has-platforms: ${{ steps.build.outputs.has-platforms }}
+
+    steps:
+      - name: Build release matrix
+        id: build
+        env:
+          INPUT: ${{ inputs.release-platforms }}
+        run: |
+          names=$(printf '%s' "$INPUT" | tr -d '\r' \
+            | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | sed '/^$/d')
+
+          if [ -z "$names" ]; then
+            echo "release-platforms is empty — nothing to check."
+            echo "platforms=[]" >> "$GITHUB_OUTPUT"
+            echo "has-platforms=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # A typo would otherwise surface as an opaque image-pull
+          # failure, so reject anything that cannot be a container name
+          # before we hand it to `container:`.
+          bad=$(printf '%s\n' "$names" | grep -vE '^[a-z0-9][a-z0-9._-]*$' || true)
+          if [ -n "$bad" ]; then
+            echo "::error::release-platforms holds entries that are not R-hub container names: $(printf '%s' "$bad" | tr '\n' ' ')"
+            exit 1
+          fi
+
+          json=$(printf '%s\n' "$names" | jq -R -s -c '
+            split("\n")
+            | map(select(length > 0))
+            | map({
+                label: .,
+                container: ("ghcr.io/r-hub/containers/" + . + ":latest")
+              })')
+
+          echo "Checking in: $(printf '%s' "$names" | tr '\n' ' ')"
+          echo "platforms=${json}" >> "$GITHUB_OUTPUT"
+          echo "has-platforms=true" >> "$GITHUB_OUTPUT"
+
+  # ── One R CMD check per flavour, inside its R-hub container ─────────
+
+  release:
+
+    needs: matrix
+
+    if: needs.matrix.outputs.has-platforms == 'true'
+
+    runs-on: ubuntu-latest
+
+    name: ${{ matrix.config.label }}
+
+    timeout-minutes: 180
+
+    strategy:
+      fail-fast: false
+      matrix:
+        config: ${{ fromJson(needs.matrix.outputs.platforms) }}
+
+    container:
+      image: ${{ matrix.config.container }}
+
+    # The `token:` inputs on the r-hub/actions steps below are declared
+    # but unused, so authentication rides on GITHUB_PAT, which is what
+    # pak reads.
+    env:
+      GITHUB_PAT: ${{ secrets.BLOCKR_PAT || github.token }}
+      R_KEEP_PKG_SOURCE: yes
+
+    steps:
+      - uses: r-hub/actions/checkout@v1
+
+      # Each image configures its own check: the deps to install
+      # (RHUB_ACTIONS_DEPS_DEPENDENCIES, which rchk narrows to LinkingTo),
+      # the check arguments (CHECK_ARGS, where the valgrind image supplies
+      # --use-valgrind), the check script itself (rchk swaps in rchk.sh),
+      # and a long tail of _R_CHECK_* variables — nosuggests hides the
+      # Suggests closure with _R_CHECK_DEPENDS_ONLY_ rather than by
+      # installing less.  Overriding the deps or the args from here would
+      # quietly defeat whichever flavour it contradicts, so both steps run
+      # on their defaults and let the container decide.
+      - uses: r-hub/actions/setup-deps@v1
+
+      # Sanitizer, valgrind and rchk findings do not fail R CMD check —
+      # they land in the .Rout files while the check itself exits 0.  This
+      # action greps for them afterwards and fails the job, which is the
+      # whole reason it is used instead of r-lib/actions/check-r-package
+      # directly.  Those scans key off `matrix.config.label`, so the
+      # matrix has to be named `config` and carry `label`.
+      - uses: r-hub/actions/run-check@v1
+
+  # ── CRAN-style reverse dependency check ─────────────────────────────
+  #
+  # Answers the question a submission actually asks -- does this break
+  # what CRAN currently ships -- which revdep.yaml cannot, since it
+  # installs each downstream from its GitHub branch.  A sibling's `main`
+  # may already carry an adaptation the published version lacks, and
+  # those diverge precisely when it matters.  This runs alongside
+  # revdep.yaml rather than in place of it -- the other one is still the
+  # right check for the merge.
+  #
+  # Deliberately outside `release-all`, and so outside the required
+  # check.  Upstream rules it out as a gate: the result "is typically too
+  # volatile to use as an automatic pass/fail CI test", turning on
+  # platform, hardware, network and unrelated failures in other people's
+  # packages.  Running it per push keeps the summary and the per-package
+  # artifacts fresh for whichever commit gets submitted; reading them is
+  # a person's job.
+
+  # Whether anything on CRAN depends on this package is a fact rather
+  # than a judgement, and unlike the platform list it moves without
+  # anyone touching the repo -- a package with no dependents today gains
+  # its first next month.  So `recheck-which` configures the depth, which
+  # is a real choice, and the existence question is derived here.  A
+  # repo that opted in before it had dependents therefore starts
+  # checking them on its own, and a first release skips in seconds
+  # instead of building a container to check nothing.
+  #
+  # The `strong` and `most` values recheck takes are R's own
+  # `tools::package_dependencies()` shorthands, so the input is passed
+  # through untranslated and the two definitions cannot drift.
+
+  revdeps:
+
+    if: >-
+      github.event_name == 'pull_request' &&
+      contains(github.event.pull_request.labels.*.name, 'release') &&
+      inputs.recheck-which != ''
+
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 60
+
+    outputs:
+      has-revdeps: ${{ steps.count.outputs.has-revdeps }}
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: r-lib/actions/setup-r@v2
+
+      # Asks CRAN directly rather than the runner's configured mirror:
+      # the question is what CRAN currently ships, and a snapshotting
+      # binary mirror can answer it as of some other day.
+      - name: Count CRAN reverse dependencies
+        id: count
+        env:
+          RECHECK_WHICH: ${{ inputs.recheck-which }}
+        run: |
+          Rscript -e '
+            pkg <- read.dcf("DESCRIPTION", "Package")[[1]]
+            which <- Sys.getenv("RECHECK_WHICH")
+            db <- available.packages(repos = "https://cloud.r-project.org")
+            rd <- tools::package_dependencies(
+              pkg, db = db, reverse = TRUE, which = which
+            )[[1]]
+            n <- length(rd)
+            cat(sprintf("%s has %d reverse (%s) dependencies on CRAN\n",
+                        pkg, n, which))
+            if (n > 0) cat(strwrap(paste(rd, collapse = ", ")), sep = "\n")
+            cat(paste0("has-revdeps=", if (n > 0) "true" else "false", "\n"),
+                file = Sys.getenv("GITHUB_OUTPUT"), append = TRUE)
+          '
+
+  recheck:
+
+    needs: revdeps
+
+    if: needs.revdeps.outputs.has-revdeps == 'true'
+
+    uses: r-devel/recheck/.github/workflows/recheck.yml@v1
+    with:
+      which: ${{ inputs.recheck-which }}
+
+  # ── Aggregate the matrix result for the required-checks list ────────
+  #
+  # The `release-all` job shields the required check from changes to the
+  # matrix shape: required_status_checks lists this one name instead of
+  # a row per flavour.  Treats `skipped` — no label, no platforms configured,
+  # or a merge_group ref — as success.
+  #
+  # Needs `matrix` as well as `release`, and not only for ordering: when
+  # the matrix job fails its input validation, `release` never runs and
+  # is reported as skipped, so aggregating `release` alone would turn a
+  # rejected platform list into a green required check.
+
+  release-all:
+
+    needs: [matrix, release]
+    if: always()
+
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 60
+
+    steps:
+      - name: Aggregate release matrix
+        env:
+          MATRIX_RESULT: ${{ needs.matrix.result }}
+          RELEASE_RESULT: ${{ needs.release.result }}
+        run: |
+          echo "matrix job result:     $MATRIX_RESULT"
+          echo "release matrix result: $RELEASE_RESULT"
+          for result in "$MATRIX_RESULT" "$RELEASE_RESULT"; do
+            case "$result" in
+              success|skipped) ;;
+              *) exit 1 ;;
+            esac
+          done

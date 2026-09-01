@@ -76,13 +76,19 @@
 # (revdep.yaml).  Consumers with downstream packages to check add a
 # second jobs: entry — see revdep.yaml for usage.
 #
+# The CRAN sanitizer, valgrind and rchk flavours live in release.yaml,
+# which wants a consumer-side workflow file of its own rather than a
+# jobs: entry here — adding its `labeled` trigger to the on: block above
+# would re-run all of ci on every label change.  See release.yaml.
+#
 # Quarto is installed by setup-r-dependencies whenever the package holds
 # a .qmd file, and is pinned to QUARTO_VERSION below rather than left at
 # the action's 'release' default — see the env: block for why.
 #
-# Every job in every workflow here sets `timeout-minutes: 60`; the other
-# five files carry a one-line pointer back to this paragraph, so keep
-# them in step (`grep -rn timeout-minutes .github/workflows`).
+# Every job in every workflow here sets `timeout-minutes: 60`, with one
+# deliberate exception noted below; the other six files carry a one-line
+# pointer back to this paragraph, so keep them in step (`grep -rn
+# timeout-minutes .github/workflows`).
 #
 # GitHub's default is six hours, so a step that hangs instead of failing
 # — an apt index fetch from an Ubuntu archive mirror that stops
@@ -94,6 +100,13 @@
 # building the dependency tree from source is legitimately much slower,
 # and a timeout sized off the happy path would turn honest runs red.
 # The point is to bound a pathological stall, not to police performance.
+#
+# The exception is release.yaml's per-flavour container job, at 180.
+# Those legs build the package from source under an instrumented
+# toolchain, and the valgrind one then runs the suite tens of times
+# slower than native, so an hour would sit close to legitimate runtime
+# rather than far above it — which is the property the paragraph above
+# is actually asking for.
 
 on:
   pull_request:
@@ -536,7 +549,16 @@ jobs:
 
   check:
 
-    if: github.event_name != 'pull_request'
+    # A release tarball is built from a commit on its pull request and
+    # submitted before the branch merges, so on a pull request labelled
+    # `release` this matrix runs per push — anything the queue reported
+    # would arrive too late to act on.  It still runs at the queue as
+    # well, for every pull request including that one: the queue tests
+    # the would-be merge commit, and skipping it there would reopen the
+    # red-main gap the queue exists to close.
+    if: >-
+      github.event_name != 'pull_request' ||
+      contains(github.event.pull_request.labels.*.name, 'release')
 
     runs-on: ${{ matrix.config.os }}
 

@@ -76,6 +76,134 @@ Pass secrets by name. `secrets: inherit` does not forward secrets
 across organisations — the inherited values silently arrive blank in
 the called job.
 
+### `release.yaml` — CRAN pre-submission checks (optional)
+
+CRAN runs check flavours the `ci.yaml` matrix does not: AddressSanitizer,
+UndefinedBehaviorSanitizer, valgrind, a no-long-double build, a
+Suggests-free build and `rchk`. For a package with compiled code those
+are where a submission gets rejected, and without this workflow the
+first signal is CRAN's own check page, after the upload.
+
+The checks run in the public [R-hub containers](https://r-hub.github.io/containers/),
+one image per flavour. No R-hub account and no `rhub` package are
+involved. Give this one a workflow file of its own rather than a second
+`jobs:` entry in `ci.yaml` — see [Why a separate file](#why-a-separate-file):
+
+```yaml
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, labeled]
+  merge_group:
+
+name: release
+
+jobs:
+  release:
+    uses: BristolMyersSquibb/blockr.ci/.github/workflows/release.yaml@main
+    with:
+      release-platforms: |
+        clang-asan
+        gcc-asan
+        clang-ubsan
+        valgrind
+        rchk
+        nosuggests
+      recheck-which: strong
+    secrets:
+      BLOCKR_PAT: ${{ secrets.BLOCKR_PAT }}
+```
+
+Leave the caller ungated. An `if:` there removes the nested contexts
+altogether, which makes `release / release-all` impossible to require —
+the same trap the `revdep` caller sits in, measured in
+[#52](https://github.com/BristolMyersSquibb/blockr.ci/issues/52).
+Only the inner jobs are conditional, so `release-all` reports on every
+ref.
+
+#### Choosing the platform list
+
+The list is per-repo rather than derived, because the relevant flavours
+are partly a maintainer judgement no heuristic recovers. It is also
+stable in a way `revdep-packages` is not: a dependency graph moves under
+you, while a platform list only changes when a package gains or loses
+compiled code.
+
+| Property of the package | Flavours worth listing |
+|---|---|
+| `src/` or `LinkingTo` | `clang-asan`, `gcc-asan`, `clang-ubsan`, `valgrind` |
+| Direct R C API use | `rchk` |
+| Non-empty `Suggests` | `nosuggests` |
+| Numeric sensitivity, BLAS, endianness | `nold`, `atlas`, `mkl` — judgement, not derivable |
+
+The `nosuggests` row applies to pure-R packages too: unguarded use of a
+suggested package is a routine CRAN rejection, so a package listing only
+`nosuggests` still gets a useful leg. The `rchk` row is worth separating
+from "has compiled code" — a package can carry compiled code that never
+touches the R API, and `rchk` only means something when it does.
+
+The input defaults to empty, which skips the matrix and reports success.
+A consumer can wire the caller in, add the required check, and choose a
+list later.
+
+Foreign-architecture flavours (`s390x`, for big-endian checks) are out
+of scope here. Running one needs `binfmt` registered before the job
+container starts, and a reusable workflow has no step that runs earlier
+than its own container setup.
+
+Quarto is the other gap. Each container manages its own toolchain, and
+`r-hub/actions/setup-deps` installs no Quarto, so a consumer whose
+vignettes are `.qmd` rather than `.Rmd` will fail the vignette build on
+every flavour that does not already pass `--no-build-vignettes`. That
+rules the workflow out for `blockr.core` and `blockr.dag` as they stand;
+`typedjson`, the package this was built for, is `.Rmd` throughout. This
+is also why `release.yaml` carries no `QUARTO_VERSION` and stays out of
+the [Quarto pin](#quarto-pin) bump list.
+
+#### Running the checks
+
+Apply the `release` label to the release-prep pull request. The pull
+request is the commit being submitted, so it is the thing worth
+checking; a release tracking *issue* has no commit to report a status
+against and could not back a required check at all.
+
+The label marks the pull request as a release candidate — a mode rather
+than a one-shot "run now" button. It stays on for the life of the
+branch, and the flavours re-run on every push while it is there.
+
+Running on each push is the point rather than a cost. The tarball is
+built from a commit on this pull request, before it merges, so every
+push produces a new release candidate; checking only the commit that
+happened to be current when the label went on would leave the submitted
+one unchecked. It also keeps `release / release-all` an honest gate —
+green for the head commit because the flavours passed on it, not because
+nothing ran.
+
+The check still reports success on an unlabelled pull request, so
+forgetting the label skips the checks silently rather than blocking the
+merge. That is the one soft edge in the design, and it is deliberate:
+the alternative is charging every ordinary pull request for a valgrind
+run.
+
+On `merge_group` the workflow passes through without doing the work,
+mirroring `revdep.yaml`, which does the reverse. A label-gated condition
+produces nothing on a `merge_group` ref — there is no pull request and
+no label there — so the real work could not run at the queue even in
+principle, and a required context that is never created burns the
+queue's `check_response_timeout_minutes` instead of merging.
+
+#### Why a separate file
+
+Adding `labeled` to `ci.yaml`'s `on:` block would re-run all of `ci` on
+every label change on every pull request, and a `jobs:` entry there
+would report as `ci / …` instead of keeping the context at
+`release / release-all`.
+
+#### Reverse dependencies at release time
+
+This workflow covers the platform flavours only. Reverse dependencies
+at release time are a different question from the one `revdep.yaml`
+answers — see [Reverse dependencies before a CRAN submission](#reverse-dependencies-before-a-cran-submission).
+
 ### `connect-deploy.yaml` — pull-mode Posit Connect deploys
 
 Publishes git-backed ("pull-mode") deployments to Posit Connect, for a
@@ -164,9 +292,41 @@ PR jobs run in parallel for fast feedback. The expensive multi-platform
 `check` matrix and reverse-dependency checks are reserved for the merge
 queue — they gate the merge but never block PR iteration.
 
-`check-all` and `revdep-all` aggregate their respective matrices into a
-single stable name, so adding/removing a platform or revdep package
-doesn't churn the required-checks list.
+The `check-all`, `revdep-all` and `release-all` jobs aggregate their
+respective matrices into a single stable name, so adding/removing a
+platform or revdep package doesn't churn the required-checks list.
+
+### Release mode
+
+A pull request labelled `release` adds to that split. The tarball is
+built from a commit on the pull request and submitted **before** the
+branch merges, so anything the merge queue would tell you arrives too
+late to act on. Everything that gates a submission therefore also runs
+on the pull-request ref, on every push:
+
+| Job | Ordinary PR | Release PR | Merge queue |
+|---|---|---|---|
+| `lint`, `smoke`, `pkgdown-dev`, `coverage`, `docs` | runs | runs | skipped |
+| `ci / check` (macOS, Windows, devel, oldrel) | skipped | **runs** | runs |
+| `release` (R-hub flavours) | skipped | **runs** | skipped |
+| `recheck` (CRAN-style revdeps) | skipped | **runs**, if the package has CRAN dependents | skipped |
+| `revdep` (downstream GitHub branches) | skipped | skipped | runs |
+
+The label is read straight from the event payload —
+`contains(github.event.pull_request.labels.*.name, 'release')` — so the
+whole mechanism is one condition per job, with no detection step
+anywhere.
+
+The queue keeps running the full pipeline for a release pull request,
+same as any other. Skipping the `check` matrix there would save a run,
+but the queue tests the would-be merge commit rather than the pull
+request head, and dropping it would reopen exactly the red-`main` gap
+described below. Our `revdep` likewise keeps running at the queue: it
+gates the merge, while `recheck` answers the different question the
+submission asks — see [Reverse dependencies before a CRAN
+submission](#reverse-dependencies-before-a-cran-submission). A release
+pull request is rare enough that paying for the queue leg twice over is
+the cheaper mistake.
 
 ### Merge queue
 
@@ -187,10 +347,22 @@ To enable, in the consumer repo's branch protection settings for `main`:
    - `ci / docs`
    - `ci / check-all`
    - `revdep / revdep-all` (if `revdep.yaml` is configured)
+   - `release / release-all` (if `release.yaml` is configured)
 
    Skipped jobs satisfy required checks, so the queue accepts the
    PR-only jobs as `skipped` on `merge_group` refs (and vice versa for
    `check-all` / `revdep-all` on PR refs).
+
+   Adding a context to this list is per-repo GitHub-side config that no
+   workflow can do for itself. Add `release / release-all` only once the
+   caller is wired in and reporting — a required context that is never
+   created sits at "Expected — waiting for status" rather than being
+   treated as skipped, which is
+   [#52](https://github.com/BristolMyersSquibb/blockr.ci/issues/52).
+   The `merge_group` half of `release.yaml`'s pass-through follows from
+   that finding plus `check_response_timeout_minutes` rather than from a
+   run anyone has watched, so confirm it on the first repo that adopts
+   this before adding the context to another ruleset.
 3. **Require merge queue** — leave the merge method as **merge commit**
    (squash and rebase strip the merge metadata downstream branches use
    to stay aligned).
@@ -198,6 +370,56 @@ To enable, in the consumer repo's branch protection settings for `main`:
 Stacked PRs (PRs whose base is not `main`) still merge as plain pushes
 to the parent feature branch and bypass the queue — that is intentional;
 the queue is reserved for `main`.
+
+### Reverse dependencies before a CRAN submission
+
+The `revdep.yaml` workflow answers the development-state question: it
+installs each downstream package from its GitHub branch, so it catches a
+change that breaks the siblings as they stand today. That is the right
+check for ordinary development and should keep running as it does. A
+release has to ask something else — whether the change breaks what CRAN
+currently ships — and the two diverge precisely when it matters, since a
+sibling's `main` may already carry an adaptation the published version
+lacks.
+
+The CRAN-shaped answer already exists as
+[`r-devel/recheck`](https://github.com/r-devel/recheck), a reusable
+workflow running a CRAN-style reverse dependency check in the
+`rcheckserver` container. Set `recheck-which` to `strong` or `most` and
+`release.yaml` calls it on every push to a labelled release pull
+request, alongside the flavour matrix.
+
+Two settings, split along whether there is a judgement to make. The
+`recheck-which` input sets the depth, which is a genuine choice. Whether
+the package has any CRAN dependents at all is not — it is a fact, and unlike
+the platform list it moves without anyone touching the repo, since a
+package with no dependents today gains its first next month. So the
+workflow derives that half: it asks CRAN for the package's reverse
+dependencies and skips `recheck` when there are none.
+
+That makes the setting safe to turn on before it does anything. A first
+release, where nothing on CRAN depends on the package yet, skips in
+seconds rather than building a container to check nothing — and starts
+checking dependents by itself once they exist, with no second edit to
+remember. The `strong` and `most` values are R's own
+`tools::package_dependencies()` shorthands, passed through untranslated,
+so the depth here and the depth upstream cannot drift apart.
+
+It runs automatically but does **not** gate. The job sits outside
+`release-all`, so it never appears in `required_status_checks` — upstream
+rules it out as a gate, since a reverse dependency check "is typically
+too volatile to use as an automatic pass/fail CI test", turning on
+platform, hardware, network and unrelated failures in other people's
+packages. Running it per push keeps the summary and the per-package
+artifacts fresh for whichever commit gets submitted; reading them is a
+person's job.
+
+Two caveats worth carrying wherever its results are quoted. It runs
+`r-release` on Ubuntu rather than CRAN's `r-devel` on `debian:testing`,
+because binary packages have to exist for the check to be practical at
+all, so results can differ from CRAN's. And a package with no CRAN
+dependents has nothing to check, which is the normal case for a first
+release.
 
 ## Inputs
 
@@ -217,6 +439,13 @@ the queue is reserved for `main`.
 | Input | Type | Default | Purpose |
 |---|---|---|---|
 | `revdep-packages` | newline-separated list | _(required)_ | Downstream packages to reverse-dep check. |
+
+### `release.yaml`
+
+| Input | Type | Default | Purpose |
+|---|---|---|---|
+| `release-platforms` | newline-separated list | `''` | R-hub container flavours to check in, each naming an image under `ghcr.io/r-hub/containers` — `clang-asan`, `valgrind`, `rchk`, `nosuggests`, … Empty skips the matrix and reports success. See [Choosing the platform list](#choosing-the-platform-list). |
+| `recheck-which` | string | `''` | Depth of the CRAN-style reverse dependency check run via `r-devel/recheck`: `strong` (Depends, Imports, LinkingTo) or `most` (those plus Suggests). Empty disables it. When set, the check still runs only if the package actually has CRAN dependents. Never gates — see [Reverse dependencies before a CRAN submission](#reverse-dependencies-before-a-cran-submission). |
 
 ### `pkgdown.yaml`
 
@@ -264,6 +493,7 @@ jobs:
 - **Docs freshness** — regenerate `man/` + `NAMESPACE` with the roxygen2 version pinned in `DESCRIPTION` (`Config/roxygen2/version`, or legacy `RoxygenNote`) and fail on drift — PR gate
 - **Full check** — 4-platform matrix (macOS, Windows, Ubuntu devel, Ubuntu oldrel) — merge-queue gate
 - **Reverse-dependency checks** against configurable downstream packages — merge-queue gate
+- **CRAN pre-submission checks** — AddressSanitizer, UndefinedBehaviorSanitizer, valgrind, `rchk` and the Suggests-free build in the R-hub containers, plus a CRAN-style reverse dependency check, on every push to a labelled release PR — see [Release mode](#release-mode)
 - **pkgdown deploy** — site build + deploy to `gh-pages` on push to `main`
 - **Pinned Quarto** — jobs that install Quarto (any package holding a `.qmd`) pass an explicit version instead of the action's `release` default, which resolves the version through an unretried `curl` to quarto.org and has twice killed a green run — see [Quarto pin](#quarto-pin)
 - **Hard-dependency resolution on `lint` and `docs`** — neither job runs the suite or builds a site, so both skip the `Suggests` closure and the 125 MB Chromium that a `chromote` / `shinytest2` suggestion drags in — see [Suggests on the lint and docs jobs](#suggests-on-the-lint-and-docs-jobs)
