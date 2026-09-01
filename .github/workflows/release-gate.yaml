@@ -1,0 +1,650 @@
+# Mechanical release checks for blockr.* packages
+#
+# The release.yaml flavour matrix covers the expensive half of a release
+# check: container images, an instrumented toolchain, valgrind.  The
+# cheap half — does the version have three components, is the Remotes
+# field gone, does every documented function say what it returns — has
+# been a manual checklist, and being manual is what makes it unreliable.
+# A maintainer runs the check, sees it clean, ticks the box, then edits a
+# vignette three commits later; the tick records that something was true
+# once, not that it is true at the commit about to be submitted.
+#
+# These checks take seconds, so they run on every push to the release
+# pull request and report against its head commit.  That is the whole
+# point: a green row here means the gate holds *now*, at the commit a
+# tarball would be built from.
+#
+# Usage — consumer repo .github/workflows/release-gate.yaml, a file of
+# its own for the same reason release.yaml gets one:
+#
+#   on:
+#     pull_request:
+#       types: [opened, reopened, synchronize, labeled]
+#     merge_group:
+#
+#   name: release-gate
+#
+#   permissions:
+#     contents: read
+#     pull-requests: write
+#
+#   jobs:
+#     release-gate:
+#       uses: BristolMyersSquibb/blockr.ci/.github/workflows/release-gate.yaml@main
+#       secrets:
+#         BLOCKR_PAT: ${{ secrets.BLOCKR_PAT }}
+#
+# Required-status-checks list: `release-gate / release-gate-all`.
+#
+# ── Deliberately separate from release.yaml ─────────────────────────
+#
+# Those jobs are container images on their own cadence; these are an
+# ordinary R session.  Keeping them apart means a two-second gate does
+# not queue behind a valgrind run, and a red gate is legible on its own
+# rather than as one row inside a flavour matrix.
+#
+# ── No inputs, and secrets optional ─────────────────────────────────
+#
+# Everything here is derived from the repository, so there is nothing to
+# configure and the workflow is callable from outside the blockr fleet.
+# BLOCKR_PAT is optional and falls back to github.token, which keeps
+# "needs no secrets" a real property: nbenn/typedjson does not use
+# ci.yaml and is the package most in need of this gate.
+#
+# ── Trigger, and why the caller carries no `if:` ────────────────────
+#
+# Same shape as release.yaml: gated on the `release` label being
+# *present*, which holds on every subsequent push, with `labeled` in the
+# caller's `on:` block so applying the label starts a run on a branch
+# that is already pushed.  Per #52, gating the *caller* removes the
+# nested contexts entirely, leaving a required
+# `release-gate / release-gate-all` stuck at "Expected — waiting for
+# status"; an absent context is not a skipped one.  So the caller runs
+# on every event and only the inner jobs are conditional.
+#
+# The `merge_group` ref passes through, as in release.yaml.  There is no
+# pull request and no label at the queue, so the label-gated jobs cannot
+# run there even in principle, and a required context that is never
+# created burns the queue's check_response_timeout_minutes instead of
+# merging.  Skipped jobs satisfy required checks, so `release-gate-all`
+# reports green there.
+#
+# ── Why not devtools::release_checks() ──────────────────────────────
+#
+# Its checks route through devtools:::check_status(), which prints "OK"
+# or "WARNING" and returns NULL on both branches — measured, on both.  A
+# script calling a *failing* check_version() exits 0, so a job built on
+# it would be green regardless of what it found, which is precisely the
+# failure mode this workflow exists to remove.  The checks are a few
+# lines each and are reimplemented in the release-gate action, against
+# base R only; see that script for the per-check reasoning.
+#
+# ── Hard gates and soft checks ──────────────────────────────────────
+#
+# The `gate` and `readme` jobs fail the build.  The `soft` job never
+# does on a finding: urlchecker results and --as-cran NOTEs turn on
+# third-party redirects, transient 503s and CRAN's own incoming
+# feasibility service, and a volatile signal used as a gate is one that
+# gets ignored or switched off.  It is the same argument r-devel/recheck
+# makes about itself.  The `soft` job is not in `release-gate-all` and
+# so is never required — a red row there means the checks could not be
+# computed, which is worth seeing and blocks nothing.
+#
+# ── Making the soft output visible ──────────────────────────────────
+#
+# Reporting into the job log alone defeats the purpose, since nobody
+# opens a green job.  Two mechanisms, deliberately combined: each job
+# writes its detail to $GITHUB_STEP_SUMMARY, which needs no permissions
+# at all, and the `report` job rewrites a single sticky pull-request
+# comment so it always describes the head commit rather than growing a
+# tail of stale ones.  The comment needs `pull-requests: write` from the
+# caller; without it — and on a fork pull request, where the token is
+# read-only whatever the caller asks for — the step warns and moves on,
+# leaving the step summaries as the fallback path.
+#
+# ── Reverse dependencies ────────────────────────────────────────────
+#
+# The recheck result that #54 keeps out of `release-all` is linked from
+# the comment rather than embedded in it.  It lives in a different
+# workflow, on a different clock: recheck builds containers for tens of
+# minutes while this gate finishes in seconds, so any conclusion this
+# workflow could read at comment time would be "queued", and a comment
+# rewritten per push would never catch up.  A link to the commit's own
+# check list cannot go stale and lands the reader on the live result.
+#
+# Every job here sets `timeout-minutes: 60` — see ci.yaml for why.
+
+on:
+  workflow_call:
+    secrets:
+
+      BLOCKR_PAT:
+        description: >
+          PAT used for authenticated GitHub API calls in dependency
+          resolution, and for reaching packages named in Remotes that
+          live in private repositories.  Falls back to github.token when
+          not provided.
+        required: false
+
+name: release-gate
+
+jobs:
+
+  # ── Hard gates: DESCRIPTION, NEWS, vignette headers, Rd ─────────────
+  #
+  # Base R only, so this job is setup-r plus one Rscript and finishes in
+  # seconds.  It installs nothing, which is what lets it stay fast and
+  # what keeps it working in a repository that cannot install anything.
+
+  gate:
+
+    if: >-
+      github.event_name == 'pull_request' &&
+      contains(github.event.pull_request.labels.*.name, 'release')
+
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: release
+          use-public-rspm: true
+
+      - uses: BristolMyersSquibb/blockr.ci/.github/actions/release-gate@main
+        with:
+          # Written outside the workspace on purpose: the readme job
+          # below fails on a dirty tree, and a fragment dropped into the
+          # checkout would be the dirt.
+          summary-file: ${{ runner.temp }}/parts/10-gate.md
+
+      - name: Upload gate summary
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-gate-part-gate
+          path: ${{ runner.temp }}/parts/
+          if-no-files-found: warn
+
+  # ── Hard gate: README.md is current with README.Rmd ─────────────────
+  #
+  # The docs-job pattern from #38 applied to a second generated
+  # artefact — regenerate, then fail on a dirty tree.  A package with no
+  # README.Rmd skips rather than fails.
+  #
+  # Renders with html_preview = FALSE, which is what devtools'
+  # build_readme() sets: the default github_document format also writes
+  # a README.html preview, and that untracked file would fail the
+  # dirty-tree check on every run.
+  #
+  # Only README.Rmd is covered.  A README.qmd renders through Quarto
+  # rather than rmarkdown, so it is reported as unchecked instead of
+  # being quietly counted as clean — no package in the fleet has one
+  # today, and a silent pass is the failure mode this workflow exists to
+  # remove.
+
+  readme:
+
+    if: >-
+      github.event_name == 'pull_request' &&
+      contains(github.event.pull_request.labels.*.name, 'release')
+
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 60
+
+    env:
+      GITHUB_PAT: ${{ secrets.BLOCKR_PAT || github.token }}
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Look for an executable README
+        id: readme
+        shell: bash
+        run: |
+          mkdir -p "${{ runner.temp }}/parts"
+          part="${{ runner.temp }}/parts/20-readme.md"
+
+          {
+            echo "### README freshness"
+            echo
+          } > "$part"
+
+          if [ -f README.Rmd ]; then
+            echo "Found README.Rmd; regenerating it to compare."
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "run=false" >> "$GITHUB_OUTPUT"
+
+          if [ -f README.qmd ]; then
+            echo "::warning::release-gate: README.qmd is not covered by this gate, which regenerates README.Rmd only."
+            echo ":heavy_minus_sign: README.qmd found; this gate regenerates README.Rmd only, so it is **not checked**." >> "$part"
+          else
+            echo "No README.Rmd; nothing to regenerate."
+            echo ":heavy_minus_sign: No README.Rmd, so nothing to regenerate." >> "$part"
+          fi
+
+          echo >> "$part"
+          cat "$part" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: r-lib/actions/setup-pandoc@v2
+        if: steps.readme.outputs.run == 'true'
+
+      - uses: r-lib/actions/setup-r@v2
+        if: steps.readme.outputs.run == 'true'
+        with:
+          r-version: release
+          use-public-rspm: true
+
+      - uses: BristolMyersSquibb/blockr.ci/.github/actions/parse-deps@main
+        if: steps.readme.outputs.run == 'true'
+        id: deps
+        with:
+          pr-body: ${{ github.event.pull_request.body }}
+          pr-number: ${{ github.event.pull_request.number }}
+          base-packages: |
+            any::rmarkdown
+            local::.
+
+      # Keeps Suggests, unlike ci.yaml's lint and docs jobs: a README
+      # chunk routinely calls a suggested package, and a hard-only
+      # install would fail the render rather than the comparison.
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        if: steps.readme.outputs.run == 'true'
+        with:
+          extra-packages: ${{ steps.deps.outputs.extra-packages }}
+
+      - name: Regenerate README.md
+        id: render
+        if: steps.readme.outputs.run == 'true'
+        shell: Rscript {0}
+        run: |
+          rmarkdown::render(
+            "README.Rmd",
+            output_options = list(html_preview = FALSE),
+            quiet = FALSE
+          )
+
+      # Runs on failure too, so the comment carries the reason rather
+      # than going quiet. A render that died leaves the tree clean, so
+      # the outcome has to be read explicitly -- reporting "current"
+      # there would be the false green this workflow exists to remove.
+      - name: Fail on a stale README.md
+        if: always() && steps.readme.outputs.run == 'true'
+        shell: bash
+        env:
+          RENDER_OUTCOME: ${{ steps.render.outcome }}
+        run: |
+          part="${{ runner.temp }}/parts/20-readme.md"
+
+          if [ "$RENDER_OUTCOME" != success ]; then
+            {
+              echo ":x: README.Rmd did not render, so its freshness is unknown. See the job log."
+              echo
+            } >> "$part"
+            cat "$part" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+          drift="$(git status --porcelain)"
+
+          if [ -z "$drift" ]; then
+            echo "README.md is current with README.Rmd."
+            echo ":white_check_mark: README.md is current with README.Rmd." >> "$part"
+            echo >> "$part"
+            cat "$part" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          echo "::error::README.md is out of date. Regenerate it (devtools::build_readme()) and commit the result."
+          git add -A
+          git diff --cached
+
+          {
+            echo ":x: README.md does not match README.Rmd. Regenerate it with \`devtools::build_readme()\` and commit the result."
+            echo
+            echo '```'
+            echo "$drift"
+            echo '```'
+            echo
+          } >> "$part"
+
+          cat "$part" >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+
+      - name: Upload readme summary
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-gate-part-readme
+          path: ${{ runner.temp }}/parts/
+          if-no-files-found: warn
+
+  # ── Soft checks: reported on every push, never a gate ───────────────
+  #
+  # Runs the CRAN incoming feasibility checks that ci.yaml's matrix does
+  # not.  That matrix already checks --as-cran and fails on any NOTE, but
+  # with _R_CHECK_CRAN_INCOMING_ off it never reaches the checks a
+  # submission is actually read against: new-submission notes, the
+  # licence and URL scan, the DESCRIPTION spell check, maintainer
+  # address.  Those are the ones worth seeing before uploading, and the
+  # ones too volatile to gate on — they query CRAN over the network.
+
+  soft:
+
+    if: >-
+      github.event_name == 'pull_request' &&
+      contains(github.event.pull_request.labels.*.name, 'release')
+
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 60
+
+    env:
+      GITHUB_PAT: ${{ secrets.BLOCKR_PAT || github.token }}
+      R_KEEP_PKG_SOURCE: yes
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: r-lib/actions/setup-pandoc@v2
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: release
+          use-public-rspm: true
+
+      - uses: BristolMyersSquibb/blockr.ci/.github/actions/parse-deps@main
+        id: deps
+        with:
+          pr-body: ${{ github.event.pull_request.body }}
+          pr-number: ${{ github.event.pull_request.number }}
+          base-packages: |
+            any::rcmdcheck
+            any::urlchecker
+            local::.
+
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          extra-packages: ${{ steps.deps.outputs.extra-packages }}
+          needs: check
+
+      - name: Prepare the soft-check summary
+        shell: bash
+        run: |
+          mkdir -p "${{ runner.temp }}/parts"
+          {
+            echo "### Soft checks"
+            echo
+            echo "Reported on every push, never a gate."
+            echo
+          } > "${{ runner.temp }}/parts/30-soft.md"
+
+      - name: Check URLs
+        if: always()
+        shell: Rscript {0}
+        env:
+          PART: ${{ runner.temp }}/parts/30-soft.md
+        run: |
+          part <- Sys.getenv("PART")
+          dir.create(dirname(part), recursive = TRUE, showWarnings = FALSE)
+
+          res <- tryCatch(
+            urlchecker::url_check("."),
+            error = function(e) conditionMessage(e)
+          )
+
+          md <- if (is.character(res)) {
+            c(
+              "#### URLs",
+              "",
+              paste0(":warning: The URL check could not run: ", res),
+              ""
+            )
+          } else if (!nrow(res)) {
+            c("#### URLs", "", ":white_check_mark: All URLs resolve.", "")
+          } else {
+            print(res)
+            cols <- intersect(c("URL", "From", "Status", "Message"), names(res))
+            c(
+              "#### URLs",
+              "",
+              sprintf(":warning: %d URL(s) worth a look.", nrow(res)),
+              "",
+              paste0("| ", paste(cols, collapse = " | "), " |"),
+              paste0("| ", paste(rep("---", length(cols)), collapse = " | "), " |"),
+              apply(res[cols], 1L, function(row) {
+                paste0("| ", paste(trimws(as.character(row)), collapse = " | "), " |")
+              }),
+              ""
+            )
+          }
+
+          write(md, file = part, append = TRUE)
+          write(md, file = Sys.getenv("GITHUB_STEP_SUMMARY"), append = TRUE)
+
+      # Setting `error_on = "never"` keeps a NOTE from failing the step,
+      # and the tryCatch keeps a build that dies outright from doing so
+      # either: this job reports, and reporting "the check did not run"
+      # is a result rather than a reason to redden the pull request.
+      - name: Report R CMD check --as-cran notes
+        if: always()
+        shell: Rscript {0}
+        env:
+          PART: ${{ runner.temp }}/parts/30-soft.md
+          _R_CHECK_CRAN_INCOMING_: 'true'
+          _R_CHECK_CRAN_INCOMING_REMOTE_: 'true'
+        run: |
+          part <- Sys.getenv("PART")
+          dir.create(dirname(part), recursive = TRUE, showWarnings = FALSE)
+
+          res <- tryCatch(
+            rcmdcheck::rcmdcheck(
+              args = c("--no-manual", "--as-cran"),
+              error_on = "never",
+              quiet = FALSE
+            ),
+            error = function(e) conditionMessage(e)
+          )
+
+          block <- function(title, items) {
+            if (!length(items)) {
+              return(character())
+            }
+            c(
+              sprintf("**%s**", title),
+              "",
+              unlist(lapply(items, function(x) c("```", strsplit(x, "\n")[[1]], "```", "")))
+            )
+          }
+
+          md <- if (is.character(res)) {
+            c(
+              "#### R CMD check --as-cran",
+              "",
+              paste0(":warning: The check could not run: ", res),
+              ""
+            )
+          } else {
+            found <- length(res$errors) + length(res$warnings) + length(res$notes)
+            c(
+              "#### R CMD check --as-cran",
+              "",
+              if (found) {
+                sprintf(
+                  ":warning: %d finding(s) from the CRAN incoming checks.",
+                  found
+                )
+              } else {
+                ":white_check_mark: No errors, warnings or notes."
+              },
+              "",
+              block("Errors", res$errors),
+              block("Warnings", res$warnings),
+              block("Notes", res$notes)
+            )
+          }
+
+          write(md, file = part, append = TRUE)
+          write(md, file = Sys.getenv("GITHUB_STEP_SUMMARY"), append = TRUE)
+
+      - name: Upload soft summary
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-gate-part-soft
+          path: ${{ runner.temp }}/parts/
+          if-no-files-found: warn
+
+  # ── Aggregate the hard gates for the required-checks list ───────────
+  #
+  # Same job as `check-all` and `release-all` elsewhere in this repo, for
+  # the same reason: required_status_checks names this one row, so adding
+  # a gate later does not mean editing branch protection in every
+  # consumer repository.  Treats `skipped` — no label, or a merge_group
+  # ref — as success.  The `soft` job is deliberately absent.
+
+  release-gate-all:
+
+    needs: [gate, readme]
+    if: always()
+
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 60
+
+    steps:
+      - name: Aggregate the hard gates
+        env:
+          GATE_RESULT: ${{ needs.gate.result }}
+          README_RESULT: ${{ needs.readme.result }}
+        run: |
+          echo "gate job result:   $GATE_RESULT"
+          echo "readme job result: $README_RESULT"
+          for result in "$GATE_RESULT" "$README_RESULT"; do
+            case "$result" in
+              success|skipped) ;;
+              *) exit 1 ;;
+            esac
+          done
+
+  # ── One sticky comment, rewritten per push ──────────────────────────
+  #
+  # Rewritten rather than appended so the comment always describes the
+  # head commit; a thread of per-push comments is a thread nobody reads
+  # to the end of.  Runs on failure too — a red gate is exactly when the
+  # detail is worth having.
+
+  report:
+
+    needs: [gate, readme, soft]
+
+    if: >-
+      !cancelled() &&
+      github.event_name == 'pull_request' &&
+      contains(github.event.pull_request.labels.*.name, 'release')
+
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 60
+
+    steps:
+      - name: Collect the job summaries
+        id: parts
+        continue-on-error: true
+        uses: actions/download-artifact@v6
+        with:
+          pattern: release-gate-part-*
+          merge-multiple: true
+          path: parts
+
+      - name: Compose the comment
+        shell: bash
+        env:
+          GATE_RESULT: ${{ needs.gate.result }}
+          README_RESULT: ${{ needs.readme.result }}
+          SOFT_RESULT: ${{ needs.soft.result }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          short="${HEAD_SHA:0:7}"
+
+          if [ "$GATE_RESULT" = success ] && [ "$README_RESULT" = success ]; then
+            headline=":white_check_mark: **The hard gates pass at this commit.**"
+          else
+            headline=":x: **A hard gate fails at this commit.**"
+          fi
+
+          {
+            echo "<!-- release-gate -->"
+            echo "## Release gate — [\`$short\`]($REPO_URL/commit/$HEAD_SHA)"
+            echo
+            echo "$headline"
+            echo
+
+            if ls parts/*.md >/dev/null 2>&1; then
+              cat parts/*.md
+            else
+              echo "_No check output was produced; see the job logs._"
+              echo
+            fi
+
+            if [ "$SOFT_RESULT" != success ]; then
+              echo ":warning: The soft-check job did not finish, so the section above may be incomplete."
+              echo
+            fi
+
+            echo "---"
+            echo
+            echo "Reverse dependencies are checked by \`recheck\` in the \`release\` workflow, which runs on its own clock — read it in [the checks for this commit]($REPO_URL/pull/${{ github.event.pull_request.number }}/checks?sha=$HEAD_SHA)."
+            echo
+            echo "<sub>Rewritten by \`release-gate\` on every push, so this always describes the head commit.</sub>"
+          } > comment.md
+
+          echo "Composed $(wc -l < comment.md) lines."
+
+      # Written with `gh api` rather than a third-party sticky-comment
+      # action: this workflow is called by every repository in the fleet,
+      # so a marker grep and one PATCH is a better trade than another
+      # supply-chain edge.  A missing `pull-requests: write` — the
+      # default on a fork pull request, whatever the caller declares —
+      # warns instead of failing, since the same content is already in
+      # each job's step summary.
+      - name: Write the sticky comment
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          marker="<!-- release-gate -->"
+
+          # `--paginate` applies the filter per page, so a match on page
+          # two arrives as a second line; `head -n1` keeps the oldest
+          # marked comment as the one true sticky. A null body -- which
+          # a hidden comment can have -- would abort the filter, hence
+          # the `// ""`.
+          existing="$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
+            --paginate \
+            --jq "map(select((.body // \"\") | startswith(\"$marker\"))) | .[0].id // empty" \
+            2>/dev/null | head -n1 || true)"
+
+          if [ -n "$existing" ]; then
+            method=PATCH
+            endpoint="repos/$GITHUB_REPOSITORY/issues/comments/$existing"
+          else
+            method=POST
+            endpoint="repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments"
+          fi
+
+          if jq -n --rawfile body comment.md '{body: $body}' \
+               | gh api --method "$method" "$endpoint" --input - >/dev/null; then
+            echo "Comment written ($method)."
+          else
+            echo "::warning::release-gate: could not write the summary comment. Grant the caller 'pull-requests: write' — on a fork pull request the token is read-only regardless, and the same detail is in each job's step summary."
+          fi

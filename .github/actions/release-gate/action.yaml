@@ -1,0 +1,34 @@
+name: Release gates
+description: >
+  Run the mechanical CRAN pre-submission checks against a checked-out
+  package and fail when any of them does not hold: a three-component
+  version, no dependency pinned to a development version, no Remotes
+  field, a NEWS.md that is neither build-ignored nor shadowed by a stale
+  inst/NEWS.Rd, no placeholder vignette titles, and a \value section on
+  every documented function.  Reads DESCRIPTION, .Rbuildignore, the
+  vignette headers and man/*.Rd; needs R but installs no packages.
+
+inputs:
+  pkg-dir:
+    description: >
+      Directory holding the package's DESCRIPTION.
+    required: false
+    default: '.'
+  summary-file:
+    description: >
+      Path to append the markdown result table to, for a later job to
+      collect.  Empty writes no fragment.  $GITHUB_STEP_SUMMARY is
+      written either way, so the result is visible without this.
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Run the release gates
+      shell: bash
+      env:
+        PKG_DIR: ${{ inputs.pkg-dir }}
+        SUMMARY_FILE: ${{ inputs.summary-file }}
+        SCRIPT_DIR: ${{ github.action_path }}
+      run: Rscript --no-save --no-restore "$SCRIPT_DIR/release-gate.R"
