@@ -125,7 +125,7 @@
 <code>release.yaml</code> — CRAN pre-submission checks (optional)<a class="anchor" aria-label="anchor" href="#releaseyaml--cran-pre-submission-checks-optional"></a>
 </h3>
 <p>CRAN runs check flavours the <code>ci.yaml</code> matrix does not: AddressSanitizer, UndefinedBehaviorSanitizer, valgrind, a no-long-double build, a Suggests-free build and <code>rchk</code>. For a package with compiled code those are where a submission gets rejected, and without this workflow the first signal is CRAN’s own check page, after the upload.</p>
-<p>The checks run in the public <a href="https://r-hub.github.io/containers/" class="external-link">R-hub containers</a>, one image per flavour. No R-hub account and no <code>rhub</code> package are involved. Give this one a workflow file of its own rather than a second <code>jobs:</code> entry in <code>ci.yaml</code> — see <a href="#why-a-separate-file">Why a separate file</a>:</p>
+<p>The flavours come from R-hub in two shapes. Most are public <a href="https://r-hub.github.io/containers/" class="external-link">containers</a> pulled straight from ghcr.io; the rest — <code>m1-san</code>, <code>windows</code>, <code>macos</code>, <code>macos-arm64</code> — are virtual machines and run on a GitHub runner directly. Both shapes are resolved by <code>r-hub/actions/setup</code>, so neither needs an R-hub account nor the <code>rhub</code> package. Give this one a workflow file of its own rather than a second <code>jobs:</code> entry in <code>ci.yaml</code> — see <a href="#why-a-separate-file">Why a separate file</a>:</p>
 <div class="sourceCode" id="cb4"><pre class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb4-1"><a href="#cb4-1" tabindex="-1"></a><span class="fu">on</span><span class="kw">:</span></span>
 <span id="cb4-2"><a href="#cb4-2" tabindex="-1"></a><span class="at">  </span><span class="fu">pull_request</span><span class="kw">:</span></span>
 <span id="cb4-3"><a href="#cb4-3" tabindex="-1"></a><span class="at">    </span><span class="fu">types</span><span class="kw">:</span><span class="at"> </span><span class="kw">[</span><span class="at">opened</span><span class="kw">,</span><span class="at"> reopened</span><span class="kw">,</span><span class="at"> synchronize</span><span class="kw">,</span><span class="at"> labeled</span><span class="kw">]</span></span>
@@ -141,12 +141,13 @@
 <span id="cb4-13"><a href="#cb4-13" tabindex="-1"></a>        clang-asan</span>
 <span id="cb4-14"><a href="#cb4-14" tabindex="-1"></a>        gcc-asan</span>
 <span id="cb4-15"><a href="#cb4-15" tabindex="-1"></a>        clang-ubsan</span>
-<span id="cb4-16"><a href="#cb4-16" tabindex="-1"></a>        valgrind</span>
-<span id="cb4-17"><a href="#cb4-17" tabindex="-1"></a>        rchk</span>
-<span id="cb4-18"><a href="#cb4-18" tabindex="-1"></a>        nosuggests</span>
-<span id="cb4-19"><a href="#cb4-19" tabindex="-1"></a><span class="at">      </span><span class="fu">recheck-which</span><span class="kw">:</span><span class="at"> strong</span></span>
-<span id="cb4-20"><a href="#cb4-20" tabindex="-1"></a><span class="at">    </span><span class="fu">secrets</span><span class="kw">:</span></span>
-<span id="cb4-21"><a href="#cb4-21" tabindex="-1"></a><span class="at">      </span><span class="fu">BLOCKR_PAT</span><span class="kw">:</span><span class="at"> ${{ secrets.BLOCKR_PAT }}</span></span></code></pre></div>
+<span id="cb4-16"><a href="#cb4-16" tabindex="-1"></a>        m1-san</span>
+<span id="cb4-17"><a href="#cb4-17" tabindex="-1"></a>        valgrind</span>
+<span id="cb4-18"><a href="#cb4-18" tabindex="-1"></a>        rchk</span>
+<span id="cb4-19"><a href="#cb4-19" tabindex="-1"></a>        nosuggests</span>
+<span id="cb4-20"><a href="#cb4-20" tabindex="-1"></a><span class="at">      </span><span class="fu">recheck-which</span><span class="kw">:</span><span class="at"> strong</span></span>
+<span id="cb4-21"><a href="#cb4-21" tabindex="-1"></a><span class="at">    </span><span class="fu">secrets</span><span class="kw">:</span></span>
+<span id="cb4-22"><a href="#cb4-22" tabindex="-1"></a><span class="at">      </span><span class="fu">BLOCKR_PAT</span><span class="kw">:</span><span class="at"> ${{ secrets.BLOCKR_PAT }}</span></span></code></pre></div>
 <p>Leave the caller ungated. An <code>if:</code> there removes the nested contexts altogether, which makes <code>release / release-all</code> impossible to require — the same trap the <code>revdep</code> caller sits in, measured in <a href="https://github.com/BristolMyersSquibb/blockr.ci/issues/52" class="external-link">#52</a>. Only the inner jobs are conditional, so <code>release-all</code> reports on every ref.</p>
 <div class="section level4">
 <h4 id="choosing-the-platform-list">Choosing the platform list<a class="anchor" aria-label="anchor" href="#choosing-the-platform-list"></a>
@@ -171,6 +172,10 @@
 </td>
 </tr>
 <tr>
+<td>Alignment or endianness assumptions in that C</td>
+<td><code>m1-san</code></td>
+</tr>
+<tr>
 <td>Direct R C API use</td>
 <td><code>rchk</code></td>
 </tr>
@@ -187,6 +192,8 @@
 </tbody>
 </table>
 <p>The <code>nosuggests</code> row applies to pure-R packages too: unguarded use of a suggested package is a routine CRAN rejection, so a package listing only <code>nosuggests</code> still gets a useful leg. The <code>rchk</code> row is worth separating from “has compiled code” — a package can carry compiled code that never touches the R API, and <code>rchk</code> only means something when it does.</p>
+<p>The <code>m1-san</code> row is the one that is not a container. It is ASAN plus UBSAN on macOS ARM, and it earns a separate row from the Linux sanitizers because it is a different architecture rather than a second opinion on the same one — a finding that only reproduces on Apple silicon is invisible to <code>clang-asan</code>. Being a virtual machine, it is also the slowest and priciest leg in the list, so it belongs on a package that vendors C rather than on every list by default.</p>
+<p>Names are matched against R-hub’s own platform list, which means CRAN names and aliases resolve too: <code>asan</code> reaches <code>clang-asan</code>, and <code>r-oldrel-windows</code> reaches Windows on oldrel. An unrecognised name fails the <code>matrix</code> job by name in seconds. The resolved name is what the check context is called, R version included where the platform carries one — <code>m1-san</code> reports as <code>release / m1-san (R-devel)</code>.</p>
 <p>The input defaults to empty, which skips the matrix and reports success. A consumer can wire the caller in, add the required check, and choose a list later.</p>
 <p>Foreign-architecture flavours (<code>s390x</code>, for big-endian checks) are out of scope here. Running one needs <code>binfmt</code> registered before the job container starts, and a reusable workflow has no step that runs earlier than its own container setup.</p>
 <p>Quarto is the other gap. Each container manages its own toolchain, and <code>r-hub/actions/setup-deps</code> installs no Quarto, so a consumer whose vignettes are <code>.qmd</code> rather than <code>.Rmd</code> will fail the vignette build on every flavour that does not already pass <code>--no-build-vignettes</code>. That rules the workflow out for <code>blockr.core</code> and <code>blockr.dag</code> as they stand; <code>typedjson</code>, the package this was built for, is <code>.Rmd</code> throughout. This is also why <code>release.yaml</code> carries no <code>QUARTO_VERSION</code> and stays out of the <a href="#quarto-pin">Quarto pin</a> bump list.</p>
@@ -494,7 +501,7 @@
 <td><code>release-platforms</code></td>
 <td>newline-separated list</td>
 <td><code>''</code></td>
-<td>R-hub container flavours to check in, each naming an image under <code>ghcr.io/r-hub/containers</code> — <code>clang-asan</code>, <code>valgrind</code>, <code>rchk</code>, <code>nosuggests</code>, … Empty skips the matrix and reports success. See <a href="#choosing-the-platform-list">Choosing the platform list</a>.</td>
+<td>R-hub platforms to check in, named as R-hub names them — <code>clang-asan</code>, <code>valgrind</code>, <code>rchk</code>, <code>nosuggests</code>, <code>m1-san</code>, … Commas work too. Container and virtual-machine platforms both resolve; an unknown name fails the matrix. Empty skips the matrix and reports success. See <a href="#choosing-the-platform-list">Choosing the platform list</a>.</td>
 </tr>
 <tr>
 <td><code>recheck-which</code></td>
