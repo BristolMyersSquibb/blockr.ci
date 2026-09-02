@@ -1,0 +1,42 @@
+name: Release gates
+description: >
+  Run the five devtools::release_checks() conditions against a
+  checked-out package and fail when any does not hold: a three-component
+  version, no dependency pinned to a development version, no Remotes
+  field, a NEWS.md that is neither build-ignored nor shadowed by a stale
+  inst/NEWS.Rd, and no placeholder vignette titles.  Reads DESCRIPTION,
+  .Rbuildignore and the vignette headers through `desc`, which is the
+  only dependency -- two recursive packages against devtools' 94 -- so
+  it runs in seconds without installing the package under test.  The release checks devtools *can* answer directly --
+  check_doc_fields(), build_readme() -- are called rather than
+  reimplemented, and live in release-gate.yaml's `docs` job instead.
+
+inputs:
+  pkg-dir:
+    description: >
+      Directory holding the package's DESCRIPTION.
+    required: false
+    default: '.'
+  summary-file:
+    description: >
+      Path to append the markdown result table to, for a later job to
+      collect.  Empty writes no fragment.  $GITHUB_STEP_SUMMARY is
+      written either way, so the result is visible without this.
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Ensure desc
+      shell: bash
+      run: |
+        Rscript -e 'if (!requireNamespace("desc", quietly = TRUE)) install.packages("desc", repos = Sys.getenv("RSPM", unset = "https://cloud.r-project.org"))'
+
+    - name: Run the release gates
+      shell: bash
+      env:
+        PKG_DIR: ${{ inputs.pkg-dir }}
+        SUMMARY_FILE: ${{ inputs.summary-file }}
+        SCRIPT_DIR: ${{ github.action_path }}
+      run: Rscript --no-save --no-restore "$SCRIPT_DIR/release-gate.R"

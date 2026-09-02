@@ -225,6 +225,189 @@ This workflow covers the platform flavours only. Reverse dependencies
 at release time are a different question from the one `revdep.yaml`
 answers — see [Reverse dependencies before a CRAN submission](#reverse-dependencies-before-a-cran-submission).
 
+### `release-gate.yaml` — mechanical release checks (optional)
+
+The `release.yaml` flavour matrix covers the expensive half of a release
+check. The cheap half — does the version have three components, is the
+`Remotes` field gone, does every documented function say what it
+returns — was a manual checklist, and being manual is what made it
+unreliable: a maintainer runs the check, sees it clean, ticks the box,
+then edits a vignette three commits later. The tick records that
+something was true once, not that it is true at the commit about to be
+submitted.
+
+These checks take seconds each, so they run on every push to the release
+pull request and report against its head commit. Same trigger as
+`release.yaml` — the `release` label — and a workflow file of its own
+for the same reason:
+
+```yaml
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, labeled]
+  merge_group:
+
+name: release-gate
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  release-gate:
+    uses: BristolMyersSquibb/blockr.ci/.github/workflows/release-gate.yaml@main
+    secrets:
+      BLOCKR_PAT: ${{ secrets.BLOCKR_PAT }}
+```
+
+Required-status-checks row: `release-gate / release-gate-all`. Leave the
+caller ungated, for the reason given under
+[`release.yaml`](#releaseyaml--cran-pre-submission-checks-optional).
+
+There are no inputs. Everything is derived from the repository, and
+`BLOCKR_PAT` falls back to `GITHUB_TOKEN`, so the workflow is callable
+from a repository outside the fleet that holds no secrets at all —
+`nbenn/typedjson` does not use `ci.yaml` and is the package most in need
+of this gate.
+
+The `pull-requests: write` grant is what lets the report job write its
+comment. Without it the job warns and carries on, since the same detail
+is already in each job's step summary; on a pull request from a fork the
+token is read-only whatever the caller declares, and the same fallback
+applies.
+
+#### Hard gates
+
+| Check | Catches | Job |
+|---|---|---|
+| Version has exactly three components | Submitting a development version | `gate` |
+| No dependency pinned to a `.9000` version | An unreleasable dependency | `gate` |
+| No `Remotes` field | A dependency CRAN cannot resolve | `gate` |
+| `NEWS.md` not build-ignored, no stale `inst/NEWS.Rd` | Repo-shape mistakes | `gate` |
+| No placeholder vignette titles | Template text reaching CRAN | `gate` |
+| A `\value` section on every documented function | An `Rd` CRAN sends back | `docs` |
+| Regenerating the README leaves the tree clean | A README that no longer matches its source | `docs` |
+
+The two jobs split by **cost**, not by topic. The `gate` job reads
+`DESCRIPTION`, `.Rbuildignore` and the vignette headers, and its only
+dependency is `desc` — two recursive packages, and the one that owns the
+`DESCRIPTION` grammar, so the dependency parsing is not hand-rolled. The
+`docs` job needs `devtools` (94 recursive dependencies) and the package
+itself installed. Splitting them keeps a wrong version number visible in
+seconds, long before the dependency tree has resolved.
+
+Each check in `gate` reports independently rather than stopping at the
+first failure, because fixing one thing per push is how a release branch
+grows five pushes.
+
+#### What devtools carries, and what it cannot
+
+Where devtools exports a function that returns a usable value, this
+workflow calls it rather than reimplementing it:
+
+| Checklist item | How it runs here |
+|---|---|
+| `urlchecker::url_check()` | Called directly, in `soft` |
+| `devtools::build_readme()` | Called directly, in `docs` |
+| `devtools::check_doc_fields()` | Called directly, in `docs` |
+| `devtools::spell_check()` | Its body — `spelling::spell_check_package()` — called directly, in `soft` |
+| `devtools::release_checks()` | Reimplemented, in `gate` — see below |
+| `devtools::check(remote = TRUE, run_dont_test = TRUE)` | `rcmdcheck` with `--as-cran --run-donttest` and `_R_CHECK_CRAN_INCOMING_REMOTE_`, in `soft` |
+
+Calling `spell_check()` rather than the function it wraps would pull
+devtools' 94 recursive hard dependencies into a job that needs
+`spelling`'s 12, for the same check.
+
+Two checklist items are deliberately absent. Results from
+`devtools::check_win_devel()` arrive by email 15–30 minutes later, so
+nothing in CI can gate on them, and `check(manual = TRUE)` wants a LaTeX
+toolchain the job would pay for on every push. Both stay on the
+maintainer's release checklist.
+
+##### Why `release_checks()` is the exception
+
+Its five checks are not exported, and they route through
+`devtools:::check_status()`, which returns `NULL` whether the check
+passed or failed — measured, on both branches. A script calling a
+*failing* `check_version()` exits 0, so a job built on it would be green
+regardless of what it found.
+
+The finding does exist, but only as cli-formatted text on **stderr**:
+
+```
+stdout:  "Checking version number has three components..."
+stderr:  "✖ WARNING: version (0.1.1.9001) should have exactly three components"
+return:  NULL
+```
+
+So the alternative to reimplementing is grepping a message stream
+through `:::`, which couples to devtools' print formatting rather than
+to its logic. Reimplementing the rule is the smaller coupling, and it
+reproduces devtools' verdicts: measured, it fails `blockr.ggplot` on
+three counts, `blockr.core` on its `Remotes` field, and passes
+`typedjson`.
+
+One divergence is deliberate. The vignette-title check reads the headers
+itself instead of calling `tools::pkgVignettes()`, which resolves
+vignettes through the registered engines — so on a runner without the
+quarto package every `.qmd` is invisible to it and the check passes by
+finding nothing, a false green on exactly the packages in this fleet.
+
+Only `\value` is gated, though `check_doc_fields()` defaults to
+`c("value", "examples")`. The second does not hold across this fleet:
+measured, `blockr.core` is missing `\examples` in 35 `Rd` files,
+`blockr.dplyr` in 10, `blockr.ui` in 6 and `blockr.ggplot` in 3, against
+one single missing `\value` between them. A gate every package fails on
+its first run is a gate that gets switched off, and CRAN treats the two
+differently anyway.
+
+#### Soft checks
+
+Some results are worth seeing on every push without blocking a
+submission. Spelling, `urlchecker::url_check()` and the NOTEs from an
+`--as-cran` run turn on jargon, third-party redirects, transient 503s
+and CRAN's own incoming-feasibility service, and a volatile signal used
+as a gate is one that gets ignored or switched off — the same argument
+`r-devel/recheck` makes about itself.
+
+Those run in the `soft` job, which is deliberately absent from
+`release-gate-all` and so never required. A finding there never reddens
+the job; a red `soft` row means the checks could not be computed, which
+is worth seeing and blocks nothing.
+
+The `--as-cran` leg is not a second copy of what `ci.yaml` already does.
+That matrix checks `--as-cran` and fails on any NOTE, but with
+`_R_CHECK_CRAN_INCOMING_` off it never reaches the checks a submission
+is actually read against: new-submission notes, the licence and URL
+scan, the `DESCRIPTION` spell check, the maintainer address. This job
+turns them on, and adds `--run-donttest` so the `\donttest{}` examples
+CRAN runs on submission run here too.
+
+#### Where the output goes
+
+Reporting into the job log alone defeats the purpose, since nobody opens
+a green job. Two mechanisms, combined on purpose:
+
+- **Step summaries.** Each job writes its detail to
+  `$GITHUB_STEP_SUMMARY`, which needs no permissions at all and so is
+  the path that always works.
+- **One sticky comment.** The `report` job rewrites a single
+  pull-request comment rather than appending, so it always describes the
+  head commit instead of leaving a thread of stale ones. It runs on
+  failure too — a red gate is exactly when the detail is worth having.
+
+The comment is written with `gh api` against an HTML-comment marker
+rather than through a third-party sticky-comment action: every
+repository in the fleet calls this workflow, so a marker grep and one
+`PATCH` is a better trade than another supply-chain edge.
+
+The `recheck` result is linked from the comment rather than embedded in
+it. That check lives in `release.yaml`, on a different clock — it builds
+containers for tens of minutes while this gate finishes in seconds — so
+any conclusion readable at comment time would be "queued", and a comment
+rewritten per push would never catch up. A link to the commit's own
+check list cannot go stale.
+
 ### `connect-deploy.yaml` — pull-mode Posit Connect deploys
 
 Publishes git-backed ("pull-mode") deployments to Posit Connect, for a
@@ -301,6 +484,50 @@ protected environment, required checks — is operational repo settings,
 mostly one-time, and several pieces are load-bearing for security. See
 [Connect deployment setup](#connect-deployment-setup).
 
+## Composite actions
+
+The reusable workflows above are the packaged way to consume this repo,
+but each release check is also a **composite action** that a workflow of
+your own can call directly, the way `r-lib/actions` is built. Reach for
+one of these when you want a single check without `release-gate.yaml`'s
+job structure, label gating or reporting.
+
+| Action | Checks | Fails on a finding | Needs |
+|---|---|---|---|
+| `release-gate` | Version shape, dev-version pins, `Remotes`, `NEWS.md` shape, vignette titles | yes | R; installs `desc` itself |
+| `release-docs` | A `\value` on every documented function, and a README current with its source | yes | `devtools` and the package's dependencies |
+| `release-soft` | Spelling, URLs, `--as-cran` NOTEs | **no**, always exits 0 | `spelling`, `urlchecker`, `rcmdcheck` and the package's dependencies |
+| `sticky-comment` | — writes one pull-request comment, rewritten in place | no | `pull-requests: write` |
+
+The three check actions share one convention rather than any shared
+code: each appends its result as markdown to the `summary-file` you pass
+and to `$GITHUB_STEP_SUMMARY`. Point several at the same directory and a
+later job can `cat` them in filename order, which is all
+`release-gate.yaml`'s `report` job does.
+
+```yaml
+- uses: BristolMyersSquibb/blockr.ci/.github/actions/release-gate@main
+  with:
+    summary-file: ${{ runner.temp }}/parts/10-gate.md
+
+- uses: BristolMyersSquibb/blockr.ci/.github/actions/sticky-comment@main
+  with:
+    marker: '<!-- my-workflow -->'
+    body-file: comment.md
+```
+
+Give `sticky-comment` a marker unique to your workflow. It finds its
+comment by matching the marker against the start of each existing one,
+so two workflows sharing a marker will overwrite each other.
+
+The dependency-resolution and deploy helpers in the same tree —
+`parse-deps`, `check-suggests`, `setup-r-rhel` — are composite actions
+too, and callable the same way.
+
+Each action's script is exercised by `bats` under
+`.github/actions/tests/`, which `bats.yaml` runs on any change below
+`.github/actions/`.
+
 ## Pipeline
 
 | Trigger | Jobs |
@@ -313,9 +540,10 @@ PR jobs run in parallel for fast feedback. The expensive multi-platform
 `check` matrix and reverse-dependency checks are reserved for the merge
 queue — they gate the merge but never block PR iteration.
 
-The `check-all`, `revdep-all` and `release-all` jobs aggregate their
-respective matrices into a single stable name, so adding/removing a
-platform or revdep package doesn't churn the required-checks list.
+The `check-all`, `revdep-all`, `release-all` and `release-gate-all` jobs
+aggregate their respective matrices into a single stable name, so
+adding/removing a platform, a revdep package or a gate doesn't churn the
+required-checks list.
 
 ### Release mode
 
@@ -330,6 +558,8 @@ on the pull-request ref, on every push:
 | `lint`, `smoke`, `pkgdown-dev`, `coverage`, `docs` | runs | runs | skipped |
 | `ci / check` (macOS, Windows, devel, oldrel) | skipped | **runs** | runs |
 | `release` (R-hub flavours) | skipped | **runs** | skipped |
+| `release-gate` (mechanical checks) | skipped | **runs** | skipped |
+| `release-gate / soft` (URLs, `--as-cran` notes) | skipped | **runs**, reports without gating | skipped |
 | `recheck` (CRAN-style revdeps) | skipped | **runs**, if the package has CRAN dependents | skipped |
 | `revdep` (downstream GitHub branches) | skipped | skipped | runs |
 
@@ -472,6 +702,11 @@ release.
 
 No inputs.
 
+### `release-gate.yaml`
+
+No inputs. The checks are derived from the repository, which is what
+keeps the workflow callable from outside the fleet.
+
 ### `connect-deploy.yaml`
 
 | Input | Type | Default | Purpose |
@@ -515,6 +750,7 @@ jobs:
 - **Full check** — 4-platform matrix (macOS, Windows, Ubuntu devel, Ubuntu oldrel) — merge-queue gate
 - **Reverse-dependency checks** against configurable downstream packages — merge-queue gate
 - **CRAN pre-submission checks** — AddressSanitizer, UndefinedBehaviorSanitizer, valgrind, `rchk` and the Suggests-free build in the R-hub containers, plus a CRAN-style reverse dependency check, on every push to a labelled release PR — see [Release mode](#release-mode)
+- **Mechanical release checks** — the checklist half of a release, gated on every push to a labelled release PR instead of ticked by hand: three-component version, no dev-version pins, no `Remotes`, `NEWS.md` shape, real vignette titles, a `\value` on every documented function, and a README current with its source. Reports spelling, URL and `--as-cran` findings alongside without gating on them — see [`release-gate.yaml`](#release-gateyaml--mechanical-release-checks-optional)
 - **pkgdown deploy** — site build + deploy to `gh-pages` on push to `main`
 - **Pinned Quarto** — jobs that install Quarto (any package holding a `.qmd`) pass an explicit version instead of the action's `release` default, which resolves the version through an unretried `curl` to quarto.org and has twice killed a green run — see [Quarto pin](#quarto-pin)
 - **Hard-dependency resolution on `lint` and `docs`** — neither job runs the suite or builds a site, so both skip the `Suggests` closure and the 125 MB Chromium that a `chromote` / `shinytest2` suggestion drags in — see [Suggests on the lint and docs jobs](#suggests-on-the-lint-and-docs-jobs)
@@ -533,7 +769,10 @@ goes straight to the release asset, which the action fetches with
 `wget` (20 retries by default).
 
 The version lives in a `QUARTO_VERSION` workflow-level `env` in
-`ci.yaml`, `pkgdown.yaml` and `revdep.yaml` — bump the three together.
+`ci.yaml`, `pkgdown.yaml`, `revdep.yaml` and `release-gate.yaml` — bump
+the four together. The `release-gate.yaml` pin is reached only by a
+repository whose README is a `.qmd`; every other package installs no
+Quarto there at all.
 This is the Quarto that builds every consumer's vignettes, so treat a
 bump as a deliberate toolchain change rather than routine upkeep.
 Windows is exempt: quarto-actions installs through scoop there and
