@@ -1,0 +1,45 @@
+name: Sticky pull-request comment
+description: >
+  Create or rewrite a single pull-request comment identified by an
+  HTML-comment marker, so a workflow reporting on every push leaves one
+  comment describing the head commit instead of a thread of stale ones.
+  Needs `pull-requests: write` from the caller; without it the step
+  warns and succeeds, so pair it with $GITHUB_STEP_SUMMARY.
+
+inputs:
+  marker:
+    description: >
+      HTML comment identifying this workflow's comment, e.g.
+      `<!-- release-gate -->`.  Prepended to the body when absent, and
+      matched against the start of each existing comment.  Must be
+      unique per workflow, or two workflows will overwrite each other.
+    required: true
+  body-file:
+    description: >
+      Path to a file holding the comment body as markdown.
+    required: true
+  pr-number:
+    description: >
+      Pull request to comment on.  Defaults to the one in the event
+      payload; empty means there is nothing to comment on and the step
+      is a no-op.
+    required: false
+    default: ${{ github.event.pull_request.number }}
+  github-token:
+    description: >
+      Token used for the API calls.  Needs `pull-requests: write`.
+    required: false
+    default: ${{ github.token }}
+
+runs:
+  using: composite
+  steps:
+    - name: Write the sticky comment
+      shell: bash
+      env:
+        MARKER: ${{ inputs.marker }}
+        BODY_FILE: ${{ inputs.body-file }}
+        PR_NUMBER: ${{ inputs.pr-number }}
+        GH_TOKEN: ${{ inputs.github-token }}
+        SCRIPT_DIR: ${{ github.action_path }}
+      run: bash "$SCRIPT_DIR/sticky-comment.sh"

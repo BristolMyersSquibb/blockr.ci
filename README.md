@@ -463,6 +463,50 @@ protected environment, required checks — is operational repo settings,
 mostly one-time, and several pieces are load-bearing for security. See
 [Connect deployment setup](#connect-deployment-setup).
 
+## Composite actions
+
+The reusable workflows above are the packaged way to consume this repo,
+but each release check is also a **composite action** that a workflow of
+your own can call directly, the way `r-lib/actions` is built. Reach for
+one of these when you want a single check without `release-gate.yaml`'s
+job structure, label gating or reporting.
+
+| Action | Checks | Fails on a finding | Needs |
+|---|---|---|---|
+| `release-gate` | Version shape, dev-version pins, `Remotes`, `NEWS.md` shape, vignette titles | yes | R; installs `desc` itself |
+| `release-docs` | A `\value` on every documented function, and a README current with its source | yes | `devtools` and the package's dependencies |
+| `release-soft` | Spelling, URLs, `--as-cran` NOTEs | **no**, always exits 0 | `spelling`, `urlchecker`, `rcmdcheck` and the package's dependencies |
+| `sticky-comment` | — writes one pull-request comment, rewritten in place | no | `pull-requests: write` |
+
+The three check actions share one convention rather than any shared
+code: each appends its result as markdown to the `summary-file` you pass
+and to `$GITHUB_STEP_SUMMARY`. Point several at the same directory and a
+later job can `cat` them in filename order, which is all
+`release-gate.yaml`'s `report` job does.
+
+```yaml
+- uses: BristolMyersSquibb/blockr.ci/.github/actions/release-gate@main
+  with:
+    summary-file: ${{ runner.temp }}/parts/10-gate.md
+
+- uses: BristolMyersSquibb/blockr.ci/.github/actions/sticky-comment@main
+  with:
+    marker: '<!-- my-workflow -->'
+    body-file: comment.md
+```
+
+Give `sticky-comment` a marker unique to your workflow. It finds its
+comment by matching the marker against the start of each existing one,
+so two workflows sharing a marker will overwrite each other.
+
+The dependency-resolution and deploy helpers in the same tree —
+`parse-deps`, `check-suggests`, `setup-r-rhel` — are composite actions
+too, and callable the same way.
+
+Each action's script is exercised by `bats` under
+`.github/actions/tests/`, which `bats.yaml` runs on any change below
+`.github/actions/`.
+
 ## Pipeline
 
 | Trigger | Jobs |
