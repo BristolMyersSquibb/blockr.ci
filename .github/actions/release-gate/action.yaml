@@ -1,12 +1,15 @@
 name: Release gates
 description: >
-  Run the mechanical CRAN pre-submission checks against a checked-out
-  package and fail when any of them does not hold: a three-component
+  Run the five devtools::release_checks() conditions against a
+  checked-out package and fail when any does not hold: a three-component
   version, no dependency pinned to a development version, no Remotes
   field, a NEWS.md that is neither build-ignored nor shadowed by a stale
-  inst/NEWS.Rd, no placeholder vignette titles, and a \value section on
-  every documented function.  Reads DESCRIPTION, .Rbuildignore, the
-  vignette headers and man/*.Rd; needs R but installs no packages.
+  inst/NEWS.Rd, and no placeholder vignette titles.  Reads DESCRIPTION,
+  .Rbuildignore and the vignette headers through `desc`, which is the
+  only dependency -- two recursive packages against devtools' 94 -- so
+  it runs in seconds without installing the package under test.  The release checks devtools *can* answer directly --
+  check_doc_fields(), build_readme() -- are called rather than
+  reimplemented, and live in release-gate.yaml's `docs` job instead.
 
 inputs:
   pkg-dir:
@@ -25,6 +28,11 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Ensure desc
+      shell: bash
+      run: |
+        Rscript -e 'if (!requireNamespace("desc", quietly = TRUE)) install.packages("desc", repos = Sys.getenv("RSPM", unset = "https://cloud.r-project.org"))'
+
     - name: Run the release gates
       shell: bash
       env:

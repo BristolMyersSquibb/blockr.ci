@@ -1,17 +1,23 @@
-# The mechanical CRAN pre-submission checks, reimplemented against base R.
+# The five release_checks() conditions, reimplemented readably.
 #
-# Reads DESCRIPTION, .Rbuildignore, the vignette headers and man/*.Rd, and
-# fails when any of six conditions does not hold. Base R only -- no
-# devtools, no pkgdepends, nothing off CRAN -- so the job needs nothing
-# beyond setup-r and finishes in seconds. That is also what keeps the
-# gate callable from a repository outside the blockr fleet, which cannot
-# be assumed to install anything.
+# Reads DESCRIPTION, .Rbuildignore and the vignette headers, and fails
+# when any of the five does not hold. The only dependency is desc, which
+# owns the DESCRIPTION grammar and costs two recursive dependencies
+# against devtools' 94, so this job stays in the seconds range and does
+# not need the package itself installed.
 #
-# Deliberately NOT a call to devtools::release_checks(). Its five checks
-# route through devtools:::check_status(), which prints "OK" or "WARNING"
-# and returns NULL on both branches, so a script wrapping it exits 0
-# regardless of what it found. Each check is a few lines, and
-# reimplementing them is the only way a finding reaches an exit status.
+# These five are reimplemented because devtools offers no way to read
+# their result. They are not exported, and they route through
+# devtools:::check_status(), which returns NULL whether the check passed
+# or failed -- so a script calling one exits 0 regardless. Measured, the
+# finding exists only as cli-formatted text on *stderr* ("x WARNING:
+# version (0.1.1.9001) should have exactly three components"), so
+# wrapping them means grepping a message stream through ::: and coupling
+# to print formatting. Reimplementing the rule is the smaller coupling.
+#
+# The checks devtools *can* answer are called rather than rewritten:
+# check_doc_fields() and build_readme() are exported and return usable
+# values, and both run in the workflow's `docs` job.
 #
 # The reimplementations stay faithful to what devtools tests, with one
 # deliberate divergence noted at check_vignette_titles() below.
@@ -28,13 +34,8 @@ if (!file.exists(desc_path)) {
   quit(status = 1L)
 }
 
-desc <- read.dcf(desc_path)
-
 field <- function(name) {
-  if (!name %in% colnames(desc)) {
-    return(NA_character_)
-  }
-  val <- desc[1L, name]
+  val <- desc::desc_get_field(name, default = NA_character_, file = desc_path)
   if (is.na(val) || !nzchar(trimws(val))) NA_character_ else val
 }
 
@@ -74,27 +75,25 @@ check_version <- function() {
 
 # -- No dependency pinned to a development version ---------------------
 
-# Splits on commas, which the DESCRIPTION dependency grammar does not
-# allow inside a version constraint, then reads the operator off the
-# front of the parenthesised part. A dependency counts as development
-# when its pin has four components and the last is >= 9000 -- devtools'
-# rule, kept verbatim so the two cannot drift.
+# Dependency parsing goes through desc, which owns the DESCRIPTION
+# grammar -- the alternative is hand-rolling comma splitting, paren
+# extraction and operator stripping, and getting one of them subtly
+# wrong. Only the four fields devtools looks at are considered, so the
+# two cannot drift; `*` is desc's marker for an unconstrained
+# dependency. A dependency counts as development when its pin has four
+# components and the last is >= 9000 -- devtools' rule, kept verbatim.
 check_dev_versions <- function() {
   name <- "No dependency pinned to a development version"
-  fields <- c("Depends", "Imports", "LinkingTo", "Suggests")
-  deps <- unlist(lapply(fields, field))
-  deps <- deps[!is.na(deps)]
 
-  entries <- trimws(unlist(strsplit(paste(deps, collapse = ","), ",")))
-  entries <- entries[nzchar(entries)]
-  pinned <- entries[grepl("\\(", entries)]
+  deps <- desc::desc_get_deps(file = desc_path)
+  deps <- deps[deps$type %in% c("Depends", "Imports", "LinkingTo", "Suggests"), ]
+  pinned <- deps[deps$version != "*", , drop = FALSE]
 
-  if (!length(pinned)) {
+  if (!nrow(pinned)) {
     return(outcome(name, "pass", "no version-pinned dependencies"))
   }
 
-  pkg <- trimws(sub("\\s*\\(.*$", "", pinned))
-  ver <- trimws(sub("^[^0-9]*", "", sub("^[^(]*\\(([^)]*)\\).*$", "\\1", pinned)))
+  ver <- trimws(sub("^[^0-9]*", "", pinned$version))
 
   is_dev <- vapply(
     ver,
@@ -111,11 +110,11 @@ check_dev_versions <- function() {
       name, "fail",
       paste0(
         "depends on development versions of: ",
-        paste0(pkg[is_dev], " (", ver[is_dev], ")", collapse = ", ")
+        paste0(pinned$package[is_dev], " (", ver[is_dev], ")", collapse = ", ")
       )
     )
   } else {
-    outcome(name, "pass", sprintf("%d pinned, none a devel version", length(pinned)))
+    outcome(name, "pass", sprintf("%d pinned, none a devel version", nrow(pinned)))
   }
 }
 
@@ -238,83 +237,6 @@ check_vignette_titles <- function() {
   }
 }
 
-# -- Every documented function has a \value section --------------------
-
-# Rd files without \usage are excluded: package-level documentation,
-# re-export stubs and data sets have nothing to describe a return value
-# for, and R CMD check does not ask them to. That leaves the case CRAN
-# rejects on routinely -- a documented function whose result goes
-# unexplained.
-#
-# Only \value is gated, though devtools::check_doc_fields() defaults to
-# c("value", "examples"). The second one does not hold across this
-# fleet: measured, blockr.core is missing \examples in 35 Rd files,
-# blockr.dplyr in 10, blockr.ui in 6 and blockr.ggplot in 3, against one
-# single missing \value between them. A gate every package fails on its
-# first run is one that gets switched off, and CRAN treats the two
-# differently anyway -- a missing \value comes back as a change request,
-# a missing example usually does not come back at all.
-check_doc_fields <- function() {
-  name <- "Every documented function has a \\value section"
-  man_dir <- file.path(pkg_dir, "man")
-
-  if (!dir.exists(man_dir)) {
-    return(outcome(name, "skip", "no man/ directory"))
-  }
-
-  paths <- list.files(man_dir, pattern = "\\.Rd$", full.names = TRUE)
-
-  if (!length(paths)) {
-    return(outcome(name, "skip", "no Rd files in man/"))
-  }
-
-  unparsed <- character()
-  missing <- character()
-
-  for (path in paths) {
-    rd <- tryCatch(
-      suppressWarnings(tools::parse_Rd(path, permissive = TRUE)),
-      error = function(e) NULL
-    )
-
-    if (is.null(rd)) {
-      unparsed <- c(unparsed, basename(path))
-      next
-    }
-
-    tags <- unlist(lapply(rd, attr, "Rd_tag"))
-
-    if (!"\\usage" %in% tags) {
-      next
-    }
-
-    if (!"\\value" %in% tags) {
-      missing <- c(missing, basename(path))
-    }
-  }
-
-  problems <- character()
-
-  if (length(unparsed)) {
-    problems <- c(problems, paste0(
-      "unparseable Rd: ", paste0(unparsed, collapse = ", ")
-    ))
-  }
-
-  if (length(missing)) {
-    problems <- c(problems, paste0(
-      "missing \\value in ", length(missing), " file(s): ",
-      paste0(missing, collapse = ", ")
-    ))
-  }
-
-  if (length(problems)) {
-    outcome(name, "fail", paste0(problems, collapse = "; "))
-  } else {
-    outcome(name, "pass", sprintf("%d Rd file(s) checked", length(paths)))
-  }
-}
-
 # -- Run, report, exit -------------------------------------------------
 
 checks <- list(
@@ -322,8 +244,7 @@ checks <- list(
   check_dev_versions(),
   check_remotes(),
   check_news_md(),
-  check_vignette_titles(),
-  check_doc_fields()
+  check_vignette_titles()
 )
 
 status <- vapply(checks, `[[`, character(1L), "status")

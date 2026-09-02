@@ -29,34 +29,6 @@ Title: A Test Package
 EOF
 }
 
-# An Rd with a \usage section, which is what brings a file into the
-# \value check's scope.
-write_rd() {
-  local value_section="$1"
-  mkdir -p man
-  {
-    cat <<'EOF'
-\name{foo}
-\alias{foo}
-\title{Foo}
-\usage{
-foo(x)
-}
-\arguments{
-\item{x}{A thing.}
-}
-EOF
-    if [ -n "$value_section" ]; then
-      echo "$value_section"
-    fi
-    cat <<'EOF'
-\description{
-Does a thing.
-}
-EOF
-  } > man/foo.Rd
-}
-
 @test "a clean package passes every gate" {
   write_clean_description
 
@@ -224,43 +196,6 @@ EOF
   assert_success
 }
 
-@test "an Rd with usage but no value fails, and is named" {
-  write_clean_description
-  write_rd ""
-
-  gate
-  assert_failure
-  assert_output --partial "foo.Rd"
-  assert_output --partial "value"
-}
-
-@test "an Rd with usage and value passes" {
-  write_clean_description
-  write_rd '\value{A thing.}'
-
-  gate
-  assert_success
-}
-
-# Package-level documentation, re-export stubs and data sets carry no
-# \usage, and CRAN does not ask them for a \value either.
-@test "an Rd without usage is out of scope" {
-  write_clean_description
-  mkdir -p man
-  cat > man/testpkg-package.Rd <<'EOF'
-\name{testpkg-package}
-\alias{testpkg-package}
-\docType{package}
-\title{testpkg: A Test Package}
-\description{
-A test package.
-}
-EOF
-
-  gate
-  assert_success
-}
-
 # The point of collecting rather than exiting on the first failure: a
 # maintainer fixing one thing per push is a maintainer pushing five
 # times.
@@ -276,7 +211,7 @@ EOF
 
   gate
   assert_failure
-  assert_output --partial "3 of 6 hard gates failed"
+  assert_output --partial "3 of 5 hard gates failed"
   assert_output --partial "exactly three components"
   assert_output --partial "blockr.theme"
   assert_output --partial "Remotes"

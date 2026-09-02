@@ -36,6 +36,11 @@
 #
 # Required-status-checks list: `release-gate / release-gate-all`.
 #
+# Not covered here, deliberately: devtools::check_win_devel() mails its
+# result 15-30 minutes later, so nothing can gate on it, and
+# check(manual = TRUE) wants a LaTeX toolchain this job would pay for on
+# every push.  Both stay on the maintainer's release checklist.
+#
 # ── Deliberately separate from release.yaml ─────────────────────────
 #
 # Those jobs are container images on their own cadence; these are an
@@ -69,26 +74,44 @@
 # merging.  Skipped jobs satisfy required checks, so `release-gate-all`
 # reports green there.
 #
-# ── Why not devtools::release_checks() ──────────────────────────────
+# ── What devtools carries, and what it cannot ───────────────────────
 #
-# Its checks route through devtools:::check_status(), which prints "OK"
-# or "WARNING" and returns NULL on both branches — measured, on both.  A
-# script calling a *failing* check_version() exits 0, so a job built on
-# it would be green regardless of what it found, which is precisely the
-# failure mode this workflow exists to remove.  The checks are a few
-# lines each and are reimplemented in the release-gate action, against
-# base R only; see that script for the per-check reasoning.
+# Wherever devtools exports a function that returns a usable value, it
+# is called rather than rewritten: check_doc_fields(), build_readme()
+# and spell_check() all do, and all three run here.  (The last one is a
+# two-line wrapper over spelling::spell_check_package(), so the wrapped
+# function is called instead and 94 dependencies stay out of a job that
+# needs 12.)
+#
+# The five release_checks() conditions are the exception, and not by
+# preference.  They are not exported, and they route through
+# devtools:::check_status(), which returns NULL whether the check passed
+# or failed — measured, on both branches.  A script calling a *failing*
+# check_version() exits 0, so a job built on it would be green
+# regardless of what it found, which is precisely the failure mode this
+# workflow exists to remove.  Measured further, the finding does exist,
+# but only as cli-formatted text on stderr, so the alternative to
+# reimplementing is grepping a message stream through ::: and coupling
+# to print formatting.  Reimplementing the rule is the smaller coupling;
+# see the release-gate action for the per-check reasoning.
 #
 # ── Hard gates and soft checks ──────────────────────────────────────
 #
-# The `gate` and `readme` jobs fail the build.  The `soft` job never
-# does on a finding: urlchecker results and --as-cran NOTEs turn on
-# third-party redirects, transient 503s and CRAN's own incoming
-# feasibility service, and a volatile signal used as a gate is one that
-# gets ignored or switched off.  It is the same argument r-devel/recheck
-# makes about itself.  The `soft` job is not in `release-gate-all` and
-# so is never required — a red row there means the checks could not be
-# computed, which is worth seeing and blocks nothing.
+# The `gate` and `docs` jobs fail the build.  They are split by cost
+# rather than by topic: `gate` reads files, and its only dependency is
+# desc — two recursive packages, and the one that owns the DESCRIPTION
+# grammar — so it answers in seconds, while `docs` needs devtools and
+# the package itself installed.  Splitting them keeps a wrong version
+# number visible long before the dependency tree has resolved.
+#
+# The `soft` job never fails on a finding.  Spelling, urlchecker results
+# and --as-cran NOTEs turn on jargon, third-party redirects, transient
+# 503s and CRAN's own incoming feasibility service, and a volatile
+# signal used as a gate is one that gets ignored or switched off.  It is
+# the same argument r-devel/recheck makes about itself.  The `soft` job
+# is not in `release-gate-all` and so is never required — a red row
+# there means the checks could not be computed, which is worth seeing
+# and blocks nothing.
 #
 # ── Making the soft output visible ──────────────────────────────────
 #
@@ -128,13 +151,22 @@ on:
 
 name: release-gate
 
+# Pinned rather than left at the action's 'release' default, which
+# resolves the version at job time through an unretried curl of
+# quarto.org -- see ci.yaml for the full reasoning and keep the four
+# files in step.  Reached here only by a repository whose README is a
+# .qmd; every other package installs no Quarto at all.
+env:
+  QUARTO_VERSION: '1.10.18'
+
 jobs:
 
-  # ── Hard gates: DESCRIPTION, NEWS, vignette headers, Rd ─────────────
+  # ── Hard gates: DESCRIPTION, NEWS and the vignette headers ──────────
   #
-  # Base R only, so this job is setup-r plus one Rscript and finishes in
-  # seconds.  It installs nothing, which is what lets it stay fast and
-  # what keeps it working in a repository that cannot install anything.
+  # Setup-r, one small install and one Rscript, so this finishes in
+  # seconds.  The package under test is never installed and its
+  # dependency tree is never resolved, which is what keeps this job
+  # answering long before `docs` has finished provisioning.
 
   gate:
 
@@ -169,24 +201,43 @@ jobs:
           path: ${{ runner.temp }}/parts/
           if-no-files-found: warn
 
-  # ── Hard gate: README.md is current with README.Rmd ─────────────────
+  # ── Hard gate: the checks devtools can answer ───────────────────────
   #
-  # The docs-job pattern from #38 applied to a second generated
-  # artefact — regenerate, then fail on a dirty tree.  A package with no
-  # README.Rmd skips rather than fails.
+  # Two of the seven are exported by devtools and return usable values,
+  # so they are called rather than rewritten: check_doc_fields() names
+  # the Rd files missing a section, and build_readme() renders the
+  # README the way a maintainer would.
   #
-  # Renders with html_preview = FALSE, which is what devtools'
-  # build_readme() sets: the default github_document format also writes
-  # a README.html preview, and that untracked file would fail the
-  # dirty-tree check on every run.
+  # This is where the devtools install lands -- 94 recursive hard
+  # dependencies, against rcmdcheck's 15 and urlchecker's 5.  That cost
+  # is why the DESCRIPTION-level checks stay in their own job above:
+  # `gate` keeps its zero-install property and reports in seconds while
+  # this one is still resolving packages, which is the common case when
+  # a release branch is being iterated.
   #
-  # Only README.Rmd is covered.  A README.qmd renders through Quarto
-  # rather than rmarkdown, so it is reported as unchecked instead of
-  # being quietly counted as clean — no package in the fleet has one
-  # today, and a silent pass is the failure mode this workflow exists to
-  # remove.
+  # Only \value is gated, though check_doc_fields() defaults to
+  # c("value", "examples").  The second does not hold across this fleet:
+  # measured, blockr.core is missing \examples in 35 Rd files,
+  # blockr.dplyr in 10, blockr.ui in 6 and blockr.ggplot in 3, against
+  # one single missing \value between them.  A gate every package fails
+  # on its first run is one that gets switched off, and CRAN treats the
+  # two differently anyway.
+  #
+  # Using build_readme() rather than a hand-rolled render buys the
+  # README.qmd path for free -- it dispatches on the extension and
+  # renders a .qmd through Quarto -- and keeps the html_preview = FALSE
+  # detail in devtools' hands rather than this file's.  That flag is
+  # load-bearing: the default github_document format also writes a
+  # README.html, and that untracked file would fail the dirty-tree
+  # comparison on every run.
+  #
+  # A repository with a README.qmd needs the quarto CLI and the quarto
+  # package; when they are absent, build_readme() aborts and this job
+  # goes red with devtools' own message.  That is deliberate -- a loud
+  # failure beats the silent pass a "we do not check .qmd" branch would
+  # give.  A package with no executable README at all skips.
 
-  readme:
+  docs:
 
     if: >-
       github.event_name == 'pull_request' &&
@@ -207,122 +258,169 @@ jobs:
         shell: bash
         run: |
           mkdir -p "${{ runner.temp }}/parts"
-          part="${{ runner.temp }}/parts/20-readme.md"
 
-          {
-            echo "### README freshness"
-            echo
-          } > "$part"
+          found=""
+          for candidate in README.qmd README.Rmd inst/README.qmd inst/README.Rmd; do
+            if [ -f "$candidate" ]; then
+              found="$candidate"
+              break
+            fi
+          done
 
-          if [ -f README.Rmd ]; then
-            echo "Found README.Rmd; regenerating it to compare."
-            echo "run=true" >> "$GITHUB_OUTPUT"
+          if [ -z "$found" ]; then
+            echo "No executable README; nothing to regenerate."
+            echo "run=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          echo "run=false" >> "$GITHUB_OUTPUT"
+          echo "Found $found; regenerating it to compare."
+          echo "run=true" >> "$GITHUB_OUTPUT"
 
-          if [ -f README.qmd ]; then
-            echo "::warning::release-gate: README.qmd is not covered by this gate, which regenerates README.Rmd only."
-            echo ":heavy_minus_sign: README.qmd found; this gate regenerates README.Rmd only, so it is **not checked**." >> "$part"
-          else
-            echo "No README.Rmd; nothing to regenerate."
-            echo ":heavy_minus_sign: No README.Rmd, so nothing to regenerate." >> "$part"
-          fi
-
-          echo >> "$part"
-          cat "$part" >> "$GITHUB_STEP_SUMMARY"
+          # Quarto reaches the runner through setup-r-dependencies, which
+          # installs it for a package holding a .qmd; the R-side binding
+          # has to be asked for by name.
+          case "$found" in
+            *.qmd) echo "extra=any::quarto" >> "$GITHUB_OUTPUT" ;;
+          esac
 
       - uses: r-lib/actions/setup-pandoc@v2
-        if: steps.readme.outputs.run == 'true'
 
       - uses: r-lib/actions/setup-r@v2
-        if: steps.readme.outputs.run == 'true'
         with:
           r-version: release
           use-public-rspm: true
 
       - uses: BristolMyersSquibb/blockr.ci/.github/actions/parse-deps@main
-        if: steps.readme.outputs.run == 'true'
         id: deps
         with:
           pr-body: ${{ github.event.pull_request.body }}
           pr-number: ${{ github.event.pull_request.number }}
           base-packages: |
-            any::rmarkdown
+            any::devtools
             local::.
 
       # Keeps Suggests, unlike ci.yaml's lint and docs jobs: a README
       # chunk routinely calls a suggested package, and a hard-only
       # install would fail the render rather than the comparison.
       - uses: r-lib/actions/setup-r-dependencies@v2
-        if: steps.readme.outputs.run == 'true'
         with:
-          extra-packages: ${{ steps.deps.outputs.extra-packages }}
+          extra-packages: |
+            ${{ steps.deps.outputs.extra-packages }}
+            ${{ steps.readme.outputs.extra }}
+          quarto-version: ${{ env.QUARTO_VERSION }}
 
-      - name: Regenerate README.md
+      # Records its verdict instead of exiting on it, so a missing
+      # \value and a stale README are reported from one run rather than
+      # one per push.
+      - name: Check Rd value sections
+        id: fields
+        shell: Rscript {0}
+        env:
+          PART: ${{ runner.temp }}/parts/20-docs.md
+        run: |
+          part <- Sys.getenv("PART")
+          dir.create(dirname(part), recursive = TRUE, showWarnings = FALSE)
+
+          missing <- if (dir.exists("man")) {
+            devtools::check_doc_fields(".", fields = "value")$value
+          } else {
+            character()
+          }
+
+          md <- c(
+            "### Rd \\value sections",
+            "",
+            if (!dir.exists("man")) {
+              ":heavy_minus_sign: No man/ directory."
+            } else if (length(missing)) {
+              c(
+                sprintf(
+                  ":x: %d documented function(s) do not say what they return.",
+                  length(missing)
+                ),
+                "",
+                paste0("- `", missing, "`")
+              )
+            } else {
+              ":white_check_mark: Every documented function has a \\value section."
+            },
+            ""
+          )
+
+          write(md, file = part, append = TRUE)
+          write(md, file = Sys.getenv("GITHUB_STEP_SUMMARY"), append = TRUE)
+
+          write(
+            paste0("ok=", if (length(missing)) "false" else "true"),
+            file = Sys.getenv("GITHUB_OUTPUT"), append = TRUE
+          )
+
+      - name: Regenerate the README
         id: render
         if: steps.readme.outputs.run == 'true'
         shell: Rscript {0}
-        run: |
-          rmarkdown::render(
-            "README.Rmd",
-            output_options = list(html_preview = FALSE),
-            quiet = FALSE
-          )
+        run: devtools::build_readme(".", quiet = FALSE)
 
-      # Runs on failure too, so the comment carries the reason rather
-      # than going quiet. A render that died leaves the tree clean, so
-      # the outcome has to be read explicitly -- reporting "current"
-      # there would be the false green this workflow exists to remove.
-      - name: Fail on a stale README.md
-        if: always() && steps.readme.outputs.run == 'true'
+      - name: Report README freshness and fail on either gate
+        if: always()
         shell: bash
         env:
+          FIELDS_OK: ${{ steps.fields.outputs.ok }}
           RENDER_OUTCOME: ${{ steps.render.outcome }}
+          README_RUN: ${{ steps.readme.outputs.run }}
         run: |
-          part="${{ runner.temp }}/parts/20-readme.md"
-
-          if [ "$RENDER_OUTCOME" != success ]; then
-            {
-              echo ":x: README.Rmd did not render, so its freshness is unknown. See the job log."
-              echo
-            } >> "$part"
-            cat "$part" >> "$GITHUB_STEP_SUMMARY"
-            exit 1
-          fi
-
-          drift="$(git status --porcelain)"
-
-          if [ -z "$drift" ]; then
-            echo "README.md is current with README.Rmd."
-            echo ":white_check_mark: README.md is current with README.Rmd." >> "$part"
-            echo >> "$part"
-            cat "$part" >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-
-          echo "::error::README.md is out of date. Regenerate it (devtools::build_readme()) and commit the result."
-          git add -A
-          git diff --cached
+          part="${{ runner.temp }}/parts/20-docs.md"
+          mkdir -p "$(dirname "$part")"
+          failed=0
 
           {
-            echo ":x: README.md does not match README.Rmd. Regenerate it with \`devtools::build_readme()\` and commit the result."
-            echo
-            echo '```'
-            echo "$drift"
-            echo '```'
+            echo "### README freshness"
             echo
           } >> "$part"
 
-          cat "$part" >> "$GITHUB_STEP_SUMMARY"
-          exit 1
+          if [ "$README_RUN" != true ]; then
+            echo ":heavy_minus_sign: No executable README, so nothing to regenerate." >> "$part"
+          elif [ "$RENDER_OUTCOME" != success ]; then
+            # A render that died leaves the tree clean, so reading the
+            # tree alone would report "current" -- the false green this
+            # workflow exists to remove.
+            echo ":x: The README did not render, so its freshness is unknown. See the job log." >> "$part"
+            failed=1
+          else
+            drift="$(git status --porcelain)"
 
-      - name: Upload readme summary
+            if [ -z "$drift" ]; then
+              echo ":white_check_mark: README.md is current with its source." >> "$part"
+            else
+              echo "::error::README.md is out of date. Regenerate it (devtools::build_readme()) and commit the result."
+              git add -A
+              git diff --cached
+              {
+                echo ":x: README.md does not match its source. Regenerate it with \`devtools::build_readme()\` and commit the result."
+                echo
+                echo '```'
+                echo "$drift"
+                echo '```'
+              } >> "$part"
+              failed=1
+            fi
+          fi
+
+          echo >> "$part"
+          cat "$part" >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$FIELDS_OK" != true ]; then
+            printf '%s\n' '::error::One or more documented functions have no \value section.'
+            failed=1
+          fi
+
+          exit "$failed"
+
+      - name: Upload docs summary
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: release-gate-part-readme
+          name: release-gate-part-docs
           path: ${{ runner.temp }}/parts/
           if-no-files-found: warn
 
@@ -368,6 +466,7 @@ jobs:
           base-packages: |
             any::rcmdcheck
             any::urlchecker
+            any::spelling
             local::.
 
       - uses: r-lib/actions/setup-r-dependencies@v2
@@ -385,6 +484,55 @@ jobs:
             echo "Reported on every push, never a gate."
             echo
           } > "${{ runner.temp }}/parts/30-soft.md"
+
+      # The spell_check() entry point in devtools is a two-line wrapper
+      # over spelling::spell_check_package(), so the wrapped function is
+      # called directly -- it is the same check, and it keeps 94
+      # dependencies out of a job that otherwise needs 12.  Honours inst/WORDLIST, which is
+      # what makes a spell check survivable on a package with jargon.
+      - name: Check spelling
+        if: always()
+        shell: Rscript {0}
+        env:
+          PART: ${{ runner.temp }}/parts/30-soft.md
+        run: |
+          part <- Sys.getenv("PART")
+          dir.create(dirname(part), recursive = TRUE, showWarnings = FALSE)
+
+          res <- tryCatch(
+            spelling::spell_check_package("."),
+            error = function(e) conditionMessage(e)
+          )
+
+          md <- if (is.character(res)) {
+            c(
+              "#### Spelling",
+              "",
+              paste0(":warning: The spell check could not run: ", res),
+              ""
+            )
+          } else if (!nrow(res)) {
+            c("#### Spelling", "", ":white_check_mark: No misspellings.", "")
+          } else {
+            print(res)
+            c(
+              "#### Spelling",
+              "",
+              sprintf(
+                ":warning: %d word(s) not in the dictionary or inst/WORDLIST.",
+                nrow(res)
+              ),
+              "",
+              paste0(
+                "- `", res$word, "` -- ",
+                vapply(res$found, function(x) paste(x, collapse = ", "), character(1L))
+              ),
+              ""
+            )
+          }
+
+          write(md, file = part, append = TRUE)
+          write(md, file = Sys.getenv("GITHUB_STEP_SUMMARY"), append = TRUE)
 
       - name: Check URLs
         if: always()
@@ -446,7 +594,7 @@ jobs:
 
           res <- tryCatch(
             rcmdcheck::rcmdcheck(
-              args = c("--no-manual", "--as-cran"),
+              args = c("--no-manual", "--as-cran", "--run-donttest"),
               error_on = "never",
               quiet = FALSE
             ),
@@ -512,7 +660,7 @@ jobs:
 
   release-gate-all:
 
-    needs: [gate, readme]
+    needs: [gate, docs]
     if: always()
 
     runs-on: ubuntu-latest
@@ -523,11 +671,11 @@ jobs:
       - name: Aggregate the hard gates
         env:
           GATE_RESULT: ${{ needs.gate.result }}
-          README_RESULT: ${{ needs.readme.result }}
+          DOCS_RESULT: ${{ needs.docs.result }}
         run: |
           echo "gate job result:   $GATE_RESULT"
-          echo "readme job result: $README_RESULT"
-          for result in "$GATE_RESULT" "$README_RESULT"; do
+          echo "docs job result: $DOCS_RESULT"
+          for result in "$GATE_RESULT" "$DOCS_RESULT"; do
             case "$result" in
               success|skipped) ;;
               *) exit 1 ;;
@@ -543,7 +691,7 @@ jobs:
 
   report:
 
-    needs: [gate, readme, soft]
+    needs: [gate, docs, soft]
 
     if: >-
       !cancelled() &&
@@ -568,14 +716,14 @@ jobs:
         shell: bash
         env:
           GATE_RESULT: ${{ needs.gate.result }}
-          README_RESULT: ${{ needs.readme.result }}
+          DOCS_RESULT: ${{ needs.docs.result }}
           SOFT_RESULT: ${{ needs.soft.result }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           REPO_URL: ${{ github.server_url }}/${{ github.repository }}
         run: |
           short="${HEAD_SHA:0:7}"
 
-          if [ "$GATE_RESULT" = success ] && [ "$README_RESULT" = success ]; then
+          if [ "$GATE_RESULT" = success ] && [ "$DOCS_RESULT" = success ]; then
             headline=":white_check_mark: **The hard gates pass at this commit.**"
           else
             headline=":x: **A hard gate fails at this commit.**"
@@ -624,8 +772,9 @@ jobs:
         run: |
           marker="<!-- release-gate -->"
 
-          # `--paginate` applies the filter per page, so a match on page
-          # two arrives as a second line; `head -n1` keeps the oldest
+          # The `--paginate` flag applies the filter per page, so a
+          # match on page two arrives as a second line, and `head -n1`
+          # keeps the oldest
           # marked comment as the one true sticky. A null body -- which
           # a hidden comment can have -- would abort the filter, hence
           # the `// ""`.

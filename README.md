@@ -257,30 +257,83 @@ applies.
 
 #### Hard gates
 
-| Check | Catches |
+| Check | Catches | Job |
+|---|---|---|
+| Version has exactly three components | Submitting a development version | `gate` |
+| No dependency pinned to a `.9000` version | An unreleasable dependency | `gate` |
+| No `Remotes` field | A dependency CRAN cannot resolve | `gate` |
+| `NEWS.md` not build-ignored, no stale `inst/NEWS.Rd` | Repo-shape mistakes | `gate` |
+| No placeholder vignette titles | Template text reaching CRAN | `gate` |
+| A `\value` section on every documented function | An `Rd` CRAN sends back | `docs` |
+| Regenerating the README leaves the tree clean | A README that no longer matches its source | `docs` |
+
+The two jobs split by **cost**, not by topic. The `gate` job reads
+`DESCRIPTION`, `.Rbuildignore` and the vignette headers, and its only
+dependency is `desc` — two recursive packages, and the one that owns the
+`DESCRIPTION` grammar, so the dependency parsing is not hand-rolled. The
+`docs` job needs `devtools` (94 recursive dependencies) and the package
+itself installed. Splitting them keeps a wrong version number visible in
+seconds, long before the dependency tree has resolved.
+
+Each check in `gate` reports independently rather than stopping at the
+first failure, because fixing one thing per push is how a release branch
+grows five pushes.
+
+#### What devtools carries, and what it cannot
+
+Where devtools exports a function that returns a usable value, this
+workflow calls it rather than reimplementing it:
+
+| Checklist item | How it runs here |
 |---|---|
-| Version has exactly three components | Submitting a development version |
-| No dependency pinned to a `.9000` version | An unreleasable dependency |
-| No `Remotes` field | A dependency CRAN cannot resolve |
-| `NEWS.md` not build-ignored, no stale `inst/NEWS.Rd` | Repo-shape mistakes |
-| No placeholder vignette titles | Template text reaching CRAN |
-| A `\value` section on every documented function | An `Rd` CRAN sends back |
-| Regenerating `README.md` from `README.Rmd` leaves the tree clean | A README that no longer matches its source |
+| `urlchecker::url_check()` | Called directly, in `soft` |
+| `devtools::build_readme()` | Called directly, in `docs` |
+| `devtools::check_doc_fields()` | Called directly, in `docs` |
+| `devtools::spell_check()` | Its body — `spelling::spell_check_package()` — called directly, in `soft` |
+| `devtools::release_checks()` | Reimplemented, in `gate` — see below |
+| `devtools::check(remote = TRUE, run_dont_test = TRUE)` | `rcmdcheck` with `--as-cran --run-donttest` and `_R_CHECK_CRAN_INCOMING_REMOTE_`, in `soft` |
 
-The first six run in the `gate` job against base R alone — no package
-installs, so it finishes in seconds and works in a repository that
-cannot install anything. Each one reports independently rather than
-stopping at the first failure, because fixing one thing per push is how
-a release branch grows five pushes.
+Calling `spell_check()` rather than the function it wraps would pull
+devtools' 94 recursive hard dependencies into a job that needs
+`spelling`'s 12, for the same check.
 
-The last is the `docs` job pattern applied to a second generated
-artefact: regenerate, then fail on a dirty tree. It skips where there is
-no `README.Rmd`. A `README.qmd` renders through Quarto rather than
-rmarkdown and is reported as *unchecked* rather than quietly counted as
-clean — no package in the fleet has one today.
+Two checklist items are deliberately absent. Results from
+`devtools::check_win_devel()` arrive by email 15–30 minutes later, so
+nothing in CI can gate on them, and `check(manual = TRUE)` wants a LaTeX
+toolchain the job would pay for on every push. Both stay on the
+maintainer's release checklist.
 
-Only `\value` is gated, though `devtools::check_doc_fields()` also
-checks `\examples`. The second one does not hold across this fleet:
+##### Why `release_checks()` is the exception
+
+Its five checks are not exported, and they route through
+`devtools:::check_status()`, which returns `NULL` whether the check
+passed or failed — measured, on both branches. A script calling a
+*failing* `check_version()` exits 0, so a job built on it would be green
+regardless of what it found.
+
+The finding does exist, but only as cli-formatted text on **stderr**:
+
+```
+stdout:  "Checking version number has three components..."
+stderr:  "✖ WARNING: version (0.1.1.9001) should have exactly three components"
+return:  NULL
+```
+
+So the alternative to reimplementing is grepping a message stream
+through `:::`, which couples to devtools' print formatting rather than
+to its logic. Reimplementing the rule is the smaller coupling, and it
+reproduces devtools' verdicts: measured, it fails `blockr.ggplot` on
+three counts, `blockr.core` on its `Remotes` field, and passes
+`typedjson`.
+
+One divergence is deliberate. The vignette-title check reads the headers
+itself instead of calling `tools::pkgVignettes()`, which resolves
+vignettes through the registered engines — so on a runner without the
+quarto package every `.qmd` is invisible to it and the check passes by
+finding nothing, a false green on exactly the packages in this fleet.
+
+Only `\value` is gated, though `check_doc_fields()` defaults to
+`c("value", "examples")`. The second does not hold across this fleet:
 measured, `blockr.core` is missing `\examples` in 35 `Rd` files,
 `blockr.dplyr` in 10, `blockr.ui` in 6 and `blockr.ggplot` in 3, against
 one single missing `\value` between them. A gate every package fails on
@@ -290,10 +343,10 @@ differently anyway.
 #### Soft checks
 
 Some results are worth seeing on every push without blocking a
-submission. Both `urlchecker::url_check()` and the NOTEs from an
-`--as-cran` run turn on third-party redirects, transient 503s and CRAN's
-own incoming-feasibility service, and a volatile signal used as a gate
-is one that gets ignored or switched off — the same argument
+submission. Spelling, `urlchecker::url_check()` and the NOTEs from an
+`--as-cran` run turn on jargon, third-party redirects, transient 503s
+and CRAN's own incoming-feasibility service, and a volatile signal used
+as a gate is one that gets ignored or switched off — the same argument
 `r-devel/recheck` makes about itself.
 
 Those run in the `soft` job, which is deliberately absent from
@@ -306,7 +359,8 @@ That matrix checks `--as-cran` and fails on any NOTE, but with
 `_R_CHECK_CRAN_INCOMING_` off it never reaches the checks a submission
 is actually read against: new-submission notes, the licence and URL
 scan, the `DESCRIPTION` spell check, the maintainer address. This job
-turns them on.
+turns them on, and adds `--run-donttest` so the `\donttest{}` examples
+CRAN runs on submission run here too.
 
 #### Where the output goes
 
@@ -332,25 +386,6 @@ containers for tens of minutes while this gate finishes in seconds — so
 any conclusion readable at comment time would be "queued", and a comment
 rewritten per push would never catch up. A link to the commit's own
 check list cannot go stale.
-
-#### Why not `devtools::release_checks()`
-
-Its checks route through `devtools:::check_status()`, which prints `OK`
-or a `WARNING` and returns `NULL` on both branches — measured, on both.
-A script calling a *failing* `check_version()` exits 0, so a job built
-on it would be green regardless of what it found, which is precisely the
-failure mode this workflow exists to remove.
-
-The checks are a few lines each and are reimplemented in the
-`release-gate` composite action against base R, faithfully enough to
-reproduce devtools' verdicts: measured, they fail `blockr.ggplot` on
-three counts, `blockr.core` on its `Remotes` field, and pass
-`typedjson`. One divergence is deliberate. The vignette-title check
-reads the headers itself instead of calling `tools::pkgVignettes()`,
-which resolves vignettes through the registered engines — so on a runner
-without the quarto package every `.qmd` is invisible to it and the check
-passes by finding nothing, a false green on exactly the packages in this
-fleet.
 
 ### `connect-deploy.yaml` — pull-mode Posit Connect deploys
 
@@ -650,7 +685,7 @@ jobs:
 - **Full check** — 4-platform matrix (macOS, Windows, Ubuntu devel, Ubuntu oldrel) — merge-queue gate
 - **Reverse-dependency checks** against configurable downstream packages — merge-queue gate
 - **CRAN pre-submission checks** — AddressSanitizer, UndefinedBehaviorSanitizer, valgrind, `rchk` and the Suggests-free build in the R-hub containers, plus a CRAN-style reverse dependency check, on every push to a labelled release PR — see [Release mode](#release-mode)
-- **Mechanical release checks** — the checklist half of a release, gated on every push to a labelled release PR instead of ticked by hand: three-component version, no dev-version pins, no `Remotes`, `NEWS.md` shape, real vignette titles, a `\value` on every documented function, and a `README.md` current with its `README.Rmd`. Reports URL and `--as-cran` findings alongside without gating on them — see [`release-gate.yaml`](#release-gateyaml--mechanical-release-checks-optional)
+- **Mechanical release checks** — the checklist half of a release, gated on every push to a labelled release PR instead of ticked by hand: three-component version, no dev-version pins, no `Remotes`, `NEWS.md` shape, real vignette titles, a `\value` on every documented function, and a README current with its source. Reports spelling, URL and `--as-cran` findings alongside without gating on them — see [`release-gate.yaml`](#release-gateyaml--mechanical-release-checks-optional)
 - **pkgdown deploy** — site build + deploy to `gh-pages` on push to `main`
 - **Pinned Quarto** — jobs that install Quarto (any package holding a `.qmd`) pass an explicit version instead of the action's `release` default, which resolves the version through an unretried `curl` to quarto.org and has twice killed a green run — see [Quarto pin](#quarto-pin)
 - **Hard-dependency resolution on `lint` and `docs`** — neither job runs the suite or builds a site, so both skip the `Suggests` closure and the 125 MB Chromium that a `chromote` / `shinytest2` suggestion drags in — see [Suggests on the lint and docs jobs](#suggests-on-the-lint-and-docs-jobs)
@@ -669,7 +704,10 @@ goes straight to the release asset, which the action fetches with
 `wget` (20 retries by default).
 
 The version lives in a `QUARTO_VERSION` workflow-level `env` in
-`ci.yaml`, `pkgdown.yaml` and `revdep.yaml` — bump the three together.
+`ci.yaml`, `pkgdown.yaml`, `revdep.yaml` and `release-gate.yaml` — bump
+the four together. The `release-gate.yaml` pin is reached only by a
+repository whose README is a `.qmd`; every other package installs no
+Quarto there at all.
 This is the Quarto that builds every consumer's vignettes, so treat a
 bump as a deliberate toolchain change rather than routine upkeep.
 Windows is exempt: quarto-actions installs through scoop there and
