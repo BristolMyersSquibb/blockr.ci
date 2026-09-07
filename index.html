@@ -219,49 +219,273 @@
 </div>
 </div>
 <div class="section level3">
+<h3 id="release-gateyaml--mechanical-release-checks-optional">
+<code>release-gate.yaml</code> — mechanical release checks (optional)<a class="anchor" aria-label="anchor" href="#release-gateyaml--mechanical-release-checks-optional"></a>
+</h3>
+<p>The <code>release.yaml</code> flavour matrix covers the expensive half of a release check. The cheap half — does the version have three components, is the <code>Remotes</code> field gone, does every documented function say what it returns — was a manual checklist, and being manual is what made it unreliable: a maintainer runs the check, sees it clean, ticks the box, then edits a vignette three commits later. The tick records that something was true once, not that it is true at the commit about to be submitted.</p>
+<p>These checks take seconds each, so they run on every push to the release pull request and report against its head commit. Same trigger as <code>release.yaml</code> — the <code>release</code> label — and a workflow file of its own for the same reason:</p>
+<div class="sourceCode" id="cb5"><pre class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb5-1"><a href="#cb5-1" tabindex="-1"></a><span class="fu">on</span><span class="kw">:</span></span>
+<span id="cb5-2"><a href="#cb5-2" tabindex="-1"></a><span class="at">  </span><span class="fu">pull_request</span><span class="kw">:</span></span>
+<span id="cb5-3"><a href="#cb5-3" tabindex="-1"></a><span class="at">    </span><span class="fu">types</span><span class="kw">:</span><span class="at"> </span><span class="kw">[</span><span class="at">opened</span><span class="kw">,</span><span class="at"> reopened</span><span class="kw">,</span><span class="at"> synchronize</span><span class="kw">,</span><span class="at"> labeled</span><span class="kw">]</span></span>
+<span id="cb5-4"><a href="#cb5-4" tabindex="-1"></a><span class="at">  </span><span class="fu">merge_group</span><span class="kw">:</span></span>
+<span id="cb5-5"><a href="#cb5-5" tabindex="-1"></a></span>
+<span id="cb5-6"><a href="#cb5-6" tabindex="-1"></a><span class="fu">name</span><span class="kw">:</span><span class="at"> release-gate</span></span>
+<span id="cb5-7"><a href="#cb5-7" tabindex="-1"></a></span>
+<span id="cb5-8"><a href="#cb5-8" tabindex="-1"></a><span class="fu">permissions</span><span class="kw">:</span></span>
+<span id="cb5-9"><a href="#cb5-9" tabindex="-1"></a><span class="at">  </span><span class="fu">contents</span><span class="kw">:</span><span class="at"> read</span></span>
+<span id="cb5-10"><a href="#cb5-10" tabindex="-1"></a><span class="at">  </span><span class="fu">pull-requests</span><span class="kw">:</span><span class="at"> write</span></span>
+<span id="cb5-11"><a href="#cb5-11" tabindex="-1"></a></span>
+<span id="cb5-12"><a href="#cb5-12" tabindex="-1"></a><span class="fu">jobs</span><span class="kw">:</span></span>
+<span id="cb5-13"><a href="#cb5-13" tabindex="-1"></a><span class="at">  </span><span class="fu">release-gate</span><span class="kw">:</span></span>
+<span id="cb5-14"><a href="#cb5-14" tabindex="-1"></a><span class="at">    </span><span class="fu">uses</span><span class="kw">:</span><span class="at"> BristolMyersSquibb/blockr.ci/.github/workflows/release-gate.yaml@main</span></span>
+<span id="cb5-15"><a href="#cb5-15" tabindex="-1"></a><span class="at">    </span><span class="fu">secrets</span><span class="kw">:</span></span>
+<span id="cb5-16"><a href="#cb5-16" tabindex="-1"></a><span class="at">      </span><span class="fu">BLOCKR_PAT</span><span class="kw">:</span><span class="at"> ${{ secrets.BLOCKR_PAT }}</span></span></code></pre></div>
+<p>Required-status-checks row: <code>release-gate / release-gate-all</code>. Leave the caller ungated, for the reason given under <a href="#releaseyaml--cran-pre-submission-checks-optional"><code>release.yaml</code></a>.</p>
+<p>There are no inputs. Everything is derived from the repository, and <code>BLOCKR_PAT</code> falls back to <code>GITHUB_TOKEN</code>, so the workflow is callable from a repository outside the fleet that holds no secrets at all — <code>nbenn/typedjson</code> does not use <code>ci.yaml</code> and is the package most in need of this gate.</p>
+<p>The <code>pull-requests: write</code> grant is what lets the report job write its comment. Without it the job warns and carries on, since the same detail is already in each job’s step summary; on a pull request from a fork the token is read-only whatever the caller declares, and the same fallback applies.</p>
+<div class="section level4">
+<h4 id="hard-gates">Hard gates<a class="anchor" aria-label="anchor" href="#hard-gates"></a>
+</h4>
+<table class="table">
+<colgroup>
+<col width="33%">
+<col width="33%">
+<col width="33%">
+</colgroup>
+<thead><tr>
+<th>Check</th>
+<th>Catches</th>
+<th>Job</th>
+</tr></thead>
+<tbody>
+<tr>
+<td>Version has exactly three components</td>
+<td>Submitting a development version</td>
+<td><code>gate</code></td>
+</tr>
+<tr>
+<td>No dependency pinned to a <code>.9000</code> version</td>
+<td>An unreleasable dependency</td>
+<td><code>gate</code></td>
+</tr>
+<tr>
+<td>No <code>Remotes</code> field</td>
+<td>A dependency CRAN cannot resolve</td>
+<td><code>gate</code></td>
+</tr>
+<tr>
+<td>
+<code>NEWS.md</code> not build-ignored, no stale <code>inst/NEWS.Rd</code>
+</td>
+<td>Repo-shape mistakes</td>
+<td><code>gate</code></td>
+</tr>
+<tr>
+<td>No placeholder vignette titles</td>
+<td>Template text reaching CRAN</td>
+<td><code>gate</code></td>
+</tr>
+<tr>
+<td>A <code>\value</code> section on every documented function</td>
+<td>An <code>Rd</code> CRAN sends back</td>
+<td><code>docs</code></td>
+</tr>
+<tr>
+<td>Regenerating the README leaves the tree clean</td>
+<td>A README that no longer matches its source</td>
+<td><code>docs</code></td>
+</tr>
+</tbody>
+</table>
+<p>The two jobs split by <strong>cost</strong>, not by topic. The <code>gate</code> job reads <code>DESCRIPTION</code>, <code>.Rbuildignore</code> and the vignette headers, and its only dependency is <code>desc</code> — two recursive packages, and the one that owns the <code>DESCRIPTION</code> grammar, so the dependency parsing is not hand-rolled. The <code>docs</code> job needs <code>devtools</code> (94 recursive dependencies) and the package itself installed. Splitting them keeps a wrong version number visible in seconds, long before the dependency tree has resolved.</p>
+<p>Each check in <code>gate</code> reports independently rather than stopping at the first failure, because fixing one thing per push is how a release branch grows five pushes.</p>
+</div>
+<div class="section level4">
+<h4 id="what-devtools-carries-and-what-it-cannot">What devtools carries, and what it cannot<a class="anchor" aria-label="anchor" href="#what-devtools-carries-and-what-it-cannot"></a>
+</h4>
+<p>Where devtools exports a function that returns a usable value, this workflow calls it rather than reimplementing it:</p>
+<table class="table">
+<colgroup>
+<col width="50%">
+<col width="50%">
+</colgroup>
+<thead><tr>
+<th>Checklist item</th>
+<th>How it runs here</th>
+</tr></thead>
+<tbody>
+<tr>
+<td><code>urlchecker::url_check()</code></td>
+<td>Called directly, in <code>soft</code>
+</td>
+</tr>
+<tr>
+<td><code>devtools::build_readme()</code></td>
+<td>Called directly, in <code>docs</code>
+</td>
+</tr>
+<tr>
+<td><code>devtools::check_doc_fields()</code></td>
+<td>Called directly, in <code>docs</code>
+</td>
+</tr>
+<tr>
+<td><code>devtools::spell_check()</code></td>
+<td>Its body — <code>spelling::spell_check_package()</code> — called directly, in <code>soft</code>
+</td>
+</tr>
+<tr>
+<td><code>devtools::release_checks()</code></td>
+<td>Reimplemented, in <code>gate</code> — see below</td>
+</tr>
+<tr>
+<td><code>devtools::check(remote = TRUE, run_dont_test = TRUE)</code></td>
+<td>
+<code>rcmdcheck</code> with <code>--as-cran --run-donttest</code> and <code>_R_CHECK_CRAN_INCOMING_REMOTE_</code>, in <code>soft</code>
+</td>
+</tr>
+</tbody>
+</table>
+<p>Calling <code>spell_check()</code> rather than the function it wraps would pull devtools’ 94 recursive hard dependencies into a job that needs <code>spelling</code>’s 12, for the same check.</p>
+<p>Two checklist items are deliberately absent. Results from <code>devtools::check_win_devel()</code> arrive by email 15–30 minutes later, so nothing in CI can gate on them, and <code>check(manual = TRUE)</code> wants a LaTeX toolchain the job would pay for on every push. Both stay on the maintainer’s release checklist.</p>
+<div class="section level5">
+<h5 id="why-release_checks-is-the-exception">Why <code>release_checks()</code> is the exception<a class="anchor" aria-label="anchor" href="#why-release_checks-is-the-exception"></a>
+</h5>
+<p>Its five checks are not exported, and they route through <code>devtools:::check_status()</code>, which returns <code>NULL</code> whether the check passed or failed — measured, on both branches. A script calling a <em>failing</em> <code>check_version()</code> exits 0, so a job built on it would be green regardless of what it found.</p>
+<p>The finding does exist, but only as cli-formatted text on <strong>stderr</strong>:</p>
+<pre><code><span><span class="va">stdout</span><span class="op">:</span>  <span class="st">"Checking version number has three components..."</span></span>
+<span><span class="va">stderr</span><span class="op">:</span>  <span class="st">"✖ WARNING: version (0.1.1.9001) should have exactly three components"</span></span>
+<span><span class="va">return</span><span class="op">:</span>  <span class="cn">NULL</span></span></code></pre>
+<p>So the alternative to reimplementing is grepping a message stream through <code>:::</code>, which couples to devtools’ print formatting rather than to its logic. Reimplementing the rule is the smaller coupling, and it reproduces devtools’ verdicts: measured, it fails <code>blockr.ggplot</code> on three counts, <code>blockr.core</code> on its <code>Remotes</code> field, and passes <code>typedjson</code>.</p>
+<p>One divergence is deliberate. The vignette-title check reads the headers itself instead of calling <code><a href="https://rdrr.io/r/tools/buildVignettes.html" class="external-link">tools::pkgVignettes()</a></code>, which resolves vignettes through the registered engines — so on a runner without the quarto package every <code>.qmd</code> is invisible to it and the check passes by finding nothing, a false green on exactly the packages in this fleet.</p>
+<p>Only <code>\value</code> is gated, though <code>check_doc_fields()</code> defaults to <code>c("value", "examples")</code>. The second does not hold across this fleet: measured, <code>blockr.core</code> is missing <code>\examples</code> in 35 <code>Rd</code> files, <code>blockr.dplyr</code> in 10, <code>blockr.ui</code> in 6 and <code>blockr.ggplot</code> in 3, against one single missing <code>\value</code> between them. A gate every package fails on its first run is a gate that gets switched off, and CRAN treats the two differently anyway.</p>
+</div>
+</div>
+<div class="section level4">
+<h4 id="soft-checks">Soft checks<a class="anchor" aria-label="anchor" href="#soft-checks"></a>
+</h4>
+<p>Some results are worth seeing on every push without blocking a submission. Spelling, <code>urlchecker::url_check()</code> and the NOTEs from an <code>--as-cran</code> run turn on jargon, third-party redirects, transient 503s and CRAN’s own incoming-feasibility service, and a volatile signal used as a gate is one that gets ignored or switched off — the same argument <code>r-devel/recheck</code> makes about itself.</p>
+<p>Those run in the <code>soft</code> job, which is deliberately absent from <code>release-gate-all</code> and so never required. A finding there never reddens the job; a red <code>soft</code> row means the checks could not be computed, which is worth seeing and blocks nothing.</p>
+<p>The <code>--as-cran</code> leg is not a second copy of what <code>ci.yaml</code> already does. That matrix checks <code>--as-cran</code> and fails on any NOTE, but with <code>_R_CHECK_CRAN_INCOMING_</code> off it never reaches the checks a submission is actually read against: new-submission notes, the licence and URL scan, the <code>DESCRIPTION</code> spell check, the maintainer address. This job turns them on, and adds <code>--run-donttest</code> so the <code>\donttest{}</code> examples CRAN runs on submission run here too.</p>
+</div>
+<div class="section level4">
+<h4 id="where-the-output-goes">Where the output goes<a class="anchor" aria-label="anchor" href="#where-the-output-goes"></a>
+</h4>
+<p>Reporting into the job log alone defeats the purpose, since nobody opens a green job. Two mechanisms, combined on purpose:</p>
+<ul>
+<li>
+<strong>Step summaries.</strong> Each job writes its detail to <code>$GITHUB_STEP_SUMMARY</code>, which needs no permissions at all and so is the path that always works.</li>
+<li>
+<strong>One sticky comment.</strong> The <code>report</code> job rewrites a single pull-request comment rather than appending, so it always describes the head commit instead of leaving a thread of stale ones. It runs on failure too — a red gate is exactly when the detail is worth having.</li>
+</ul>
+<p>The comment is written with <code>gh api</code> against an HTML-comment marker rather than through a third-party sticky-comment action: every repository in the fleet calls this workflow, so a marker grep and one <code>PATCH</code> is a better trade than another supply-chain edge.</p>
+<p>The <code>recheck</code> result is linked from the comment rather than embedded in it. That check lives in <code>release.yaml</code>, on a different clock — it builds containers for tens of minutes while this gate finishes in seconds — so any conclusion readable at comment time would be “queued”, and a comment rewritten per push would never catch up. A link to the commit’s own check list cannot go stale.</p>
+</div>
+</div>
+<div class="section level3">
 <h3 id="connect-deployyaml--pull-mode-posit-connect-deploys">
 <code>connect-deploy.yaml</code> — pull-mode Posit Connect deploys<a class="anchor" aria-label="anchor" href="#connect-deployyaml--pull-mode-posit-connect-deploys"></a>
 </h3>
 <p>Publishes git-backed (“pull-mode”) deployments to Posit Connect, for a Connect that sits on an internal network a GitHub runner cannot reach. Deployment is inverted: Connect polls a branch and redeploys when it advances. The workflow regenerates the per-deploy <code>manifest.json</code> and commits it — from inside the merge queue — to a derived <code>connect-&lt;base&gt;</code> branch (<code>connect-main</code>, <code>connect-test</code>) that Connect watches. Source branches stay clean, with no manifest and no per-PR manifest churn.</p>
 <p>Caller workflow in the deployment repo (default <code>auth: app</code> — push <code>connect-*</code> with a GitHub App, paired with a locked <code>connect-*</code> ruleset):</p>
-<div class="sourceCode" id="cb5"><pre class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb5-1"><a href="#cb5-1" tabindex="-1"></a><span class="fu">name</span><span class="kw">:</span><span class="at"> connect-deploy</span></span>
-<span id="cb5-2"><a href="#cb5-2" tabindex="-1"></a><span class="fu">on</span><span class="kw">:</span></span>
-<span id="cb5-3"><a href="#cb5-3" tabindex="-1"></a><span class="at">  </span><span class="fu">pull_request</span><span class="kw">:</span></span>
-<span id="cb5-4"><a href="#cb5-4" tabindex="-1"></a><span class="at">  </span><span class="fu">merge_group</span><span class="kw">:</span></span>
-<span id="cb5-5"><a href="#cb5-5" tabindex="-1"></a></span>
-<span id="cb5-6"><a href="#cb5-6" tabindex="-1"></a><span class="fu">jobs</span><span class="kw">:</span></span>
-<span id="cb5-7"><a href="#cb5-7" tabindex="-1"></a><span class="at">  </span><span class="fu">connect-deploy</span><span class="kw">:</span></span>
-<span id="cb5-8"><a href="#cb5-8" tabindex="-1"></a><span class="at">    </span><span class="fu">uses</span><span class="kw">:</span><span class="at"> BristolMyersSquibb/blockr.ci/.github/workflows/connect-deploy.yaml@main</span></span>
-<span id="cb5-9"><a href="#cb5-9" tabindex="-1"></a><span class="at">    </span><span class="fu">permissions</span><span class="kw">:</span></span>
-<span id="cb5-10"><a href="#cb5-10" tabindex="-1"></a><span class="at">      </span><span class="fu">contents</span><span class="kw">:</span><span class="at"> read</span></span>
-<span id="cb5-11"><a href="#cb5-11" tabindex="-1"></a><span class="at">    </span><span class="fu">with</span><span class="kw">:</span></span>
-<span id="cb5-12"><a href="#cb5-12" tabindex="-1"></a><span class="at">      </span><span class="fu">r-version</span><span class="kw">:</span><span class="at"> </span><span class="st">"4.4.2"</span></span>
-<span id="cb5-13"><a href="#cb5-13" tabindex="-1"></a><span class="at">    </span><span class="fu">secrets</span><span class="kw">:</span></span>
-<span id="cb5-14"><a href="#cb5-14" tabindex="-1"></a><span class="at">      </span><span class="fu">APP_ID</span><span class="kw">:</span><span class="at"> ${{ secrets.CONNECT_DEPLOY_APP_ID }}</span></span>
-<span id="cb5-15"><a href="#cb5-15" tabindex="-1"></a><span class="at">      </span><span class="fu">APP_PRIVATE_KEY</span><span class="kw">:</span><span class="at"> ${{ secrets.CONNECT_DEPLOY_APP_PRIVATE_KEY }}</span></span></code></pre></div>
+<div class="sourceCode" id="cb7"><pre class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb7-1"><a href="#cb7-1" tabindex="-1"></a><span class="fu">name</span><span class="kw">:</span><span class="at"> connect-deploy</span></span>
+<span id="cb7-2"><a href="#cb7-2" tabindex="-1"></a><span class="fu">on</span><span class="kw">:</span></span>
+<span id="cb7-3"><a href="#cb7-3" tabindex="-1"></a><span class="at">  </span><span class="fu">pull_request</span><span class="kw">:</span></span>
+<span id="cb7-4"><a href="#cb7-4" tabindex="-1"></a><span class="at">  </span><span class="fu">merge_group</span><span class="kw">:</span></span>
+<span id="cb7-5"><a href="#cb7-5" tabindex="-1"></a></span>
+<span id="cb7-6"><a href="#cb7-6" tabindex="-1"></a><span class="fu">jobs</span><span class="kw">:</span></span>
+<span id="cb7-7"><a href="#cb7-7" tabindex="-1"></a><span class="at">  </span><span class="fu">connect-deploy</span><span class="kw">:</span></span>
+<span id="cb7-8"><a href="#cb7-8" tabindex="-1"></a><span class="at">    </span><span class="fu">uses</span><span class="kw">:</span><span class="at"> BristolMyersSquibb/blockr.ci/.github/workflows/connect-deploy.yaml@main</span></span>
+<span id="cb7-9"><a href="#cb7-9" tabindex="-1"></a><span class="at">    </span><span class="fu">permissions</span><span class="kw">:</span></span>
+<span id="cb7-10"><a href="#cb7-10" tabindex="-1"></a><span class="at">      </span><span class="fu">contents</span><span class="kw">:</span><span class="at"> read</span></span>
+<span id="cb7-11"><a href="#cb7-11" tabindex="-1"></a><span class="at">    </span><span class="fu">with</span><span class="kw">:</span></span>
+<span id="cb7-12"><a href="#cb7-12" tabindex="-1"></a><span class="at">      </span><span class="fu">r-version</span><span class="kw">:</span><span class="at"> </span><span class="st">"4.4.2"</span></span>
+<span id="cb7-13"><a href="#cb7-13" tabindex="-1"></a><span class="at">    </span><span class="fu">secrets</span><span class="kw">:</span></span>
+<span id="cb7-14"><a href="#cb7-14" tabindex="-1"></a><span class="at">      </span><span class="fu">APP_ID</span><span class="kw">:</span><span class="at"> ${{ secrets.CONNECT_DEPLOY_APP_ID }}</span></span>
+<span id="cb7-15"><a href="#cb7-15" tabindex="-1"></a><span class="at">      </span><span class="fu">APP_PRIVATE_KEY</span><span class="kw">:</span><span class="at"> ${{ secrets.CONNECT_DEPLOY_APP_PRIVATE_KEY }}</span></span></code></pre></div>
 <p>For a repo whose org permits deploy keys but not Apps, use <code>auth: deploy-key</code> — push <code>connect-*</code> over SSH with a repo deploy key on the <code>connect-*</code> bypass. Same locked-branch guarantee as the App, with the least setup:</p>
-<div class="sourceCode" id="cb6"><pre class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb6-1"><a href="#cb6-1" tabindex="-1"></a><span class="fu">jobs</span><span class="kw">:</span></span>
-<span id="cb6-2"><a href="#cb6-2" tabindex="-1"></a><span class="at">  </span><span class="fu">connect-deploy</span><span class="kw">:</span></span>
-<span id="cb6-3"><a href="#cb6-3" tabindex="-1"></a><span class="at">    </span><span class="fu">uses</span><span class="kw">:</span><span class="at"> BristolMyersSquibb/blockr.ci/.github/workflows/connect-deploy.yaml@main</span></span>
-<span id="cb6-4"><a href="#cb6-4" tabindex="-1"></a><span class="at">    </span><span class="fu">permissions</span><span class="kw">:</span></span>
-<span id="cb6-5"><a href="#cb6-5" tabindex="-1"></a><span class="at">      </span><span class="fu">contents</span><span class="kw">:</span><span class="at"> read</span></span>
-<span id="cb6-6"><a href="#cb6-6" tabindex="-1"></a><span class="at">    </span><span class="fu">with</span><span class="kw">:</span></span>
-<span id="cb6-7"><a href="#cb6-7" tabindex="-1"></a><span class="at">      </span><span class="fu">auth</span><span class="kw">:</span><span class="at"> deploy-key</span></span>
-<span id="cb6-8"><a href="#cb6-8" tabindex="-1"></a><span class="at">      </span><span class="fu">r-version</span><span class="kw">:</span><span class="at"> </span><span class="st">"4.4.2"</span></span>
-<span id="cb6-9"><a href="#cb6-9" tabindex="-1"></a><span class="at">    </span><span class="fu">secrets</span><span class="kw">:</span></span>
-<span id="cb6-10"><a href="#cb6-10" tabindex="-1"></a><span class="at">      </span><span class="fu">DEPLOY_KEY</span><span class="kw">:</span><span class="at"> ${{ secrets.CONNECT_DEPLOY_SSH_KEY }}</span></span></code></pre></div>
+<div class="sourceCode" id="cb8"><pre class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb8-1"><a href="#cb8-1" tabindex="-1"></a><span class="fu">jobs</span><span class="kw">:</span></span>
+<span id="cb8-2"><a href="#cb8-2" tabindex="-1"></a><span class="at">  </span><span class="fu">connect-deploy</span><span class="kw">:</span></span>
+<span id="cb8-3"><a href="#cb8-3" tabindex="-1"></a><span class="at">    </span><span class="fu">uses</span><span class="kw">:</span><span class="at"> BristolMyersSquibb/blockr.ci/.github/workflows/connect-deploy.yaml@main</span></span>
+<span id="cb8-4"><a href="#cb8-4" tabindex="-1"></a><span class="at">    </span><span class="fu">permissions</span><span class="kw">:</span></span>
+<span id="cb8-5"><a href="#cb8-5" tabindex="-1"></a><span class="at">      </span><span class="fu">contents</span><span class="kw">:</span><span class="at"> read</span></span>
+<span id="cb8-6"><a href="#cb8-6" tabindex="-1"></a><span class="at">    </span><span class="fu">with</span><span class="kw">:</span></span>
+<span id="cb8-7"><a href="#cb8-7" tabindex="-1"></a><span class="at">      </span><span class="fu">auth</span><span class="kw">:</span><span class="at"> deploy-key</span></span>
+<span id="cb8-8"><a href="#cb8-8" tabindex="-1"></a><span class="at">      </span><span class="fu">r-version</span><span class="kw">:</span><span class="at"> </span><span class="st">"4.4.2"</span></span>
+<span id="cb8-9"><a href="#cb8-9" tabindex="-1"></a><span class="at">    </span><span class="fu">secrets</span><span class="kw">:</span></span>
+<span id="cb8-10"><a href="#cb8-10" tabindex="-1"></a><span class="at">      </span><span class="fu">DEPLOY_KEY</span><span class="kw">:</span><span class="at"> ${{ secrets.CONNECT_DEPLOY_SSH_KEY }}</span></span></code></pre></div>
 <p>For a repo that can provision neither an App nor a deploy key (e.g. a locked-down EMU org where both are gated), use <code>auth: token</code> — push <code>connect-*</code> with the workflow’s own <code>GITHUB_TOKEN</code>, no App, no environment, no secrets, paired with an <strong>unprotected</strong> <code>connect-*</code>:</p>
-<div class="sourceCode" id="cb7"><pre class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb7-1"><a href="#cb7-1" tabindex="-1"></a><span class="fu">jobs</span><span class="kw">:</span></span>
-<span id="cb7-2"><a href="#cb7-2" tabindex="-1"></a><span class="at">  </span><span class="fu">connect-deploy</span><span class="kw">:</span></span>
-<span id="cb7-3"><a href="#cb7-3" tabindex="-1"></a><span class="at">    </span><span class="fu">uses</span><span class="kw">:</span><span class="at"> BristolMyersSquibb/blockr.ci/.github/workflows/connect-deploy.yaml@main</span></span>
-<span id="cb7-4"><a href="#cb7-4" tabindex="-1"></a><span class="at">    </span><span class="fu">permissions</span><span class="kw">:</span></span>
-<span id="cb7-5"><a href="#cb7-5" tabindex="-1"></a><span class="at">      </span><span class="fu">contents</span><span class="kw">:</span><span class="at"> write</span></span>
-<span id="cb7-6"><a href="#cb7-6" tabindex="-1"></a><span class="at">    </span><span class="fu">with</span><span class="kw">:</span></span>
-<span id="cb7-7"><a href="#cb7-7" tabindex="-1"></a><span class="at">      </span><span class="fu">auth</span><span class="kw">:</span><span class="at"> token</span></span>
-<span id="cb7-8"><a href="#cb7-8" tabindex="-1"></a><span class="at">      </span><span class="fu">r-version</span><span class="kw">:</span><span class="at"> </span><span class="st">"4.4.2"</span></span></code></pre></div>
+<div class="sourceCode" id="cb9"><pre class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb9-1"><a href="#cb9-1" tabindex="-1"></a><span class="fu">jobs</span><span class="kw">:</span></span>
+<span id="cb9-2"><a href="#cb9-2" tabindex="-1"></a><span class="at">  </span><span class="fu">connect-deploy</span><span class="kw">:</span></span>
+<span id="cb9-3"><a href="#cb9-3" tabindex="-1"></a><span class="at">    </span><span class="fu">uses</span><span class="kw">:</span><span class="at"> BristolMyersSquibb/blockr.ci/.github/workflows/connect-deploy.yaml@main</span></span>
+<span id="cb9-4"><a href="#cb9-4" tabindex="-1"></a><span class="at">    </span><span class="fu">permissions</span><span class="kw">:</span></span>
+<span id="cb9-5"><a href="#cb9-5" tabindex="-1"></a><span class="at">      </span><span class="fu">contents</span><span class="kw">:</span><span class="at"> write</span></span>
+<span id="cb9-6"><a href="#cb9-6" tabindex="-1"></a><span class="at">    </span><span class="fu">with</span><span class="kw">:</span></span>
+<span id="cb9-7"><a href="#cb9-7" tabindex="-1"></a><span class="at">      </span><span class="fu">auth</span><span class="kw">:</span><span class="at"> token</span></span>
+<span id="cb9-8"><a href="#cb9-8" tabindex="-1"></a><span class="at">      </span><span class="fu">r-version</span><span class="kw">:</span><span class="at"> </span><span class="st">"4.4.2"</span></span></code></pre></div>
 <p>The job is a no-op on <code>pull_request</code> (so the required check stays green and the PR is queueable) and the real publisher on <code>merge_group</code>. In app mode, pass secrets by name. The <code>permissions:</code> differ by mode — see <a href="#auth-modes">Auth modes</a> for why, and for the security pairing each mode requires.</p>
 <p>The full consumer-side configuration — GitHub App, branch ruleset, protected environment, required checks — is operational repo settings, mostly one-time, and several pieces are load-bearing for security. See <a href="#connect-deployment-setup">Connect deployment setup</a>.</p>
 </div>
+</div>
+<div class="section level2">
+<h2 id="composite-actions">Composite actions<a class="anchor" aria-label="anchor" href="#composite-actions"></a>
+</h2>
+<p>The reusable workflows above are the packaged way to consume this repo, but each release check is also a <strong>composite action</strong> that a workflow of your own can call directly, the way <code>r-lib/actions</code> is built. Reach for one of these when you want a single check without <code>release-gate.yaml</code>’s job structure, label gating or reporting.</p>
+<table class="table">
+<colgroup>
+<col width="25%">
+<col width="25%">
+<col width="25%">
+<col width="25%">
+</colgroup>
+<thead><tr>
+<th>Action</th>
+<th>Checks</th>
+<th>Fails on a finding</th>
+<th>Needs</th>
+</tr></thead>
+<tbody>
+<tr>
+<td><code>release-gate</code></td>
+<td>Version shape, dev-version pins, <code>Remotes</code>, <code>NEWS.md</code> shape, vignette titles</td>
+<td>yes</td>
+<td>R; installs <code>desc</code> itself</td>
+</tr>
+<tr>
+<td><code>release-docs</code></td>
+<td>A <code>\value</code> on every documented function, and a README current with its source</td>
+<td>yes</td>
+<td>
+<code>devtools</code> and the package’s dependencies</td>
+</tr>
+<tr>
+<td><code>release-soft</code></td>
+<td>Spelling, URLs, <code>--as-cran</code> NOTEs</td>
+<td>
+<strong>no</strong>, always exits 0</td>
+<td>
+<code>spelling</code>, <code>urlchecker</code>, <code>rcmdcheck</code> and the package’s dependencies</td>
+</tr>
+<tr>
+<td><code>sticky-comment</code></td>
+<td>— writes one pull-request comment, rewritten in place</td>
+<td>no</td>
+<td><code>pull-requests: write</code></td>
+</tr>
+</tbody>
+</table>
+<p>The three check actions share one convention rather than any shared code: each appends its result as markdown to the <code>summary-file</code> you pass and to <code>$GITHUB_STEP_SUMMARY</code>. Point several at the same directory and a later job can <code>cat</code> them in filename order, which is all <code>release-gate.yaml</code>’s <code>report</code> job does.</p>
+<div class="sourceCode" id="cb10"><pre class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb10-1"><a href="#cb10-1" tabindex="-1"></a><span class="kw">-</span><span class="at"> </span><span class="fu">uses</span><span class="kw">:</span><span class="at"> BristolMyersSquibb/blockr.ci/.github/actions/release-gate@main</span></span>
+<span id="cb10-2"><a href="#cb10-2" tabindex="-1"></a><span class="at">  </span><span class="fu">with</span><span class="kw">:</span></span>
+<span id="cb10-3"><a href="#cb10-3" tabindex="-1"></a><span class="at">    </span><span class="fu">summary-file</span><span class="kw">:</span><span class="at"> ${{ runner.temp }}/parts/10-gate.md</span></span>
+<span id="cb10-4"><a href="#cb10-4" tabindex="-1"></a></span>
+<span id="cb10-5"><a href="#cb10-5" tabindex="-1"></a><span class="kw">-</span><span class="at"> </span><span class="fu">uses</span><span class="kw">:</span><span class="at"> BristolMyersSquibb/blockr.ci/.github/actions/sticky-comment@main</span></span>
+<span id="cb10-6"><a href="#cb10-6" tabindex="-1"></a><span class="at">  </span><span class="fu">with</span><span class="kw">:</span></span>
+<span id="cb10-7"><a href="#cb10-7" tabindex="-1"></a><span class="at">    </span><span class="fu">marker</span><span class="kw">:</span><span class="at"> </span><span class="st">'&lt;!-- my-workflow --&gt;'</span></span>
+<span id="cb10-8"><a href="#cb10-8" tabindex="-1"></a><span class="at">    </span><span class="fu">body-file</span><span class="kw">:</span><span class="at"> comment.md</span></span></code></pre></div>
+<p>Give <code>sticky-comment</code> a marker unique to your workflow. It finds its comment by matching the marker against the start of each existing one, so two workflows sharing a marker will overwrite each other.</p>
+<p>The dependency-resolution and deploy helpers in the same tree — <code>parse-deps</code>, <code>check-suggests</code>, <code>setup-r-rhel</code> — are composite actions too, and callable the same way.</p>
+<p>Each action’s script is exercised by <code>bats</code> under <code>.github/actions/tests/</code>, which <code>bats.yaml</code> runs on any change below <code>.github/actions/</code>.</p>
 </div>
 <div class="section level2">
 <h2 id="pipeline">Pipeline<a class="anchor" aria-label="anchor" href="#pipeline"></a>
@@ -294,7 +518,7 @@
 </tbody>
 </table>
 <p>PR jobs run in parallel for fast feedback. The expensive multi-platform <code>check</code> matrix and reverse-dependency checks are reserved for the merge queue — they gate the merge but never block PR iteration.</p>
-<p>The <code>check-all</code>, <code>revdep-all</code> and <code>release-all</code> jobs aggregate their respective matrices into a single stable name, so adding/removing a platform or revdep package doesn’t churn the required-checks list.</p>
+<p>The <code>check-all</code>, <code>revdep-all</code>, <code>release-all</code> and <code>release-gate-all</code> jobs aggregate their respective matrices into a single stable name, so adding/removing a platform, a revdep package or a gate doesn’t churn the required-checks list.</p>
 <div class="section level3">
 <h3 id="release-mode">Release mode<a class="anchor" aria-label="anchor" href="#release-mode"></a>
 </h3>
@@ -333,6 +557,21 @@
 <code>release</code> (R-hub flavours)</td>
 <td>skipped</td>
 <td><strong>runs</strong></td>
+<td>skipped</td>
+</tr>
+<tr>
+<td>
+<code>release-gate</code> (mechanical checks)</td>
+<td>skipped</td>
+<td><strong>runs</strong></td>
+<td>skipped</td>
+</tr>
+<tr>
+<td>
+<code>release-gate / soft</code> (URLs, <code>--as-cran</code> notes)</td>
+<td>skipped</td>
+<td>
+<strong>runs</strong>, reports without gating</td>
 <td>skipped</td>
 </tr>
 <tr>
@@ -519,6 +758,12 @@
 <p>No inputs.</p>
 </div>
 <div class="section level3">
+<h3 id="release-gateyaml">
+<code>release-gate.yaml</code><a class="anchor" aria-label="anchor" href="#release-gateyaml"></a>
+</h3>
+<p>No inputs. The checks are derived from the repository, which is what keeps the workflow callable from outside the fleet.</p>
+</div>
+<div class="section level3">
 <h3 id="connect-deployyaml">
 <code>connect-deploy.yaml</code><a class="anchor" aria-label="anchor" href="#connect-deployyaml"></a>
 </h3>
@@ -579,17 +824,17 @@
 <div class="section level3">
 <h3 id="example-with-inputs">Example with inputs<a class="anchor" aria-label="anchor" href="#example-with-inputs"></a>
 </h3>
-<div class="sourceCode" id="cb8"><pre class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb8-1"><a href="#cb8-1" tabindex="-1"></a><span class="fu">jobs</span><span class="kw">:</span></span>
-<span id="cb8-2"><a href="#cb8-2" tabindex="-1"></a><span class="at">  </span><span class="fu">ci</span><span class="kw">:</span></span>
-<span id="cb8-3"><a href="#cb8-3" tabindex="-1"></a><span class="at">    </span><span class="fu">uses</span><span class="kw">:</span><span class="at"> BristolMyersSquibb/blockr.ci/.github/workflows/ci.yaml@main</span></span>
-<span id="cb8-4"><a href="#cb8-4" tabindex="-1"></a><span class="at">    </span><span class="fu">with</span><span class="kw">:</span></span>
-<span id="cb8-5"><a href="#cb8-5" tabindex="-1"></a><span class="at">      </span><span class="fu">coverage-threshold</span><span class="kw">:</span><span class="at"> </span><span class="dv">80</span></span>
-<span id="cb8-6"><a href="#cb8-6" tabindex="-1"></a><span class="fu">      lintr-exclusions</span><span class="kw">: </span><span class="ch">|</span></span>
-<span id="cb8-7"><a href="#cb8-7" tabindex="-1"></a>        vignettes/foo.qmd</span>
-<span id="cb8-8"><a href="#cb8-8" tabindex="-1"></a>        vignettes/bar.qmd</span>
-<span id="cb8-9"><a href="#cb8-9" tabindex="-1"></a><span class="at">    </span><span class="fu">secrets</span><span class="kw">:</span></span>
-<span id="cb8-10"><a href="#cb8-10" tabindex="-1"></a><span class="at">      </span><span class="fu">CODECOV_TOKEN</span><span class="kw">:</span><span class="at"> ${{ secrets.CODECOV_TOKEN }}</span></span>
-<span id="cb8-11"><a href="#cb8-11" tabindex="-1"></a><span class="at">      </span><span class="fu">BLOCKR_PAT</span><span class="kw">:</span><span class="at"> ${{ secrets.BLOCKR_PAT }}</span></span></code></pre></div>
+<div class="sourceCode" id="cb11"><pre class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb11-1"><a href="#cb11-1" tabindex="-1"></a><span class="fu">jobs</span><span class="kw">:</span></span>
+<span id="cb11-2"><a href="#cb11-2" tabindex="-1"></a><span class="at">  </span><span class="fu">ci</span><span class="kw">:</span></span>
+<span id="cb11-3"><a href="#cb11-3" tabindex="-1"></a><span class="at">    </span><span class="fu">uses</span><span class="kw">:</span><span class="at"> BristolMyersSquibb/blockr.ci/.github/workflows/ci.yaml@main</span></span>
+<span id="cb11-4"><a href="#cb11-4" tabindex="-1"></a><span class="at">    </span><span class="fu">with</span><span class="kw">:</span></span>
+<span id="cb11-5"><a href="#cb11-5" tabindex="-1"></a><span class="at">      </span><span class="fu">coverage-threshold</span><span class="kw">:</span><span class="at"> </span><span class="dv">80</span></span>
+<span id="cb11-6"><a href="#cb11-6" tabindex="-1"></a><span class="fu">      lintr-exclusions</span><span class="kw">: </span><span class="ch">|</span></span>
+<span id="cb11-7"><a href="#cb11-7" tabindex="-1"></a>        vignettes/foo.qmd</span>
+<span id="cb11-8"><a href="#cb11-8" tabindex="-1"></a>        vignettes/bar.qmd</span>
+<span id="cb11-9"><a href="#cb11-9" tabindex="-1"></a><span class="at">    </span><span class="fu">secrets</span><span class="kw">:</span></span>
+<span id="cb11-10"><a href="#cb11-10" tabindex="-1"></a><span class="at">      </span><span class="fu">CODECOV_TOKEN</span><span class="kw">:</span><span class="at"> ${{ secrets.CODECOV_TOKEN }}</span></span>
+<span id="cb11-11"><a href="#cb11-11" tabindex="-1"></a><span class="at">      </span><span class="fu">BLOCKR_PAT</span><span class="kw">:</span><span class="at"> ${{ secrets.BLOCKR_PAT }}</span></span></code></pre></div>
 </div>
 </div>
 <div class="section level2">
@@ -614,6 +859,9 @@
 <strong>CRAN pre-submission checks</strong> — AddressSanitizer, UndefinedBehaviorSanitizer, valgrind, <code>rchk</code> and the Suggests-free build in the R-hub containers, plus a CRAN-style reverse dependency check, on every push to a labelled release PR — see <a href="#release-mode">Release mode</a>
 </li>
 <li>
+<strong>Mechanical release checks</strong> — the checklist half of a release, gated on every push to a labelled release PR instead of ticked by hand: three-component version, no dev-version pins, no <code>Remotes</code>, <code>NEWS.md</code> shape, real vignette titles, a <code>\value</code> on every documented function, and a README current with its source. Reports spelling, URL and <code>--as-cran</code> findings alongside without gating on them — see <a href="#release-gateyaml--mechanical-release-checks-optional"><code>release-gate.yaml</code></a>
+</li>
+<li>
 <strong>pkgdown deploy</strong> — site build + deploy to <code>gh-pages</code> on push to <code>main</code>
 </li>
 <li>
@@ -631,7 +879,7 @@
 <h3 id="quarto-pin">Quarto pin<a class="anchor" aria-label="anchor" href="#quarto-pin"></a>
 </h3>
 <p>Quarto reaches a job through <code>setup-r-dependencies</code>, which installs it for any package holding a <code>.qmd</code>. Left at its <code>release</code> default, that install resolves the version at job time by piping an unretried curl of <code>https://quarto.org/docs/download/_download.json</code> into <code>jq</code>; under <code>pipefail</code> any hiccup from quarto.org kills the step and takes an otherwise-green run with it. An explicit version skips the lookup and goes straight to the release asset, which the action fetches with <code>wget</code> (20 retries by default).</p>
-<p>The version lives in a <code>QUARTO_VERSION</code> workflow-level <code>env</code> in <code>ci.yaml</code>, <code>pkgdown.yaml</code> and <code>revdep.yaml</code> — bump the three together. This is the Quarto that builds every consumer’s vignettes, so treat a bump as a deliberate toolchain change rather than routine upkeep. Windows is exempt: quarto-actions installs through scoop there and never performs the lookup, so the <code>check</code> matrix leaves that leg on the default.</p>
+<p>The version lives in a <code>QUARTO_VERSION</code> workflow-level <code>env</code> in <code>ci.yaml</code>, <code>pkgdown.yaml</code>, <code>revdep.yaml</code> and <code>release-gate.yaml</code> — bump the four together. The <code>release-gate.yaml</code> pin is reached only by a repository whose README is a <code>.qmd</code>; every other package installs no Quarto there at all. This is the Quarto that builds every consumer’s vignettes, so treat a bump as a deliberate toolchain change rather than routine upkeep. Windows is exempt: quarto-actions installs through scoop there and never performs the lookup, so the <code>check</code> matrix leaves that leg on the default.</p>
 </div>
 </div>
 <div class="section level2">
@@ -780,10 +1028,10 @@ Remotes:
 <h3 id="per-pr-revdep-refs">Per-PR revdep refs<a class="anchor" aria-label="anchor" href="#per-pr-revdep-refs"></a>
 </h3>
 <p>The deps block in a PR body controls which ref of each revdep gets checked out for the <strong>revdep job</strong> — nothing else. It is not a mechanism for overriding forward dependencies; those belong in <code>Remotes:</code> in <code>DESCRIPTION</code>.</p>
-<div class="sourceCode" id="cb12"><pre class="sourceCode markdown"><code class="sourceCode markdown"><span id="cb12-1"><a href="#cb12-1" tabindex="-1"></a><span class="in">```deps</span></span>
-<span id="cb12-2"><a href="#cb12-2" tabindex="-1"></a><span class="in">BristolMyersSquibb/blockr.dag#111</span></span>
-<span id="cb12-3"><a href="#cb12-3" tabindex="-1"></a><span class="in">BristolMyersSquibb/blockr.ai@my-feature-branch</span></span>
-<span id="cb12-4"><a href="#cb12-4" tabindex="-1"></a><span class="in">```</span></span></code></pre></div>
+<div class="sourceCode" id="cb15"><pre class="sourceCode markdown"><code class="sourceCode markdown"><span id="cb15-1"><a href="#cb15-1" tabindex="-1"></a><span class="in">```deps</span></span>
+<span id="cb15-2"><a href="#cb15-2" tabindex="-1"></a><span class="in">BristolMyersSquibb/blockr.dag#111</span></span>
+<span id="cb15-3"><a href="#cb15-3" tabindex="-1"></a><span class="in">BristolMyersSquibb/blockr.ai@my-feature-branch</span></span>
+<span id="cb15-4"><a href="#cb15-4" tabindex="-1"></a><span class="in">```</span></span></code></pre></div>
 <p>Each line is <code>owner/repo@branch</code> or <code>owner/repo#PR-number</code>. The matching revdep job checks out that ref instead of the default branch.</p>
 <p><code>parse-deps</code> validates each entry against the package’s <code>DESCRIPTION</code>: if a deps-block entry’s package name appears in <code>Imports</code>/<code>Depends</code>/<code>LinkingTo</code>/<code>Suggests</code>/<code>Remotes</code>, parse-deps fails with a pointer to <code>Remotes:</code>. This catches the common mistake of trying to use the deps block to swap in a dev branch of a forward dep.</p>
 <p>The revdep job runs only in the merge queue, and it reads the deps block fresh from the PR body each time the queue runs. To change which ref gets checked out, edit the block and re-enqueue — there is no separate re-run trigger.</p>
@@ -796,9 +1044,9 @@ Remotes:
 <li><p>Open your PR on <code>blockr.dock</code>. The configured <code>revdep-packages</code> input includes <code>BristolMyersSquibb/blockr.dag</code>, so the revdep job runs against <code>blockr.dag</code>’s default branch by default.</p></li>
 <li>
 <p>To pin it to a specific PR, add to the PR body:</p>
-<div class="sourceCode" id="cb13"><pre class="sourceCode markdown"><code class="sourceCode markdown"><span id="cb13-1"><a href="#cb13-1" tabindex="-1"></a><span class="in">```deps</span></span>
-<span id="cb13-2"><a href="#cb13-2" tabindex="-1"></a><span class="in">BristolMyersSquibb/blockr.dag#111</span></span>
-<span id="cb13-3"><a href="#cb13-3" tabindex="-1"></a><span class="in">```</span></span></code></pre></div>
+<div class="sourceCode" id="cb16"><pre class="sourceCode markdown"><code class="sourceCode markdown"><span id="cb16-1"><a href="#cb16-1" tabindex="-1"></a><span class="in">```deps</span></span>
+<span id="cb16-2"><a href="#cb16-2" tabindex="-1"></a><span class="in">BristolMyersSquibb/blockr.dag#111</span></span>
+<span id="cb16-3"><a href="#cb16-3" tabindex="-1"></a><span class="in">```</span></span></code></pre></div>
 </li>
 <li><p>When the PR is enqueued, the merge-queue revdep job reads the block and checks out <code>blockr.dag</code> PR #111 head instead of the default branch.</p></li>
 <li><p>To point at a different PR later, edit the block and re-enqueue.</p></li>
