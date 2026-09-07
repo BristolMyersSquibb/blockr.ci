@@ -29,15 +29,20 @@
 #       uses: BristolMyersSquibb/blockr.ci/.github/workflows/release.yaml@main
 #       with:
 #         release-platforms: |
-#           clang-asan
-#           gcc-asan
-#           clang-ubsan
-#           m1-san
-#           valgrind
-#           rchk
 #           nosuggests
 #       secrets:
 #         BLOCKR_PAT: ${{ secrets.BLOCKR_PAT }}
+#
+# One flavour, because that is what a pure-R package can use.  Every
+# blockr package is pure R today — none carries `src/` or `LinkingTo` —
+# while the sanitizer, valgrind and `rchk` images all exist to check
+# compiled code.  Listing `rchk` on a package with no shared object does
+# not idle, it reddens: run-check resolves a `<pkg>.so.bcheck` path under
+# /opt/R/devel-rchk and fails the leg when it is absent, which a pure-R
+# install never creates.  A package carrying `src/` or `LinkingTo` wants
+# the long list instead — clang-asan, gcc-asan, clang-ubsan, m1-san,
+# valgrind, rchk, nosuggests — and the README maps package properties
+# onto flavours.
 #
 # Pass secrets by name: `secrets: inherit` does not forward secrets
 # across organisations — the inherited values silently arrive blank in
