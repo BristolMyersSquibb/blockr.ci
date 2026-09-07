@@ -1,0 +1,459 @@
+# Mechanical release checks for blockr.* packages
+#
+# The release.yaml flavour matrix covers the expensive half of a release
+# check: container images, an instrumented toolchain, valgrind.  The
+# cheap half — does the version have three components, is the Remotes
+# field gone, does every documented function say what it returns — has
+# been a manual checklist, and being manual is what makes it unreliable.
+# A maintainer runs the check, sees it clean, ticks the box, then edits a
+# vignette three commits later; the tick records that something was true
+# once, not that it is true at the commit about to be submitted.
+#
+# These checks take seconds, so they run on every push to the release
+# pull request and report against its head commit.  That is the whole
+# point: a green row here means the gate holds *now*, at the commit a
+# tarball would be built from.
+#
+# Usage — consumer repo .github/workflows/release-gate.yaml, a file of
+# its own for the same reason release.yaml gets one:
+#
+#   on:
+#     pull_request:
+#       types: [opened, reopened, synchronize, labeled]
+#     merge_group:
+#
+#   name: release-gate
+#
+#   permissions:
+#     contents: read
+#     pull-requests: write
+#
+#   jobs:
+#     release-gate:
+#       uses: BristolMyersSquibb/blockr.ci/.github/workflows/release-gate.yaml@main
+#       secrets:
+#         BLOCKR_PAT: ${{ secrets.BLOCKR_PAT }}
+#
+# Required-status-checks list: `release-gate / release-gate-all`.
+#
+# Not covered here, deliberately: devtools::check_win_devel() mails its
+# result 15-30 minutes later, so nothing can gate on it, and
+# check(manual = TRUE) wants a LaTeX toolchain this job would pay for on
+# every push.  Both stay on the maintainer's release checklist.
+#
+# ── Deliberately separate from release.yaml ─────────────────────────
+#
+# Those jobs are container images on their own cadence; these are an
+# ordinary R session.  Keeping them apart means a two-second gate does
+# not queue behind a valgrind run, and a red gate is legible on its own
+# rather than as one row inside a flavour matrix.
+#
+# ── No inputs, and secrets optional ─────────────────────────────────
+#
+# Everything here is derived from the repository, so there is nothing to
+# configure and the workflow is callable from outside the blockr fleet.
+# BLOCKR_PAT is optional and falls back to github.token, which keeps
+# "needs no secrets" a real property: nbenn/typedjson does not use
+# ci.yaml and is the package most in need of this gate.
+#
+# ── Trigger, and why the caller carries no `if:` ────────────────────
+#
+# Same shape as release.yaml: gated on the `release` label being
+# *present*, which holds on every subsequent push, with `labeled` in the
+# caller's `on:` block so applying the label starts a run on a branch
+# that is already pushed.  Per #52, gating the *caller* removes the
+# nested contexts entirely, leaving a required
+# `release-gate / release-gate-all` stuck at "Expected — waiting for
+# status"; an absent context is not a skipped one.  So the caller runs
+# on every event and only the inner jobs are conditional.
+#
+# The `merge_group` ref passes through, as in release.yaml.  There is no
+# pull request and no label at the queue, so the label-gated jobs cannot
+# run there even in principle, and a required context that is never
+# created burns the queue's check_response_timeout_minutes instead of
+# merging.  Skipped jobs satisfy required checks, so `release-gate-all`
+# reports green there.
+#
+# ── What devtools carries, and what it cannot ───────────────────────
+#
+# Wherever devtools exports a function that returns a usable value, it
+# is called rather than rewritten: check_doc_fields(), build_readme()
+# and spell_check() all do, and all three run here.  (The last one is a
+# two-line wrapper over spelling::spell_check_package(), so the wrapped
+# function is called instead and 94 dependencies stay out of a job that
+# needs 12.)
+#
+# The five release_checks() conditions are the exception, and not by
+# preference.  They are not exported, and they route through
+# devtools:::check_status(), which returns NULL whether the check passed
+# or failed — measured, on both branches.  A script calling a *failing*
+# check_version() exits 0, so a job built on it would be green
+# regardless of what it found, which is precisely the failure mode this
+# workflow exists to remove.  Measured further, the finding does exist,
+# but only as cli-formatted text on stderr, so the alternative to
+# reimplementing is grepping a message stream through ::: and coupling
+# to print formatting.  Reimplementing the rule is the smaller coupling;
+# see the release-gate action for the per-check reasoning.
+#
+# ── Hard gates and soft checks ──────────────────────────────────────
+#
+# The `gate` and `docs` jobs fail the build.  They are split by cost
+# rather than by topic: `gate` reads files, and its only dependency is
+# desc — two recursive packages, and the one that owns the DESCRIPTION
+# grammar — so it answers in seconds, while `docs` needs devtools and
+# the package itself installed.  Splitting them keeps a wrong version
+# number visible long before the dependency tree has resolved.
+#
+# The `soft` job never fails on a finding.  Spelling, urlchecker results
+# and --as-cran NOTEs turn on jargon, third-party redirects, transient
+# 503s and CRAN's own incoming feasibility service, and a volatile
+# signal used as a gate is one that gets ignored or switched off.  It is
+# the same argument r-devel/recheck makes about itself.  The `soft` job
+# is not in `release-gate-all` and so is never required — a red row
+# there means the checks could not be computed, which is worth seeing
+# and blocks nothing.
+#
+# ── Making the soft output visible ──────────────────────────────────
+#
+# Reporting into the job log alone defeats the purpose, since nobody
+# opens a green job.  Two mechanisms, deliberately combined: each job
+# writes its detail to $GITHUB_STEP_SUMMARY, which needs no permissions
+# at all, and the `report` job rewrites a single sticky pull-request
+# comment so it always describes the head commit rather than growing a
+# tail of stale ones.  The comment needs `pull-requests: write` from the
+# caller; without it — and on a fork pull request, where the token is
+# read-only whatever the caller asks for — the step warns and moves on,
+# leaving the step summaries as the fallback path.
+#
+# ── Reverse dependencies ────────────────────────────────────────────
+#
+# The recheck result that #54 keeps out of `release-all` is linked from
+# the comment rather than embedded in it.  It lives in a different
+# workflow, on a different clock: recheck builds containers for tens of
+# minutes while this gate finishes in seconds, so any conclusion this
+# workflow could read at comment time would be "queued", and a comment
+# rewritten per push would never catch up.  A link to the commit's own
+# check list cannot go stale and lands the reader on the live result.
+#
+# Every job here sets `timeout-minutes: 60` — see ci.yaml for why.
+
+on:
+  workflow_call:
+    secrets:
+
+      BLOCKR_PAT:
+        description: >
+          PAT used for authenticated GitHub API calls in dependency
+          resolution, and for reaching packages named in Remotes that
+          live in private repositories.  Falls back to github.token when
+          not provided.
+        required: false
+
+name: release-gate
+
+# Pinned rather than left at the action's 'release' default, which
+# resolves the version at job time through an unretried curl of
+# quarto.org -- see ci.yaml for the full reasoning and keep the four
+# files in step.  Reached here only by a repository whose README is a
+# .qmd; every other package installs no Quarto at all.
+env:
+  QUARTO_VERSION: '1.10.18'
+
+jobs:
+
+  # ── Hard gates: DESCRIPTION, NEWS and the vignette headers ──────────
+  #
+  # Setup-r, one small install and one Rscript, so this finishes in
+  # seconds.  The package under test is never installed and its
+  # dependency tree is never resolved, which is what keeps this job
+  # answering long before `docs` has finished provisioning.
+
+  gate:
+
+    if: >-
+      github.event_name == 'pull_request' &&
+      contains(github.event.pull_request.labels.*.name, 'release')
+
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: release
+          use-public-rspm: true
+
+      - uses: BristolMyersSquibb/blockr.ci/.github/actions/release-gate@main
+        with:
+          # Written outside the workspace on purpose: the readme job
+          # below fails on a dirty tree, and a fragment dropped into the
+          # checkout would be the dirt.
+          summary-file: ${{ runner.temp }}/parts/10-gate.md
+
+      - name: Upload gate summary
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-gate-part-gate
+          path: ${{ runner.temp }}/parts/
+          if-no-files-found: warn
+
+  # ── Hard gate: the checks devtools can answer ───────────────────────
+  #
+  # The checks themselves live in the release-docs action, so another
+  # workflow can run them without calling this one.  What stays here is
+  # the provisioning they need: devtools, the package's dependencies,
+  # and pandoc.
+  #
+  # This is where the devtools install lands -- 94 recursive hard
+  # dependencies, against desc's 2 in the gate job above.  That cost is
+  # why the two are separate jobs rather than one: `gate` reports a
+  # wrong version number in seconds, while this one is still resolving
+  # packages.
+
+  docs:
+
+    if: >-
+      github.event_name == 'pull_request' &&
+      contains(github.event.pull_request.labels.*.name, 'release')
+
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 60
+
+    env:
+      GITHUB_PAT: ${{ secrets.BLOCKR_PAT || github.token }}
+
+    steps:
+      - uses: actions/checkout@v5
+
+      # Only to decide whether Quarto is needed; the action finds the
+      # README itself.  A repository with a README.qmd that lacks the
+      # quarto package gets a red job carrying devtools' own message,
+      # which beats the silent pass a "we do not check .qmd" branch
+      # would give.
+      - name: Look for a Quarto README
+        id: readme
+        shell: bash
+        run: |
+          if [ -f README.qmd ] || [ -f inst/README.qmd ]; then
+            echo "Quarto README found; adding the quarto binding."
+            echo "extra=any::quarto" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: r-lib/actions/setup-pandoc@v2
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: release
+          use-public-rspm: true
+
+      - uses: BristolMyersSquibb/blockr.ci/.github/actions/parse-deps@main
+        id: deps
+        with:
+          pr-body: ${{ github.event.pull_request.body }}
+          pr-number: ${{ github.event.pull_request.number }}
+          base-packages: |
+            any::devtools
+            local::.
+
+      # Keeps Suggests, unlike ci.yaml's lint and docs jobs: a README
+      # chunk routinely calls a suggested package, and a hard-only
+      # install would fail the render rather than the comparison.
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          extra-packages: |
+            ${{ steps.deps.outputs.extra-packages }}
+            ${{ steps.readme.outputs.extra }}
+          quarto-version: ${{ env.QUARTO_VERSION }}
+
+      - uses: BristolMyersSquibb/blockr.ci/.github/actions/release-docs@main
+        with:
+          summary-file: ${{ runner.temp }}/parts/20-docs.md
+
+      - name: Upload docs summary
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-gate-part-docs
+          path: ${{ runner.temp }}/parts/
+          if-no-files-found: warn
+
+  # ── Soft checks: reported on every push, never a gate ───────────────
+  #
+  # The checks live in the release-soft action; this job provisions them
+  # and turns on the CRAN incoming checks, which is the setting that
+  # separates them from ci.yaml's matrix.  With
+  # _R_CHECK_CRAN_INCOMING_ off, an --as-cran run never reaches the
+  # new-submission note, the licence and URL scan, the DESCRIPTION spell
+  # check or the maintainer address -- the checks a submission is
+  # actually read against, and the ones too volatile to gate on because
+  # they query CRAN over the network.
+
+  soft:
+
+    if: >-
+      github.event_name == 'pull_request' &&
+      contains(github.event.pull_request.labels.*.name, 'release')
+
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 60
+
+    env:
+      GITHUB_PAT: ${{ secrets.BLOCKR_PAT || github.token }}
+      R_KEEP_PKG_SOURCE: yes
+      _R_CHECK_CRAN_INCOMING_: 'true'
+      _R_CHECK_CRAN_INCOMING_REMOTE_: 'true'
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: r-lib/actions/setup-pandoc@v2
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: release
+          use-public-rspm: true
+
+      - uses: BristolMyersSquibb/blockr.ci/.github/actions/parse-deps@main
+        id: deps
+        with:
+          pr-body: ${{ github.event.pull_request.body }}
+          pr-number: ${{ github.event.pull_request.number }}
+          base-packages: |
+            any::rcmdcheck
+            any::urlchecker
+            any::spelling
+            local::.
+
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          extra-packages: ${{ steps.deps.outputs.extra-packages }}
+          needs: check
+
+      - uses: BristolMyersSquibb/blockr.ci/.github/actions/release-soft@main
+        with:
+          summary-file: ${{ runner.temp }}/parts/30-soft.md
+
+      - name: Upload soft summary
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-gate-part-soft
+          path: ${{ runner.temp }}/parts/
+          if-no-files-found: warn
+
+  # ── Aggregate the hard gates for the required-checks list ───────────
+  #
+  # Same job as `check-all` and `release-all` elsewhere in this repo, for
+  # the same reason: required_status_checks names this one row, so adding
+  # a gate later does not mean editing branch protection in every
+  # consumer repository.  Treats `skipped` — no label, or a merge_group
+  # ref — as success.  The `soft` job is deliberately absent.
+
+  release-gate-all:
+
+    needs: [gate, docs]
+    if: always()
+
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 60
+
+    steps:
+      - name: Aggregate the hard gates
+        env:
+          GATE_RESULT: ${{ needs.gate.result }}
+          DOCS_RESULT: ${{ needs.docs.result }}
+        run: |
+          echo "gate job result:   $GATE_RESULT"
+          echo "docs job result: $DOCS_RESULT"
+          for result in "$GATE_RESULT" "$DOCS_RESULT"; do
+            case "$result" in
+              success|skipped) ;;
+              *) exit 1 ;;
+            esac
+          done
+
+  # ── One sticky comment, rewritten per push ──────────────────────────
+  #
+  # Rewritten rather than appended so the comment always describes the
+  # head commit; a thread of per-push comments is a thread nobody reads
+  # to the end of.  Runs on failure too — a red gate is exactly when the
+  # detail is worth having.
+
+  report:
+
+    needs: [gate, docs, soft]
+
+    if: >-
+      !cancelled() &&
+      github.event_name == 'pull_request' &&
+      contains(github.event.pull_request.labels.*.name, 'release')
+
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 60
+
+    steps:
+      - name: Collect the job summaries
+        id: parts
+        continue-on-error: true
+        uses: actions/download-artifact@v6
+        with:
+          pattern: release-gate-part-*
+          merge-multiple: true
+          path: parts
+
+      - name: Compose the comment
+        shell: bash
+        env:
+          GATE_RESULT: ${{ needs.gate.result }}
+          DOCS_RESULT: ${{ needs.docs.result }}
+          SOFT_RESULT: ${{ needs.soft.result }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          short="${HEAD_SHA:0:7}"
+
+          if [ "$GATE_RESULT" = success ] && [ "$DOCS_RESULT" = success ]; then
+            headline=":white_check_mark: **The hard gates pass at this commit.**"
+          else
+            headline=":x: **A hard gate fails at this commit.**"
+          fi
+
+          {
+            echo "## Release gate — [\`$short\`]($REPO_URL/commit/$HEAD_SHA)"
+            echo
+            echo "$headline"
+            echo
+
+            if ls parts/*.md >/dev/null 2>&1; then
+              cat parts/*.md
+            else
+              echo "_No check output was produced; see the job logs._"
+              echo
+            fi
+
+            if [ "$SOFT_RESULT" != success ]; then
+              echo ":warning: The soft-check job did not finish, so the section above may be incomplete."
+              echo
+            fi
+
+            echo "---"
+            echo
+            echo "Reverse dependencies are checked by \`recheck\` in the \`release\` workflow, which runs on its own clock — read it in [the checks for this commit]($REPO_URL/pull/${{ github.event.pull_request.number }}/checks?sha=$HEAD_SHA)."
+            echo
+            echo "<sub>Rewritten by \`release-gate\` on every push, so this always describes the head commit.</sub>"
+          } > comment.md
+
+          echo "Composed $(wc -l < comment.md) lines."
+
+      - uses: BristolMyersSquibb/blockr.ci/.github/actions/sticky-comment@main
+        with:
+          marker: '<!-- release-gate -->'
+          body-file: comment.md

@@ -1,0 +1,40 @@
+name: Release soft checks
+description: >
+  Report spelling, URL reachability and the NOTEs from an --as-cran run,
+  without failing on any of them.  Always exits 0: these results turn on
+  jargon, third-party redirects, transient 503s and CRAN's own incoming
+  feasibility service, and a volatile signal used as a gate is one that
+  gets ignored or switched off.  Needs spelling, urlchecker, rcmdcheck
+  and the package's dependencies installed; the caller does that setup,
+  and sets _R_CHECK_CRAN_INCOMING_ to reach the incoming checks.
+
+inputs:
+  pkg-dir:
+    description: >
+      Directory holding the package.
+    required: false
+    default: '.'
+  check-args:
+    description: >
+      Comma-separated R CMD check arguments.
+    required: false
+    default: '--no-manual,--as-cran,--run-donttest'
+  summary-file:
+    description: >
+      Path to append the markdown result to, for a later job to collect.
+      Empty writes no fragment.  $GITHUB_STEP_SUMMARY is written either
+      way, so the result is visible without this.
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Run the soft checks
+      shell: bash
+      env:
+        PKG_DIR: ${{ inputs.pkg-dir }}
+        CHECK_ARGS: ${{ inputs.check-args }}
+        SUMMARY_FILE: ${{ inputs.summary-file }}
+        SCRIPT_DIR: ${{ github.action_path }}
+      run: Rscript --no-save --no-restore "$SCRIPT_DIR/release-soft.R"

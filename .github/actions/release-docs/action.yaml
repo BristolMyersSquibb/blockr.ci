@@ -1,0 +1,33 @@
+name: Release doc checks
+description: >
+  Fail when a generated documentation artefact has drifted from its
+  source: an Rd file with a \usage section but no \value, or a README.md
+  that no longer matches the README.Rmd or README.qmd it came from.
+  Calls devtools::check_doc_fields() and devtools::build_readme(), so it
+  needs devtools and the package's dependencies installed; the caller
+  does that setup.  Both checks report before either fails the step.
+
+inputs:
+  pkg-dir:
+    description: >
+      Directory holding the package.
+    required: false
+    default: '.'
+  summary-file:
+    description: >
+      Path to append the markdown result to, for a later job to collect.
+      Empty writes no fragment.  $GITHUB_STEP_SUMMARY is written either
+      way, so the result is visible without this.
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Check the generated docs
+      shell: bash
+      env:
+        PKG_DIR: ${{ inputs.pkg-dir }}
+        SUMMARY_FILE: ${{ inputs.summary-file }}
+        SCRIPT_DIR: ${{ github.action_path }}
+      run: Rscript --no-save --no-restore "$SCRIPT_DIR/release-docs.R"
