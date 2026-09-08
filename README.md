@@ -106,6 +106,25 @@ jobs:
     uses: BristolMyersSquibb/blockr.ci/.github/workflows/release.yaml@main
     with:
       release-platforms: |
+        nosuggests
+      recheck-which: strong
+    secrets:
+      BLOCKR_PAT: ${{ secrets.BLOCKR_PAT }}
+```
+
+One flavour, because that is what a pure-R package can use. Every
+blockr package is pure R today — none carries `src/` or `LinkingTo` —
+while the sanitizer, valgrind and `rchk` images all exist to check
+compiled code. Listing `rchk` on a package with no shared object does
+not idle, it reddens: `r-hub/actions/run-check` resolves
+`/opt/R/devel-rchk/packages/lib/<pkg>/libs/<pkg>.so.bcheck` and fails
+the leg when that file is absent, and a pure-R install never creates it.
+
+For a package that does carry compiled code — `typedjson`, the package
+this was built for — the list is the long one:
+
+```yaml
+      release-platforms: |
         clang-asan
         gcc-asan
         clang-ubsan
@@ -113,9 +132,6 @@ jobs:
         valgrind
         rchk
         nosuggests
-      recheck-which: strong
-    secrets:
-      BLOCKR_PAT: ${{ secrets.BLOCKR_PAT }}
 ```
 
 Leave the caller ungated. An `if:` there removes the nested contexts
