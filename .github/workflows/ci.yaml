@@ -440,7 +440,10 @@ jobs:
 
           threshold_env <- Sys.getenv("COVERAGE_THRESHOLD")
           threshold <- if (nzchar(threshold_env)) as.numeric(threshold_env) else 0
-          if (pct < threshold) {
+          # A package with no R code has no coverable lines, so covr
+          # reports NaN.  Nothing in it is uncovered, and isTRUE() lets
+          # NaN pass instead of erroring on if (NA).
+          if (isTRUE(pct < threshold)) {
             stop(sprintf(
               "Coverage %.2f%% below threshold %.2f%%",
               pct, threshold
