@@ -50,6 +50,34 @@ PR-side pkgdown sanity checks live in `ci.yaml`'s `pkgdown-dev` job;
 `pkgdown.yaml` only deploys. Consumers without a deployed site (e.g.
 packages with Quarto-based docs) simply omit this workflow file.
 
+That caller pushes the built site to the `gh-pages` branch, for a
+repository whose Pages source is "Deploy from a branch". To publish from
+Actions instead, with no branch involved, set `deploy: actions` and grant
+the Pages scopes in place of `contents: write`:
+
+```yaml
+jobs:
+  pkgdown:
+    uses: BristolMyersSquibb/blockr.ci/.github/workflows/pkgdown.yaml@main
+    with:
+      deploy: actions
+    secrets:
+      BLOCKR_PAT: ${{ secrets.BLOCKR_PAT }}
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+```
+
+The build then uploads `docs/` as a Pages artifact, and a second job
+publishes it with `actions/deploy-pages` in the `github-pages`
+environment. Switch the repository's Pages source to "GitHub Actions"
+(Settings → Pages) before this caller reaches `main`, and delete
+`gh-pages` once the first deploy is live. Each Actions deploy replaces
+the whole site, where the branch deploy keeps files from earlier builds;
+that matters only for a separate development site under `dev/`, which
+pkgdown's default mode doesn't build.
+
 ### `revdep.yaml` — reverse-dependency checks (optional)
 
 Add a second `jobs:` entry alongside the `ci` entry, gated on
@@ -716,7 +744,9 @@ release.
 
 ### `pkgdown.yaml`
 
-No inputs.
+| Input | Type | Default | Purpose |
+|---|---|---|---|
+| `deploy` | string | `branch` | How the built site reaches GitHub Pages. With `branch`, the job pushes `docs/` to the `gh-pages` branch, and the caller grants `contents: write`. With `actions`, a second job publishes `docs/` with `actions/deploy-pages`; the caller grants `contents: read`, `pages: write` and `id-token: write`, and the Pages source must be "GitHub Actions". See [`pkgdown.yaml`](#pkgdownyaml--site-deploy-on-merge-to-main). |
 
 ### `release-gate.yaml`
 
@@ -767,7 +797,7 @@ jobs:
 - **Reverse-dependency checks** against configurable downstream packages — merge-queue gate
 - **CRAN pre-submission checks** — AddressSanitizer, UndefinedBehaviorSanitizer, valgrind, `rchk` and the Suggests-free build in the R-hub containers, plus a CRAN-style reverse dependency check, on every push to a labelled release PR — see [Release mode](#release-mode)
 - **Mechanical release checks** — the checklist half of a release, gated on every push to a labelled release PR instead of ticked by hand: three-component version, no dev-version pins, no `Remotes`, `NEWS.md` shape, real vignette titles, a `\value` on every documented function, and a README current with its source. Reports spelling, URL and `--as-cran` findings alongside without gating on them — see [`release-gate.yaml`](#release-gateyaml--mechanical-release-checks-optional)
-- **pkgdown deploy** — site build + deploy to `gh-pages` on push to `main`
+- **pkgdown deploy** — site build + deploy to GitHub Pages on push to `main`, via the `gh-pages` branch or, with `deploy: actions`, straight from Actions
 - **Pinned Quarto** — jobs that install Quarto (any package holding a `.qmd`) pass an explicit version instead of the action's `release` default, which resolves the version through an unretried `curl` to quarto.org and has twice killed a green run — see [Quarto pin](#quarto-pin)
 - **Hard-dependency resolution on `lint` and `docs`** — neither job runs the suite or builds a site, so both skip the `Suggests` closure and the 125 MB Chromium that a `chromote` / `shinytest2` suggestion drags in — see [Suggests on the lint and docs jobs](#suggests-on-the-lint-and-docs-jobs)
 - **parse-deps** — pin a downstream revdep ref via a `` ```deps `` block in the PR body, read fresh when the merge queue runs revdep

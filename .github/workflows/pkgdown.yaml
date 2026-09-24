@@ -2,7 +2,7 @@
 #
 # Reserved for `push: branches: main` runs.  PR-side pkgdown sanity
 # checks live in ci.yaml's pkgdown-dev job; this workflow has no gating
-# role and exists only to ship the rendered site to gh-pages.
+# role and exists only to ship the rendered site to GitHub Pages.
 #
 # Usage — consumer repo .github/workflows/pkgdown.yaml:
 #
@@ -20,6 +20,17 @@
 #       permissions:
 #         contents: write
 #
+# That caller pushes the site to the gh-pages branch, for a Pages source
+# of "Deploy from a branch".  With a Pages source of "GitHub Actions",
+# the caller sets `deploy: actions` and grants the Pages scopes instead:
+#
+#       with:
+#         deploy: actions
+#       permissions:
+#         contents: read
+#         pages: write
+#         id-token: write
+#
 # Pass secrets by name. `secrets: inherit` does not forward secrets
 # across organisations — the inherited values silently arrive blank in
 # the called job.
@@ -30,6 +41,21 @@ on:
   push:
     branches: main
   workflow_call:
+    inputs:
+
+      deploy:
+        description: >
+          How the built site reaches GitHub Pages.  The default, "branch",
+          pushes docs/ to the gh-pages branch and needs `contents: write`
+          from the caller.  With "actions", docs/ is uploaded as a Pages
+          artifact that a second job publishes with actions/deploy-pages;
+          the caller grants `contents: read`, `pages: write` and
+          `id-token: write`, and the repository's Pages source must be
+          "GitHub Actions".
+        type: string
+        default: branch
+        required: false
+
     secrets:
 
       BLOCKR_PAT:
@@ -39,6 +65,16 @@ on:
         required: false
 
 name: pkgdown
+
+# No `permissions:` anywhere in this file, on purpose.  The two deploy
+# modes need different scopes — `contents: write` to push gh-pages,
+# `pages: write` and `id-token: write` to publish from Actions — and a
+# reusable workflow may not request more than its caller grants.  GitHub
+# checks every job against that at startup, including one its `if:`
+# would skip, so declaring either mode's scopes fails the other mode's
+# callers with a startup_failure.  The caller's per-mode grant is
+# therefore authoritative, as in connect-deploy.yaml.  Once the branch
+# mode goes, each job can declare its own scopes.
 
 # Pinned for the reason spelled out in ci.yaml's env: block — the
 # 'release' default resolves the version through an unretried curl to
@@ -61,10 +97,21 @@ jobs:
     env:
       GITHUB_PAT: ${{ secrets.BLOCKR_PAT || github.token }}
 
-    permissions:
-      contents: write
-
     steps:
+      # A mistyped `deploy` would otherwise be taken for "branch" and fail
+      # only at the push, after the whole build.
+      - name: Check deploy input
+        env:
+          DEPLOY: ${{ inputs.deploy }}
+        run: |
+          case "${DEPLOY:-branch}" in
+            branch|actions) ;;
+            *)
+              echo "::error::deploy must be 'branch' or 'actions', got '$DEPLOY'."
+              exit 1
+              ;;
+          esac
+
       - uses: actions/checkout@v5
 
       - uses: r-lib/actions/setup-pandoc@v2
@@ -95,8 +142,40 @@ jobs:
         shell: Rscript {0}
 
       - name: Deploy to GitHub pages
+        if: inputs.deploy != 'actions'
         uses: JamesIves/github-pages-deploy-action@v4.8.0
         with:
           clean: false
           branch: gh-pages
           folder: docs
+
+      - name: Upload site for GitHub Pages
+        if: inputs.deploy == 'actions'
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: docs
+
+  deploy:
+
+    needs: pkgdown
+
+    if: inputs.deploy == 'actions'
+
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 60
+
+    # Serialise deploys without cancelling one in flight: a newer deploy
+    # waits, and replaces any older one still waiting.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
