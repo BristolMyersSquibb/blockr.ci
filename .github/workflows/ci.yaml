@@ -436,7 +436,16 @@ jobs:
           pct <- covr::percent_coverage(cov)
           cat(sprintf("Coverage: %.2f%%\n", pct))
 
-          covr::codecov(coverage = cov)
+          # A refused upload doesn't error: covr::codecov() returns
+          # Codecov's response whatever its status, and only an accepted
+          # upload carries uploaded: TRUE.  Warn rather than fail, so a
+          # refusal on Codecov's side, such as a rate limit, can't block
+          # PRs through the required ci / coverage check.
+          res <- covr::codecov(coverage = cov)
+          print(res)
+          if (!(is.list(res) && isTRUE(res$uploaded))) {
+            cat("::warning title=Codecov upload failed::Codecov did not accept the upload; its response is printed above.\n")
+          }
 
           threshold_env <- Sys.getenv("COVERAGE_THRESHOLD")
           threshold <- if (nzchar(threshold_env)) as.numeric(threshold_env) else 0
