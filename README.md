@@ -1132,7 +1132,9 @@ BristolMyersSquibb/blockr.ai@my-feature-branch
 ```
 ````
 
-Each line is `owner/repo@branch` or `owner/repo#PR-number`. The matching revdep job checks out that ref instead of the default branch.
+Each line is `owner/repo@branch` or `owner/repo#PR-number`, naming the downstream as `revdep-packages` lists it. The matching revdep job checks out that ref instead of the default branch.
+
+That job runs the code it checks out with `BLOCKR_PAT` in its environment, so an entry can only point it at code already in the downstream repository: after `@` one of its branches, after `#` one of its pull requests opened from a branch of that same repository. An entry naming another repository, a pull request from a fork, or a SHA, tag or `refs/…` path after `@` fails the job with the entry named. To check against a contributor's fork, push the branch to the downstream repository and name it there.
 
 `parse-deps` validates each entry against the package's `DESCRIPTION`: if a deps-block entry's package name appears in `Imports`/`Depends`/`LinkingTo`/`Suggests`/`Remotes`, parse-deps fails with a pointer to `Remotes:`. This catches the common mistake of trying to use the deps block to swap in a dev branch of a forward dep.
 

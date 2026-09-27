@@ -9,6 +9,7 @@
 #   BASE_PACKAGES : the extra-packages output, verbatim (deps-block entries
 #                   are NEVER appended)
 #   GITHUB_OUTPUT : path to write outputs to
+#   GH_TOKEN      : token `gh` reads PKG's branches and pull requests with
 
 suppressPackageStartupMessages(library(pkgdepends))
 
@@ -71,12 +72,20 @@ if (length(parsed) && length(forward_deps)) {
   }
 }
 
-if (length(errors)) {
-  message("parse-deps: invalid deps block")
-  for (e in errors) message(e)
-  quit(status = 1)
+# Output lines, or NULL if `gh` fails. The args are quoted since system2()
+# hands them to a shell.
+gh_api <- function(...) {
+  out <- suppressWarnings(
+    system2("gh", shQuote(c("api", ...)), stdout = TRUE, stderr = FALSE)
+  )
+  if (is.null(attr(out, "status"))) out else NULL
 }
 
+# The revdep job checks PKG out at this ref and runs its code with BLOCKR_PAT
+# in the environment, so the ref must hold code already in PKG: one of its
+# branches, or a pull request opened from one. A pull request from a fork
+# gets a refs/pull/N/head in PKG too, and a SHA from anywhere in the fork
+# network fetches, so an entry is resolved against PKG rather than trusted.
 ref_out <- ""
 if (nzchar(pkg_filter) && length(parsed)) {
   target_pkg <- sub("^.*/", "", pkg_filter)
@@ -84,14 +93,63 @@ if (nzchar(pkg_filter) && length(parsed)) {
     if (identical(p$package, target_pkg)) {
       pull <- if (is.null(p$pull)) "" else p$pull
       commitish <- if (is.null(p$commitish)) "" else p$commitish
-      if (nzchar(pull)) {
-        ref_out <- sprintf("refs/pull/%s/head", pull)
+      named <- if (identical(p$type, "github")) {
+        paste0(p$username, "/", p$repo)
+      } else {
+        ""
+      }
+      if (!identical(tolower(named), tolower(pkg_filter))) {
+        errors <- c(errors, sprintf(
+          "  - '%s' does not name %s, the repository this revdep job checks out. Use %s#<PR> or %s@<branch>.",
+          p$ref, pkg_filter, pkg_filter, pkg_filter
+        ))
+      } else if (nzchar(pull)) {
+        same_repo <- gh_api(
+          sprintf("repos/%s/pulls/%s", pkg_filter, pull),
+          "--jq", ".head.repo.full_name == .base.repo.full_name"
+        )
+        if (is.null(same_repo)) {
+          errors <- c(errors, sprintf(
+            "  - '%s': could not look up pull request #%s of %s.",
+            p$ref, pull, pkg_filter
+          ))
+        } else if (!identical(same_repo, "true")) {
+          errors <- c(errors, sprintf(
+            "  - '%s' is a pull request from a fork. Only pull requests opened from a branch of %s itself are checked out; push the branch there and name it with @<branch>.",
+            p$ref, pkg_filter
+          ))
+        } else {
+          ref_out <- sprintf("refs/pull/%s/head", pull)
+        }
       } else if (nzchar(commitish) && commitish != "HEAD") {
-        ref_out <- commitish
+        branches <- gh_api(
+          "--paginate", sprintf("repos/%s/branches?per_page=100", pkg_filter),
+          "--jq", ".[].name"
+        )
+        if (is.null(branches)) {
+          errors <- c(errors, sprintf(
+            "  - '%s': could not list the branches of %s.",
+            p$ref, pkg_filter
+          ))
+        } else if (!commitish %in% branches) {
+          errors <- c(errors, sprintf(
+            "  - '%s': '%s' is not a branch of %s. After @ the deps block takes a branch name, not a SHA, tag or refs/ path.",
+            p$ref, commitish, pkg_filter
+          ))
+        } else {
+          # Qualified, so actions/checkout cannot read it as a SHA or a tag.
+          ref_out <- paste0("refs/heads/", commitish)
+        }
       }
       break
     }
   }
+}
+
+if (length(errors)) {
+  message("parse-deps: invalid deps block")
+  for (e in errors) message(e)
+  quit(status = 1)
 }
 
 # `extra-packages` is base only; deps-block entries are never appended.
