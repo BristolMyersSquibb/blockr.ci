@@ -21,9 +21,9 @@
 # the called job.
 #
 # PR jobs (lint, smoke, pkgdown-dev, coverage, docs) run in parallel and
-# gate the PR.  The merge-queue gate is `check-all`, which aggregates the
-# multi-platform `check` matrix; the queue runs only the check matrix
-# and skips the PR-side jobs.  Required-status-checks list:
+# gate the PR.  The merge queue runs the multi-platform `check` matrix,
+# aggregated by `check-all`, plus lint and docs a second time, and skips
+# the other PR-side jobs.  Required-status-checks list:
 #
 #   ci / lint
 #   ci / smoke
@@ -35,11 +35,26 @@
 # Skipped jobs satisfy required checks, so the queue accepts the PR-only
 # rows as skipped on merge_group refs.
 #
+# Lint and docs run again because the queue checks a different commit
+# from the PR: the PR on top of whatever merged since, possibly batched
+# with others.  Two PRs that each pass docs can merge into a main that
+# fails it, when one rewrites a @param the other inherits through
+# @inheritParams.  The stale Rd is still valid, so the check matrix
+# passes it, and the next PR fails docs on a file it never touched.  A
+# .lintr change meeting new code does the same to lint.  Both jobs
+# finish long before the check matrix beside them, so they add runner
+# time but not time in the queue.
+#
+# A repository whose queue publishes a deploy (connect-deploy.yaml)
+# passes `lint-docs-pr-only: true` to keep both off the queue, where a
+# lint failure could eject a PR whose tree connect-deploy has already
+# pushed to its connect-* branch.
+#
 # A deploy app runs on exactly one R version (whatever Posit Connect
-# serves).  Pass `r-version:` (e.g. "4.4.2") so the PR-leg jobs — notably
-# the smoke R CMD check — run on that version instead of `release`.  The
-# merge-queue `check` matrix is unaffected and keeps its cross-platform
-# release/devel/oldrel spread.
+# serves).  Pass `r-version:` (e.g. "4.4.2") so the single-platform
+# jobs — notably the smoke R CMD check — run on that version instead of
+# `release`.  The merge-queue `check` matrix is unaffected and keeps its
+# cross-platform release/devel/oldrel spread.
 #
 # The smoke and check R CMD check jobs fail on NOTEs by default
 # (`error-on: '"note"'`), holding the fleet's 0-errors/0-warnings/
@@ -132,12 +147,13 @@ on:
 
       r-version:
         description: >
-          R version for the PR-leg jobs (lint, smoke, pkgdown-dev,
-          coverage, docs).  Default '' runs them on 'release'.  Set it (e.g.
-          '4.4.2') for a deploy app that runs on exactly one R version,
-          so its PR checks — notably the smoke R CMD check — exercise the
-          deployment target.  The merge-queue check matrix is unaffected
-          and keeps its cross-platform release/devel/oldrel spread.
+          R version for the single-platform jobs (lint, smoke,
+          pkgdown-dev, coverage, docs).  Default '' runs them on
+          'release'.  Set it (e.g. '4.4.2') for a deploy app that runs on
+          exactly one R version, so its PR checks — notably the smoke R
+          CMD check — exercise the deployment target.  The merge-queue
+          check matrix is unaffected and keeps its cross-platform
+          release/devel/oldrel spread.
         type: string
         default: ''
         required: false
@@ -153,6 +169,17 @@ on:
           declared Imports should be used" NOTE.
         type: string
         default: ''
+        required: false
+
+      lint-docs-pr-only:
+        description: >
+          Skip the lint and docs jobs in the merge queue, running them on
+          pull requests only.  Default false runs them in both.  A
+          repository whose queue publishes a deploy (connect-deploy.yaml)
+          sets true, so that a lint failure at the queue cannot eject a
+          pull request whose tree connect-deploy has already pushed.
+        type: boolean
+        default: false
         required: false
 
       skip-pkgdown:
@@ -233,11 +260,13 @@ env:
 
 jobs:
 
-  # ── Lint (PR gate) ───────────────────────────────────────────────────
+  # ── Lint (PR and merge queue gate) ───────────────────────────────────
 
   lint:
 
-    if: github.event_name == 'pull_request'
+    if: >-
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'merge_group' && !inputs.lint-docs-pr-only)
 
     runs-on: ubuntu-latest
 
@@ -489,7 +518,7 @@ jobs:
           name: coverage-test-failures
           path: ${{ runner.temp }}/package
 
-  # ── Docs freshness (PR gate) ─────────────────────────────────────────
+  # ── Docs freshness (PR and merge queue gate) ─────────────────────────
   #
   # Regenerate man/ + NAMESPACE with the roxygen2 pinned in DESCRIPTION
   # (Config/roxygen2/version, or the legacy RoxygenNote) and fail on
@@ -499,7 +528,9 @@ jobs:
 
   docs:
 
-    if: github.event_name == 'pull_request'
+    if: >-
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'merge_group' && !inputs.lint-docs-pr-only)
 
     runs-on: ubuntu-latest
 

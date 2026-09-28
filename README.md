@@ -595,12 +595,26 @@ Each action's script is exercised by `bats` under
 | Trigger | Jobs |
 |---|---|
 | `pull_request` | `lint`, `smoke`, `pkgdown-dev`, `coverage`, `docs` (parallel) |
-| `merge_group` | `check` matrix → `check-all`; `revdep` matrix → `revdep-all` (if configured) |
+| `merge_group` | `lint`, `docs`, `check` matrix → `check-all` (parallel); `revdep` matrix → `revdep-all` (if configured) |
 | `push: main` | `pkgdown.yaml` deploy (if configured) |
 
 PR jobs run in parallel for fast feedback. The expensive multi-platform
 `check` matrix and reverse-dependency checks are reserved for the merge
 queue — they gate the merge but never block PR iteration.
+
+The `lint` and `docs` jobs run at the queue as well, because it checks a
+different commit from the pull request: the pull request on top of
+whatever merged since, possibly batched with others. Two pull requests
+that each pass `docs` can merge into a `main` that fails it, when one
+rewrites a `@param` the other inherits through `@inheritParams`. The
+second one's `man/` page arrives with the old text, which is valid Rd,
+so the `check` matrix passes it, and the next pull request fails `docs`
+on a file it never touched. A `.lintr` change meeting new code does the
+same to `lint`. Both jobs finish long before the `check` matrix beside
+them, so they add runner time but not time in the queue. A repository
+whose queue publishes a Connect deploy keeps them off it with
+`lint-docs-pr-only: true` — see
+[Required-check topology](#required-check-topology).
 
 The `check-all`, `revdep-all`, `release-all` and `release-gate-all` jobs
 aggregate their respective matrices into a single stable name, so
@@ -617,7 +631,8 @@ on the pull-request ref, on every push:
 
 | Job | Ordinary PR | Release PR | Merge queue |
 |---|---|---|---|
-| `lint`, `smoke`, `pkgdown-dev`, `coverage`, `docs` | runs | runs | skipped |
+| `lint`, `docs` | runs | runs | runs |
+| `smoke`, `pkgdown-dev`, `coverage` | runs | runs | skipped |
 | `ci / check` (macOS, Windows, devel, oldrel) | skipped | **runs** | runs |
 | `release` (R-hub flavours) | skipped | **runs** | skipped |
 | `release-gate` (mechanical checks) | skipped | **runs** | skipped |
@@ -771,8 +786,9 @@ release.
 |---|---|---|---|
 | `lintr-exclusions` | newline-separated list | `''` | File paths to exclude from linting |
 | `coverage-threshold` | number | `0` | Minimum coverage percent for the `coverage` job to pass. `0` disables the gate; coverage is still uploaded to Codecov. |
-| `r-version` | string | `''` | R version for the PR-leg jobs (lint, smoke, pkgdown-dev, coverage, docs). Default (`''`) runs them on `release`. Set it (e.g. `4.4.2`) for a deploy app pinned to one runtime, so its PR checks — notably the `smoke` R CMD check — exercise the deployment target. The merge-queue `check` matrix is unaffected. Pair with `connect-deploy.yaml`'s `r-version` to gate against the version Connect serves. |
+| `r-version` | string | `''` | R version for the single-platform jobs (lint, smoke, pkgdown-dev, coverage, docs). Default (`''`) runs them on `release`. Set it (e.g. `4.4.2`) for a deploy app pinned to one runtime, so its PR checks — notably the `smoke` R CMD check — exercise the deployment target. The merge-queue `check` matrix is unaffected. Pair with `connect-deploy.yaml`'s `r-version` to gate against the version Connect serves. |
 | `error-on` | string | `''` | R CMD check severity that fails the `smoke` and `check` jobs (passed to `check-r-package`'s `error-on`). Default (`''`) fails on any NOTE (`'"note"'`), holding the 0-errors/0-warnings/0-notes bar. A deploy app that declares unused `Imports` on purpose (so the Connect manifest ships them) sets `'"warning"'` to tolerate the resulting NOTE. |
+| `lint-docs-pr-only` | boolean | `false` | Skip the `lint` and `docs` jobs in the merge queue, running them on pull requests only. By default both also run on the merge-group commit — see [Pipeline](#pipeline). A repository whose queue publishes through `connect-deploy.yaml` sets `true` — see [Required-check topology](#required-check-topology). |
 | `skip-pkgdown` | boolean | `false` | DEPRECATED — pkgdown moved to `pkgdown.yaml`. No-op. |
 | `revdep-packages` | newline-separated list | `''` | DEPRECATED — moved to `revdep.yaml`. No-op. |
 
@@ -835,11 +851,11 @@ jobs:
 
 ## What's included
 
-- **Lint** with a canonical lintr config (`object_name_linter = NULL`) — PR gate
+- **Lint** with a canonical lintr config (`object_name_linter = NULL`) — PR and merge-queue gate
 - **Smoke test** — single-platform R CMD check — PR gate
 - **pkgdown-dev** — `pkgdown::build_site(devel = TRUE)`, artifact upload, no deploy — PR gate
 - **Coverage** via `covr::package_coverage()` + codecov, optional threshold — PR gate
-- **Docs freshness** — regenerate `man/` + `NAMESPACE` with the roxygen2 version pinned in `DESCRIPTION` (`Config/roxygen2/version`, or legacy `RoxygenNote`) and fail on drift — PR gate
+- **Docs freshness** — regenerate `man/` + `NAMESPACE` with the roxygen2 version pinned in `DESCRIPTION` (`Config/roxygen2/version`, or legacy `RoxygenNote`) and fail on drift — PR and merge-queue gate
 - **Full check** — 4-platform matrix (macOS, Windows, Ubuntu devel, Ubuntu oldrel) — merge-queue gate
 - **Reverse-dependency checks** against configurable downstream packages — merge-queue gate
 - **CRAN pre-submission checks** — AddressSanitizer, UndefinedBehaviorSanitizer, valgrind, `rchk` and the Suggests-free build in the R-hub containers, plus a CRAN-style reverse dependency check, on every push to a labelled release PR — see [Release mode](#release-mode)
@@ -917,8 +933,11 @@ batch size 1) so no other check can eject a PR after the push.
 Each required check does real work in exactly one event and reports a
 cheap success in the other, so nothing double-runs:
 
-- The repo's validation (lint, etc.): real on `pull_request`, gated to
-  skip on `merge_group` with `if: github.event_name == 'pull_request'`.
+- The repo's validation (lint, etc.): real on `pull_request`, skipped
+  on `merge_group`. By default `ci.yaml` does real work at the queue
+  too, in `lint`, `docs` and the `check` matrix, so the caller passes
+  `lint-docs-pr-only: true` and leaves `ci / check-all` off the required
+  checks.
 - `connect-deploy`: no-op on `pull_request`, real on `merge_group`.
 
 A skipped required check counts as **passed** by the merge queue — that
