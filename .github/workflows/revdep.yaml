@@ -268,10 +268,15 @@ jobs:
   # shape: required_status_checks lists this name instead of one row per
   # downstream package.  Treats `skipped` (no revdep packages configured,
   # or matrix gated out by event) as success.
+  #
+  # Needs `matrix` as well as `revdep`, and not only for ordering: when
+  # the matrix job fails, `revdep` is reported as skipped rather than
+  # failed, so aggregating it alone would turn a failed matrix into a
+  # green required check.
 
   revdep-all:
 
-    needs: revdep
+    needs: [matrix, revdep]
     if: always()
 
     runs-on: ubuntu-latest
@@ -281,10 +286,14 @@ jobs:
     steps:
       - name: Aggregate revdep matrix
         env:
+          MATRIX_RESULT: ${{ needs.matrix.result }}
           REVDEP_RESULT: ${{ needs.revdep.result }}
         run: |
+          echo "matrix job result:    $MATRIX_RESULT"
           echo "revdep matrix result: $REVDEP_RESULT"
-          case "$REVDEP_RESULT" in
-            success|skipped) exit 0 ;;
-            *) exit 1 ;;
-          esac
+          for result in "$MATRIX_RESULT" "$REVDEP_RESULT"; do
+            case "$result" in
+              success|skipped) ;;
+              *) exit 1 ;;
+            esac
+          done
