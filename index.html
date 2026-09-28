@@ -148,13 +148,16 @@
 <span id="cb5-7"><a href="#cb5-7" tabindex="-1"></a></span>
 <span id="cb5-8"><a href="#cb5-8" tabindex="-1"></a><span class="fu">jobs</span><span class="kw">:</span></span>
 <span id="cb5-9"><a href="#cb5-9" tabindex="-1"></a><span class="at">  </span><span class="fu">release</span><span class="kw">:</span></span>
-<span id="cb5-10"><a href="#cb5-10" tabindex="-1"></a><span class="at">    </span><span class="fu">uses</span><span class="kw">:</span><span class="at"> BristolMyersSquibb/blockr.ci/.github/workflows/release.yaml@main</span></span>
-<span id="cb5-11"><a href="#cb5-11" tabindex="-1"></a><span class="at">    </span><span class="fu">with</span><span class="kw">:</span></span>
-<span id="cb5-12"><a href="#cb5-12" tabindex="-1"></a><span class="fu">      release-platforms</span><span class="kw">: </span><span class="ch">|</span></span>
-<span id="cb5-13"><a href="#cb5-13" tabindex="-1"></a>        nosuggests</span>
-<span id="cb5-14"><a href="#cb5-14" tabindex="-1"></a><span class="at">      </span><span class="fu">recheck-which</span><span class="kw">:</span><span class="at"> strong</span></span>
-<span id="cb5-15"><a href="#cb5-15" tabindex="-1"></a><span class="at">    </span><span class="fu">secrets</span><span class="kw">:</span></span>
-<span id="cb5-16"><a href="#cb5-16" tabindex="-1"></a><span class="at">      </span><span class="fu">BLOCKR_PAT</span><span class="kw">:</span><span class="at"> ${{ secrets.BLOCKR_PAT }}</span></span></code></pre></div>
+<span id="cb5-10"><a href="#cb5-10" tabindex="-1"></a><span class="fu">    if</span><span class="kw">: </span><span class="ch">&gt;-</span></span>
+<span id="cb5-11"><a href="#cb5-11" tabindex="-1"></a>      github.event.action != 'labeled' ||</span>
+<span id="cb5-12"><a href="#cb5-12" tabindex="-1"></a>      github.event.label.name == 'release'</span>
+<span id="cb5-13"><a href="#cb5-13" tabindex="-1"></a><span class="at">    </span><span class="fu">uses</span><span class="kw">:</span><span class="at"> BristolMyersSquibb/blockr.ci/.github/workflows/release.yaml@main</span></span>
+<span id="cb5-14"><a href="#cb5-14" tabindex="-1"></a><span class="at">    </span><span class="fu">with</span><span class="kw">:</span></span>
+<span id="cb5-15"><a href="#cb5-15" tabindex="-1"></a><span class="fu">      release-platforms</span><span class="kw">: </span><span class="ch">|</span></span>
+<span id="cb5-16"><a href="#cb5-16" tabindex="-1"></a>        nosuggests</span>
+<span id="cb5-17"><a href="#cb5-17" tabindex="-1"></a><span class="at">      </span><span class="fu">recheck-which</span><span class="kw">:</span><span class="at"> strong</span></span>
+<span id="cb5-18"><a href="#cb5-18" tabindex="-1"></a><span class="at">    </span><span class="fu">secrets</span><span class="kw">:</span></span>
+<span id="cb5-19"><a href="#cb5-19" tabindex="-1"></a><span class="at">      </span><span class="fu">BLOCKR_PAT</span><span class="kw">:</span><span class="at"> ${{ secrets.BLOCKR_PAT }}</span></span></code></pre></div>
 <p>One flavour, because that is what a pure-R package can use. Every blockr package is pure R today — none carries <code>src/</code> or <code>LinkingTo</code> — while the sanitizer, valgrind and <code>rchk</code> images all exist to check compiled code. Listing <code>rchk</code> on a package with no shared object does not idle, it reddens: <code>r-hub/actions/run-check</code> resolves <code>/opt/R/devel-rchk/packages/lib/&lt;pkg&gt;/libs/&lt;pkg&gt;.so.bcheck</code> and fails the leg when that file is absent, and a pure-R install never creates it.</p>
 <p>For a package that does carry compiled code — <code>typedjson</code>, the package this was built for — the list is the long one:</p>
 <div class="sourceCode" id="cb6"><pre class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb6-1"><a href="#cb6-1" tabindex="-1"></a><span class="fu">      release-platforms</span><span class="kw">: </span><span class="ch">|</span></span>
@@ -165,7 +168,7 @@
 <span id="cb6-6"><a href="#cb6-6" tabindex="-1"></a>        valgrind</span>
 <span id="cb6-7"><a href="#cb6-7" tabindex="-1"></a>        rchk</span>
 <span id="cb6-8"><a href="#cb6-8" tabindex="-1"></a>        nosuggests</span></code></pre></div>
-<p>Leave the caller ungated. An <code>if:</code> there removes the nested contexts altogether, which makes <code>release / release-all</code> impossible to require — the same trap the <code>revdep</code> caller sits in, measured in <a href="https://github.com/BristolMyersSquibb/blockr.ci/issues/52" class="external-link">#52</a>. Only the inner jobs are conditional, so <code>release-all</code> reports on every ref.</p>
+<p>The caller’s <code>if:</code> skips the run that any label other than <code>release</code> would start, and nothing else. The <code>labeled</code> type fires for every label, and the inner jobs test that <code>release</code> is present rather than which label was just added, so without the <code>if:</code> every label on a release pull request would re-run the whole flavour matrix on a commit it has already checked. Keep the gate that narrow. A skipped caller removes the nested contexts altogether rather than reporting them as skipped, which makes <code>release / release-all</code> impossible to require — the same trap the <code>revdep</code> caller sits in, measured in <a href="https://github.com/BristolMyersSquibb/blockr.ci/issues/52" class="external-link">#52</a>. A label event is safe to skip only because it lands on a commit that already has an <code>opened</code>, <code>synchronize</code> or <code>reopened</code> run, and that run reports <code>release-all</code>.</p>
 <div class="section level4">
 <h4 id="choosing-the-platform-list">Choosing the platform list<a class="anchor" aria-label="anchor" href="#choosing-the-platform-list"></a>
 </h4>
@@ -221,6 +224,7 @@
 <p>Apply the <code>release</code> label to the release-prep pull request. The pull request is the commit being submitted, so it is the thing worth checking; a release tracking <em>issue</em> has no commit to report a status against and could not back a required check at all.</p>
 <p>The label marks the pull request as a release candidate — a mode rather than a one-shot “run now” button. It stays on for the life of the branch, and the flavours re-run on every push while it is there.</p>
 <p>Running on each push is the point rather than a cost. The tarball is built from a commit on this pull request, before it merges, so every push produces a new release candidate; checking only the commit that happened to be current when the label went on would leave the submitted one unchecked. It also keeps <code>release / release-all</code> an honest gate — green for the head commit because the flavours passed on it, not because nothing ran.</p>
+<p>A push cancels the legs still running for the commit it replaces, which is no longer the candidate — see <a href="#superseded-runs">Superseded runs</a>.</p>
 <p>The check still reports success on an unlabelled pull request, so forgetting the label skips the checks silently rather than blocking the merge. That is the one soft edge in the design, and it is deliberate: the alternative is charging every ordinary pull request for a valgrind run.</p>
 <p>On <code>merge_group</code> the workflow passes through without doing the work, mirroring <code>revdep.yaml</code>, which does the reverse. A label-gated condition produces nothing on a <code>merge_group</code> ref — there is no pull request and no label there — so the real work could not run at the queue even in principle, and a required context that is never created burns the queue’s <code>check_response_timeout_minutes</code> instead of merging.</p>
 </div>
@@ -254,10 +258,13 @@
 <span id="cb7-11"><a href="#cb7-11" tabindex="-1"></a></span>
 <span id="cb7-12"><a href="#cb7-12" tabindex="-1"></a><span class="fu">jobs</span><span class="kw">:</span></span>
 <span id="cb7-13"><a href="#cb7-13" tabindex="-1"></a><span class="at">  </span><span class="fu">release-gate</span><span class="kw">:</span></span>
-<span id="cb7-14"><a href="#cb7-14" tabindex="-1"></a><span class="at">    </span><span class="fu">uses</span><span class="kw">:</span><span class="at"> BristolMyersSquibb/blockr.ci/.github/workflows/release-gate.yaml@main</span></span>
-<span id="cb7-15"><a href="#cb7-15" tabindex="-1"></a><span class="at">    </span><span class="fu">secrets</span><span class="kw">:</span></span>
-<span id="cb7-16"><a href="#cb7-16" tabindex="-1"></a><span class="at">      </span><span class="fu">BLOCKR_PAT</span><span class="kw">:</span><span class="at"> ${{ secrets.BLOCKR_PAT }}</span></span></code></pre></div>
-<p>Required-status-checks row: <code>release-gate / release-gate-all</code>. Leave the caller ungated, for the reason given under <a href="#releaseyaml--cran-pre-submission-checks-optional"><code>release.yaml</code></a>.</p>
+<span id="cb7-14"><a href="#cb7-14" tabindex="-1"></a><span class="fu">    if</span><span class="kw">: </span><span class="ch">&gt;-</span></span>
+<span id="cb7-15"><a href="#cb7-15" tabindex="-1"></a>      github.event.action != 'labeled' ||</span>
+<span id="cb7-16"><a href="#cb7-16" tabindex="-1"></a>      github.event.label.name == 'release'</span>
+<span id="cb7-17"><a href="#cb7-17" tabindex="-1"></a><span class="at">    </span><span class="fu">uses</span><span class="kw">:</span><span class="at"> BristolMyersSquibb/blockr.ci/.github/workflows/release-gate.yaml@main</span></span>
+<span id="cb7-18"><a href="#cb7-18" tabindex="-1"></a><span class="at">    </span><span class="fu">secrets</span><span class="kw">:</span></span>
+<span id="cb7-19"><a href="#cb7-19" tabindex="-1"></a><span class="at">      </span><span class="fu">BLOCKR_PAT</span><span class="kw">:</span><span class="at"> ${{ secrets.BLOCKR_PAT }}</span></span></code></pre></div>
+<p>Required-status-checks row: <code>release-gate / release-gate-all</code>. The caller’s <code>if:</code> is the one <code>release.yaml</code> uses, and no wider, for the reason given under <a href="#releaseyaml--cran-pre-submission-checks-optional"><code>release.yaml</code></a>.</p>
 <p>There are no inputs. Everything is derived from the repository, and <code>BLOCKR_PAT</code> falls back to <code>GITHUB_TOKEN</code>, so the workflow is callable from a repository outside the fleet that holds no secrets at all — <code>nbenn/typedjson</code> does not use <code>ci.yaml</code> and is the package most in need of this gate.</p>
 <p>The <code>pull-requests: write</code> grant is what lets the report job write its comment. Without it the job warns and carries on, since the same detail is already in each job’s step summary; on a pull request from a fork the token is read-only whatever the caller declares, and the same fallback applies.</p>
 <div class="section level4">
@@ -640,6 +647,15 @@
 <p>Stacked PRs (PRs whose base is not <code>main</code>) still merge as plain pushes to the parent feature branch and bypass the queue — that is intentional; the queue is reserved for <code>main</code>.</p>
 </div>
 <div class="section level3">
+<h3 id="superseded-runs">Superseded runs<a class="anchor" aria-label="anchor" href="#superseded-runs"></a>
+</h3>
+<p>The <code>ci.yaml</code>, <code>release.yaml</code> and <code>release-gate.yaml</code> workflows each run one at a time per pull request. A push cancels the run still checking the commit it replaces, which on a release pull request includes flavour legs allowed three hours each. Any other pull-request event — reopening, or applying the <code>release</code> label — re-checks the commit already being checked, so it waits for the run in progress instead of discarding it.</p>
+<p>Runs outside a pull request never share a group. Each merge-queue entry and each push is keyed on its own run id, so no queue entry waits on another, and a caller that also runs <code>ci.yaml</code> on pushes to <code>main</code> still checks every push.</p>
+<p>Taking turns also orders the writes to the <code>release-gate</code> comment, so a run for an older commit cannot rewrite it after the run for a newer one.</p>
+<p>Each group lives in the calling repository, under a prefix per workflow: <code>blockr-ci-</code>, <code>blockr-release-</code> and <code>blockr-release-gate-</code>. The prefixes are spelled out rather than taken from <code>${{ github.workflow }}</code>: in a called workflow that resolves to the caller’s name, and a group that caller and called workflow share cancels the caller.</p>
+<p>The <code>pkgdown.yaml</code> build never cancels. Every run publishes the same site, so builds run one at a time per repository: a push that arrives mid-build waits for it and replaces any older push still waiting, and the newest build is the last to land.</p>
+</div>
+<div class="section level3">
 <h3 id="reverse-dependencies-before-a-cran-submission">Reverse dependencies before a CRAN submission<a class="anchor" aria-label="anchor" href="#reverse-dependencies-before-a-cran-submission"></a>
 </h3>
 <p>The <code>revdep.yaml</code> workflow answers the development-state question: it installs each downstream package from its GitHub branch, so it catches a change that breaks the siblings as they stand today. That is the right check for ordinary development and should keep running as it does. A release has to ask something else — whether the change breaks what CRAN currently ships — and the two diverge precisely when it matters, since a sibling’s <code>main</code> may already carry an adaptation the published version lacks.</p>
@@ -899,6 +915,9 @@
 </li>
 <li>
 <strong>pkgdown deploy</strong> — site build + deploy to GitHub Pages on push to <code>main</code>, via the <code>gh-pages</code> branch or, with <code>deploy: actions</code>, straight from Actions</li>
+<li>
+<strong>Superseded runs cancelled</strong> — a push to a pull request cancels the <code>ci</code>, <code>release</code> and <code>release-gate</code> runs still checking the commit it replaces, and pkgdown builds take turns so the newest lands last — see <a href="#superseded-runs">Superseded runs</a>
+</li>
 <li>
 <strong>Pinned Quarto</strong> — jobs that install Quarto (any package holding a <code>.qmd</code>) pass an explicit version instead of the action’s <code>release</code> default, which resolves the version through an unretried <code>curl</code> to quarto.org and has twice killed a green run — see <a href="#quarto-pin">Quarto pin</a>
 </li>
