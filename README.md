@@ -1165,5 +1165,5 @@ Remotes:
 
 ## Secrets
 
-- `BLOCKR_PAT` (optional) — GitHub PAT with access to private blockr repos. Falls back to `GITHUB_TOKEN` if not set, which is sufficient for public repos.
+- `BLOCKR_PAT` (optional) — GitHub token the workflows only read with: pak resolves and downloads GitHub-hosted dependencies with it, and `revdep.yaml` also checks out the downstream and looks up its branches and pull requests. A fine-grained token with read-only access to public repositories is therefore enough, and buys the higher API rate limit. For a private dependency or revdep downstream, add its repository to the token with Contents: read-only, which covers all of these reads. Falls back to `GITHUB_TOKEN` if not set, which is sufficient for public repos.
 - `CODECOV_TOKEN` — for coverage uploads
