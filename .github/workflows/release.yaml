@@ -26,6 +26,9 @@
 #
 #   jobs:
 #     release:
+#       if: >-
+#         github.event.action != 'labeled' ||
+#         github.event.label.name == 'release'
 #       uses: BristolMyersSquibb/blockr.ci/.github/workflows/release.yaml@main
 #       with:
 #         release-platforms: |
@@ -54,15 +57,23 @@
 # entry there would report as `ci / …` instead of keeping the context at
 # `release / release-all`.
 #
-# ── Why the caller carries no `if:` ──────────────────────────────────
+# ── Why the caller's `if:` only filters labels ───────────────────────
 #
 # Per #52, gating the *caller* job removes the nested contexts entirely:
 # a skipped caller produces one check run named `release` and nothing
 # below it, so a required `release / release-all` would sit at
 # "Expected — waiting for status" and block every merge.  An absent
-# context is not a skipped one.  So the caller runs on every event and
-# only the inner jobs are conditional, which leaves `release-all` free
-# to report on every ref.
+# context is not a skipped one.  So whether the flavours run is decided
+# by the inner jobs, which leaves `release-all` free to report on every
+# ref.
+#
+# The one event the caller does skip is a label other than `release`.
+# The `labeled` type fires for any label, and the inner jobs test that
+# `release` is present rather than which label was added, so every such
+# label would otherwise re-run the matrix on a commit it has already
+# checked.  Skipping it cannot strand the required check: a label lands
+# on a commit that already has an `opened`, `synchronize` or `reopened`
+# run, and that run reports `release-all`.
 #
 # ── Trigger: a label on the release-prep pull request ────────────────
 #
@@ -170,6 +181,13 @@ on:
         required: false
 
 name: release
+
+# One run per pull request at a time, as in ci.yaml — see there for the
+# group and its prefix.  Here a push cancels flavour legs allowed three
+# hours each, for a commit that is no longer the release candidate.
+concurrency:
+  group: blockr-release-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event.action == 'synchronize' }}
 
 jobs:
 

@@ -192,6 +192,23 @@ on:
 
 name: ci
 
+# One run per pull request at a time.  A push cancels the run still
+# checking the commit it replaces.  Any other pull-request event —
+# reopening, or a label in the release workflows — re-checks the same
+# commit, so it waits for the run in progress rather than discarding it.
+#
+# Runs outside a pull request key on their run id, so none ever shares a
+# group.  The ref would keep merge-queue entries apart as well, but a
+# caller that also runs this on push to main would then queue its
+# pushes, and each new one would cancel the push still waiting.
+#
+# The prefix is a literal, one per workflow file, because in a called
+# workflow github.workflow resolves to the caller's name, and a group
+# the caller shares with the called workflow cancels the caller.
+concurrency:
+  group: blockr-ci-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event.action == 'synchronize' }}
+
 # Quarto version installed by setup-r-dependencies (it pulls in
 # quarto-dev/quarto-actions/setup for any package holding a .qmd).
 #

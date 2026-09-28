@@ -131,6 +131,9 @@ name: release
 
 jobs:
   release:
+    if: >-
+      github.event.action != 'labeled' ||
+      github.event.label.name == 'release'
     uses: BristolMyersSquibb/blockr.ci/.github/workflows/release.yaml@main
     with:
       release-platforms: |
@@ -162,12 +165,20 @@ this was built for — the list is the long one:
         nosuggests
 ```
 
-Leave the caller ungated. An `if:` there removes the nested contexts
-altogether, which makes `release / release-all` impossible to require —
-the same trap the `revdep` caller sits in, measured in
+The caller's `if:` skips the run that any label other than `release`
+would start, and nothing else. The `labeled` type fires for every
+label, and the inner jobs test
+that `release` is present rather than which label was just added, so
+without the `if:` every label on a release pull request would re-run
+the whole flavour matrix on a commit it has already checked. Keep the
+gate that narrow. A skipped caller removes the nested contexts
+altogether rather than reporting them as skipped, which makes
+`release / release-all` impossible to require — the same trap the
+`revdep` caller sits in, measured in
 [#52](https://github.com/BristolMyersSquibb/blockr.ci/issues/52).
-Only the inner jobs are conditional, so `release-all` reports on every
-ref.
+A label event is safe to skip only because it lands on a commit that
+already has an `opened`, `synchronize` or `reopened` run, and that run
+reports `release-all`.
 
 #### Choosing the platform list
 
@@ -243,6 +254,9 @@ one unchecked. It also keeps `release / release-all` an honest gate —
 green for the head commit because the flavours passed on it, not because
 nothing ran.
 
+A push cancels the legs still running for the commit it replaces, which
+is no longer the candidate — see [Superseded runs](#superseded-runs).
+
 The check still reports success on an unlabelled pull request, so
 forgetting the label skips the checks silently rather than blocking the
 merge. That is the one soft edge in the design, and it is deliberate:
@@ -299,13 +313,17 @@ permissions:
 
 jobs:
   release-gate:
+    if: >-
+      github.event.action != 'labeled' ||
+      github.event.label.name == 'release'
     uses: BristolMyersSquibb/blockr.ci/.github/workflows/release-gate.yaml@main
     secrets:
       BLOCKR_PAT: ${{ secrets.BLOCKR_PAT }}
 ```
 
-Required-status-checks row: `release-gate / release-gate-all`. Leave the
-caller ungated, for the reason given under
+Required-status-checks row: `release-gate / release-gate-all`. The
+caller's `if:` is the one `release.yaml` uses, and no wider, for the
+reason given under
 [`release.yaml`](#releaseyaml--cran-pre-submission-checks-optional).
 
 There are no inputs. Everything is derived from the repository, and
@@ -666,6 +684,35 @@ Stacked PRs (PRs whose base is not `main`) still merge as plain pushes
 to the parent feature branch and bypass the queue — that is intentional;
 the queue is reserved for `main`.
 
+### Superseded runs
+
+The `ci.yaml`, `release.yaml` and `release-gate.yaml` workflows each run
+one at a time per pull request. A push cancels the run still checking
+the commit it replaces, which on a release pull request includes flavour
+legs allowed three hours each. Any other pull-request event — reopening,
+or applying the `release` label — re-checks the commit already being
+checked, so it waits for the run in progress instead of discarding it.
+
+Runs outside a pull request never share a group. Each merge-queue entry
+and each push is keyed on its own run id, so no queue entry waits on
+another, and a caller that also runs `ci.yaml` on pushes to `main` still
+checks every push.
+
+Taking turns also orders the writes to the `release-gate` comment, so a
+run for an older commit cannot rewrite it after the run for a newer one.
+
+Each group lives in the calling repository, under a prefix per
+workflow: `blockr-ci-`, `blockr-release-` and `blockr-release-gate-`.
+The prefixes are spelled out rather than taken from
+`${{ github.workflow }}`: in a called workflow that resolves to the
+caller's name, and a group that caller and called workflow share
+cancels the caller.
+
+The `pkgdown.yaml` build never cancels. Every run publishes the same
+site, so builds run one at a time per repository: a push that arrives
+mid-build waits for it and replaces any older push still waiting, and
+the newest build is the last to land.
+
 ### Reverse dependencies before a CRAN submission
 
 The `revdep.yaml` workflow answers the development-state question: it
@@ -798,6 +845,7 @@ jobs:
 - **CRAN pre-submission checks** — AddressSanitizer, UndefinedBehaviorSanitizer, valgrind, `rchk` and the Suggests-free build in the R-hub containers, plus a CRAN-style reverse dependency check, on every push to a labelled release PR — see [Release mode](#release-mode)
 - **Mechanical release checks** — the checklist half of a release, gated on every push to a labelled release PR instead of ticked by hand: three-component version, no dev-version pins, no `Remotes`, `NEWS.md` shape, real vignette titles, a `\value` on every documented function, and a README current with its source. Reports spelling, URL and `--as-cran` findings alongside without gating on them — see [`release-gate.yaml`](#release-gateyaml--mechanical-release-checks-optional)
 - **pkgdown deploy** — site build + deploy to GitHub Pages on push to `main`, via the `gh-pages` branch or, with `deploy: actions`, straight from Actions
+- **Superseded runs cancelled** — a push to a pull request cancels the `ci`, `release` and `release-gate` runs still checking the commit it replaces, and pkgdown builds take turns so the newest lands last — see [Superseded runs](#superseded-runs)
 - **Pinned Quarto** — jobs that install Quarto (any package holding a `.qmd`) pass an explicit version instead of the action's `release` default, which resolves the version through an unretried `curl` to quarto.org and has twice killed a green run — see [Quarto pin](#quarto-pin)
 - **Hard-dependency resolution on `lint` and `docs`** — neither job runs the suite or builds a site, so both skip the `Suggests` closure and the 125 MB Chromium that a `chromote` / `shinytest2` suggestion drags in — see [Suggests on the lint and docs jobs](#suggests-on-the-lint-and-docs-jobs)
 - **parse-deps** — pin a downstream revdep ref via a `` ```deps `` block in the PR body, read fresh when the merge queue runs revdep
