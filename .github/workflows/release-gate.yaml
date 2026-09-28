@@ -30,6 +30,9 @@
 #
 #   jobs:
 #     release-gate:
+#       if: >-
+#         github.event.action != 'labeled' ||
+#         github.event.label.name == 'release'
 #       uses: BristolMyersSquibb/blockr.ci/.github/workflows/release-gate.yaml@main
 #       secrets:
 #         BLOCKR_PAT: ${{ secrets.BLOCKR_PAT }}
@@ -56,7 +59,7 @@
 # "needs no secrets" a real property: nbenn/typedjson does not use
 # ci.yaml and is the package most in need of this gate.
 #
-# ── Trigger, and why the caller carries no `if:` ────────────────────
+# ── Trigger, and why the caller's `if:` only filters labels ─────────
 #
 # Same shape as release.yaml: gated on the `release` label being
 # *present*, which holds on every subsequent push, with `labeled` in the
@@ -64,8 +67,12 @@
 # that is already pushed.  Per #52, gating the *caller* removes the
 # nested contexts entirely, leaving a required
 # `release-gate / release-gate-all` stuck at "Expected — waiting for
-# status"; an absent context is not a skipped one.  So the caller runs
-# on every event and only the inner jobs are conditional.
+# status"; an absent context is not a skipped one.  So the inner jobs
+# carry the label condition, and the caller skips only a label other
+# than `release`, which would otherwise re-run every check on a commit
+# already checked.  That commit already has an `opened`, `synchronize`
+# or `reopened` run reporting `release-gate-all`, so skipping the label
+# event strands nothing.
 #
 # The `merge_group` ref passes through, as in release.yaml.  There is no
 # pull request and no label at the queue, so the label-gated jobs cannot
@@ -150,6 +157,14 @@ on:
         required: false
 
 name: release-gate
+
+# One run per pull request at a time, as in ci.yaml — see there for the
+# group and its prefix.  That also orders the writes to the sticky
+# comment: runs for one pull request never overlap, so a run for an
+# older commit cannot overwrite the comment for a newer one.
+concurrency:
+  group: blockr-release-gate-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event.action == 'synchronize' }}
 
 # Pinned rather than left at the action's 'release' default, which
 # resolves the version at job time through an unretried curl of

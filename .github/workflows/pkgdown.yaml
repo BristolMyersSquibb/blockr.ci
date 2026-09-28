@@ -91,8 +91,13 @@ jobs:
 
     timeout-minutes: 60
 
+    # One group for the whole repository, since every run publishes the
+    # same site — in the default branch mode, by pushing gh-pages from
+    # this job.  Queued like `deploy` below, so the newest build lands
+    # last.
     concurrency:
-      group: pkgdown-${{ github.run_id }}
+      group: blockr-pkgdown
+      cancel-in-progress: false
 
     env:
       GITHUB_PAT: ${{ secrets.BLOCKR_PAT || github.token }}
