@@ -24,6 +24,13 @@ inputs:
       (owner/repo). Used by the revdep workflow.
     required: false
     default: ''
+  token:
+    description: >
+      Token for reading pkg's branches and pull requests, which the ref is
+      checked against.  Pass the token that checks pkg out, since pkg may
+      be private.
+    required: false
+    default: ${{ github.token }}
   base-packages:
     description: >
       Newline-separated pak refs that form the extra-packages output.
@@ -37,7 +44,11 @@ outputs:
     description: Newline-separated pak refs for setup-r-dependencies.
     value: ${{ steps.parse.outputs.extra-packages }}
   ref:
-    description: Git ref for the requested package, empty if not found.
+    description: >
+      Git ref for the requested package, empty if not found: a branch of
+      pkg (refs/heads/<branch>) or a pull request opened from one
+      (refs/pull/N/head).  An entry for pkg that resolves to anything else
+      fails the action.
     value: ${{ steps.parse.outputs.ref }}
 
 runs:
@@ -56,6 +67,7 @@ runs:
         PR_NUMBER: ${{ inputs.pr-number }}
         GH_TOKEN: ${{ github.token }}
         PKG: ${{ inputs.pkg }}
+        PKG_TOKEN: ${{ inputs.token }}
         BASE_PACKAGES: ${{ inputs.base-packages }}
         SCRIPT_DIR: ${{ github.action_path }}
       run: bash "$SCRIPT_DIR/parse-deps.sh"

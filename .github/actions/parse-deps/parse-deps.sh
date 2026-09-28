@@ -4,8 +4,8 @@
 # extraction); everything that involves package metadata is delegated to
 # parse-deps.R, which uses pkgdepends (the tool that owns the syntax).
 #
-# Env vars: PR_BODY, PR_NUMBER, GH_TOKEN, PKG, BASE_PACKAGES, GITHUB_OUTPUT,
-#           SCRIPT_DIR
+# Env vars: PR_BODY, PR_NUMBER, GH_TOKEN, PKG, PKG_TOKEN, BASE_PACKAGES,
+#           GITHUB_OUTPUT, SCRIPT_DIR
 
 set -euo pipefail
 
@@ -46,5 +46,10 @@ export DEPS_LINES DESC_PATH
 export PKG="${PKG:-}"
 export BASE_PACKAGES="${BASE_PACKAGES:-}"
 export GITHUB_OUTPUT="${GITHUB_OUTPUT:-}"
+
+# The ref parse-deps.R emits is checked against PKG's own branches and pull
+# requests. PKG may be private, where this repository's token can't see it,
+# so those lookups use the token that checks PKG out.
+export GH_TOKEN="${PKG_TOKEN:-${GH_TOKEN:-}}"
 
 Rscript --no-save --no-restore "$SCRIPT_DIR/parse-deps.R"
