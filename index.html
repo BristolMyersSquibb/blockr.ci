@@ -63,6 +63,7 @@
 <div class="section level2">
 <h2 id="usage">Usage<a class="anchor" aria-label="anchor" href="#usage"></a>
 </h2>
+<p>The examples track <code>@main</code>, as the blockr packages do. To pin a release instead, see <a href="#versions">Versions</a>.</p>
 <p>Consumer repo <code>.github/workflows/</code>:</p>
 <div class="section level3">
 <h3 id="ciyaml--pr--merge-queue-gate">
@@ -514,6 +515,25 @@
 <p>Each action’s script is exercised by <code>bats</code> under <code>.github/actions/tests/</code>, which <code>bats.yaml</code> runs on any change below <code>.github/actions/</code>.</p>
 </div>
 <div class="section level2">
+<h2 id="versions">Versions<a class="anchor" aria-label="anchor" href="#versions"></a>
+</h2>
+<p>Releases are tagged <code>v1.2.3</code> and published as immutable GitHub releases. A caller that would rather hold a known-good version than track <code>@main</code> pins the tag, or the commit it names with the tag in a trailing comment:</p>
+<div class="sourceCode" id="cb13"><pre class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb13-1"><a href="#cb13-1" tabindex="-1"></a><span class="fu">jobs</span><span class="kw">:</span></span>
+<span id="cb13-2"><a href="#cb13-2" tabindex="-1"></a><span class="at">  </span><span class="fu">ci</span><span class="kw">:</span></span>
+<span id="cb13-3"><a href="#cb13-3" tabindex="-1"></a><span class="at">    </span><span class="fu">uses</span><span class="kw">:</span><span class="at"> BristolMyersSquibb/blockr.ci/.github/workflows/ci.yaml@v0.1.0</span></span></code></pre></div>
+<div class="sourceCode" id="cb14"><pre class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb14-1"><a href="#cb14-1" tabindex="-1"></a><span class="fu">uses</span><span class="kw">:</span><span class="at"> BristolMyersSquibb/blockr.ci/.github/workflows/ci.yaml@&lt;sha&gt;</span><span class="co"> # v0.1.0</span></span></code></pre></div>
+<p>With a <code>.github/dependabot.yml</code> like the one below, Dependabot then proposes each upgrade as a pull request, in either form, and rewrites the comment along with the SHA:</p>
+<div class="sourceCode" id="cb15"><pre class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb15-1"><a href="#cb15-1" tabindex="-1"></a><span class="fu">version</span><span class="kw">:</span><span class="at"> </span><span class="dv">2</span></span>
+<span id="cb15-2"><a href="#cb15-2" tabindex="-1"></a><span class="fu">updates</span><span class="kw">:</span></span>
+<span id="cb15-3"><a href="#cb15-3" tabindex="-1"></a><span class="at">  </span><span class="kw">-</span><span class="at"> </span><span class="fu">package-ecosystem</span><span class="kw">:</span><span class="at"> github-actions</span></span>
+<span id="cb15-4"><a href="#cb15-4" tabindex="-1"></a><span class="at">    </span><span class="fu">directory</span><span class="kw">:</span><span class="at"> /</span></span>
+<span id="cb15-5"><a href="#cb15-5" tabindex="-1"></a><span class="at">    </span><span class="fu">schedule</span><span class="kw">:</span></span>
+<span id="cb15-6"><a href="#cb15-6" tabindex="-1"></a><span class="at">      </span><span class="fu">interval</span><span class="kw">:</span><span class="at"> weekly</span></span></code></pre></div>
+<p>Tagging <code>main</code> as it stands would pin little. The workflows call this repository’s own actions at <code>@main</code>, and <code>uses:</code> takes no expression, so a caller on <code>ci.yaml@v0.1.0</code> would still run whatever <code>main</code> holds for <code>parse-deps</code>. Each release is therefore cut from a commit of its own, on top of <code>main</code>, that points those references at the release’s tag. The commit sits on no branch; its tag is the only ref that reaches it.</p>
+<p>A caller pinning the SHA still reaches the actions through the tag, so the tag has to stay put. Immutability is what holds it there: a published release’s tag can’t be moved, and even deleting the release does not free the tag name for another commit.</p>
+<p>To cut a release, run the <code>tag</code> workflow on <code>main</code> with the version, from the Actions tab or as <code>gh workflow run tag.yaml -f version=1.2.3</code>. It commits the rewrite, pushes the tag, publishes the release with generated notes, and fails if the release came out mutable, which it does when “Enable release immutability” is off under Settings → General → Releases. Bump the major version for a release that asks something of callers: a removed input, a renamed required check, a scope they now have to grant. Below 1.0.0, such a release bumps the minor version instead.</p>
+</div>
+<div class="section level2">
 <h2 id="pipeline">Pipeline<a class="anchor" aria-label="anchor" href="#pipeline"></a>
 </h2>
 <table class="table">
@@ -878,17 +898,17 @@
 <div class="section level3">
 <h3 id="example-with-inputs">Example with inputs<a class="anchor" aria-label="anchor" href="#example-with-inputs"></a>
 </h3>
-<div class="sourceCode" id="cb13"><pre class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb13-1"><a href="#cb13-1" tabindex="-1"></a><span class="fu">jobs</span><span class="kw">:</span></span>
-<span id="cb13-2"><a href="#cb13-2" tabindex="-1"></a><span class="at">  </span><span class="fu">ci</span><span class="kw">:</span></span>
-<span id="cb13-3"><a href="#cb13-3" tabindex="-1"></a><span class="at">    </span><span class="fu">uses</span><span class="kw">:</span><span class="at"> BristolMyersSquibb/blockr.ci/.github/workflows/ci.yaml@main</span></span>
-<span id="cb13-4"><a href="#cb13-4" tabindex="-1"></a><span class="at">    </span><span class="fu">with</span><span class="kw">:</span></span>
-<span id="cb13-5"><a href="#cb13-5" tabindex="-1"></a><span class="at">      </span><span class="fu">coverage-threshold</span><span class="kw">:</span><span class="at"> </span><span class="dv">80</span></span>
-<span id="cb13-6"><a href="#cb13-6" tabindex="-1"></a><span class="fu">      lintr-exclusions</span><span class="kw">: </span><span class="ch">|</span></span>
-<span id="cb13-7"><a href="#cb13-7" tabindex="-1"></a>        vignettes/foo.qmd</span>
-<span id="cb13-8"><a href="#cb13-8" tabindex="-1"></a>        vignettes/bar.qmd</span>
-<span id="cb13-9"><a href="#cb13-9" tabindex="-1"></a><span class="at">    </span><span class="fu">secrets</span><span class="kw">:</span></span>
-<span id="cb13-10"><a href="#cb13-10" tabindex="-1"></a><span class="at">      </span><span class="fu">CODECOV_TOKEN</span><span class="kw">:</span><span class="at"> ${{ secrets.CODECOV_TOKEN }}</span></span>
-<span id="cb13-11"><a href="#cb13-11" tabindex="-1"></a><span class="at">      </span><span class="fu">BLOCKR_PAT</span><span class="kw">:</span><span class="at"> ${{ secrets.BLOCKR_PAT }}</span></span></code></pre></div>
+<div class="sourceCode" id="cb16"><pre class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb16-1"><a href="#cb16-1" tabindex="-1"></a><span class="fu">jobs</span><span class="kw">:</span></span>
+<span id="cb16-2"><a href="#cb16-2" tabindex="-1"></a><span class="at">  </span><span class="fu">ci</span><span class="kw">:</span></span>
+<span id="cb16-3"><a href="#cb16-3" tabindex="-1"></a><span class="at">    </span><span class="fu">uses</span><span class="kw">:</span><span class="at"> BristolMyersSquibb/blockr.ci/.github/workflows/ci.yaml@main</span></span>
+<span id="cb16-4"><a href="#cb16-4" tabindex="-1"></a><span class="at">    </span><span class="fu">with</span><span class="kw">:</span></span>
+<span id="cb16-5"><a href="#cb16-5" tabindex="-1"></a><span class="at">      </span><span class="fu">coverage-threshold</span><span class="kw">:</span><span class="at"> </span><span class="dv">80</span></span>
+<span id="cb16-6"><a href="#cb16-6" tabindex="-1"></a><span class="fu">      lintr-exclusions</span><span class="kw">: </span><span class="ch">|</span></span>
+<span id="cb16-7"><a href="#cb16-7" tabindex="-1"></a>        vignettes/foo.qmd</span>
+<span id="cb16-8"><a href="#cb16-8" tabindex="-1"></a>        vignettes/bar.qmd</span>
+<span id="cb16-9"><a href="#cb16-9" tabindex="-1"></a><span class="at">    </span><span class="fu">secrets</span><span class="kw">:</span></span>
+<span id="cb16-10"><a href="#cb16-10" tabindex="-1"></a><span class="at">      </span><span class="fu">CODECOV_TOKEN</span><span class="kw">:</span><span class="at"> ${{ secrets.CODECOV_TOKEN }}</span></span>
+<span id="cb16-11"><a href="#cb16-11" tabindex="-1"></a><span class="at">      </span><span class="fu">BLOCKR_PAT</span><span class="kw">:</span><span class="at"> ${{ secrets.BLOCKR_PAT }}</span></span></code></pre></div>
 </div>
 </div>
 <div class="section level2">
@@ -1084,10 +1104,10 @@ Remotes:
 <h3 id="per-pr-revdep-refs">Per-PR revdep refs<a class="anchor" aria-label="anchor" href="#per-pr-revdep-refs"></a>
 </h3>
 <p>The deps block in a PR body controls which ref of each revdep gets checked out for the <strong>revdep job</strong> — nothing else. It is not a mechanism for overriding forward dependencies; those belong in <code>Remotes:</code> in <code>DESCRIPTION</code>.</p>
-<div class="sourceCode" id="cb17"><pre class="sourceCode markdown"><code class="sourceCode markdown"><span id="cb17-1"><a href="#cb17-1" tabindex="-1"></a><span class="in">```deps</span></span>
-<span id="cb17-2"><a href="#cb17-2" tabindex="-1"></a><span class="in">BristolMyersSquibb/blockr.dag#111</span></span>
-<span id="cb17-3"><a href="#cb17-3" tabindex="-1"></a><span class="in">BristolMyersSquibb/blockr.ai@my-feature-branch</span></span>
-<span id="cb17-4"><a href="#cb17-4" tabindex="-1"></a><span class="in">```</span></span></code></pre></div>
+<div class="sourceCode" id="cb20"><pre class="sourceCode markdown"><code class="sourceCode markdown"><span id="cb20-1"><a href="#cb20-1" tabindex="-1"></a><span class="in">```deps</span></span>
+<span id="cb20-2"><a href="#cb20-2" tabindex="-1"></a><span class="in">BristolMyersSquibb/blockr.dag#111</span></span>
+<span id="cb20-3"><a href="#cb20-3" tabindex="-1"></a><span class="in">BristolMyersSquibb/blockr.ai@my-feature-branch</span></span>
+<span id="cb20-4"><a href="#cb20-4" tabindex="-1"></a><span class="in">```</span></span></code></pre></div>
 <p>Each line is <code>owner/repo@branch</code> or <code>owner/repo#PR-number</code>, naming the downstream as <code>revdep-packages</code> lists it. The matching revdep job checks out that ref instead of the default branch.</p>
 <p>That job runs the code it checks out with <code>BLOCKR_PAT</code> in its environment, so an entry can only point it at code already in the downstream repository: after <code>@</code> one of its branches, after <code>#</code> one of its pull requests opened from a branch of that same repository. An entry naming another repository, a pull request from a fork, or a SHA, tag or <code>refs/…</code> path after <code>@</code> fails the job with the entry named. To check against a contributor’s fork, push the branch to the downstream repository and name it there.</p>
 <p><code>parse-deps</code> validates each entry against the package’s <code>DESCRIPTION</code>: if a deps-block entry’s package name appears in <code>Imports</code>/<code>Depends</code>/<code>LinkingTo</code>/<code>Suggests</code>/<code>Remotes</code>, parse-deps fails with a pointer to <code>Remotes:</code>. This catches the common mistake of trying to use the deps block to swap in a dev branch of a forward dep.</p>
@@ -1101,9 +1121,9 @@ Remotes:
 <li><p>Open your PR on <code>blockr.dock</code>. The configured <code>revdep-packages</code> input includes <code>BristolMyersSquibb/blockr.dag</code>, so the revdep job runs against <code>blockr.dag</code>’s default branch by default.</p></li>
 <li>
 <p>To pin it to a specific PR, add to the PR body:</p>
-<div class="sourceCode" id="cb18"><pre class="sourceCode markdown"><code class="sourceCode markdown"><span id="cb18-1"><a href="#cb18-1" tabindex="-1"></a><span class="in">```deps</span></span>
-<span id="cb18-2"><a href="#cb18-2" tabindex="-1"></a><span class="in">BristolMyersSquibb/blockr.dag#111</span></span>
-<span id="cb18-3"><a href="#cb18-3" tabindex="-1"></a><span class="in">```</span></span></code></pre></div>
+<div class="sourceCode" id="cb21"><pre class="sourceCode markdown"><code class="sourceCode markdown"><span id="cb21-1"><a href="#cb21-1" tabindex="-1"></a><span class="in">```deps</span></span>
+<span id="cb21-2"><a href="#cb21-2" tabindex="-1"></a><span class="in">BristolMyersSquibb/blockr.dag#111</span></span>
+<span id="cb21-3"><a href="#cb21-3" tabindex="-1"></a><span class="in">```</span></span></code></pre></div>
 </li>
 <li><p>When the PR is enqueued, the merge-queue revdep job reads the block and checks out <code>blockr.dag</code> PR #111 head instead of the default branch.</p></li>
 <li><p>To point at a different PR later, edit the block and re-enqueue.</p></li>
