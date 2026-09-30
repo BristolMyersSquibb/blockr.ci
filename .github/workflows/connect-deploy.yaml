@@ -186,7 +186,7 @@ jobs:
       # setup-r / setup-r-dependencies are apt-only; this is their RHEL analogue
       # (centos-8 R + pak, resolving sysreqs via dnf, keeping LinkingTo deps).
       - if: github.event_name == 'merge_group'
-        uses: BristolMyersSquibb/blockr.ci/.github/actions/setup-r-rhel@main
+        uses: $/.github/actions/setup-r-rhel
         with:
           r-version: ${{ inputs.r-version }}
           repos: ${{ inputs.repos }}
@@ -210,7 +210,7 @@ jobs:
       # Fail the deploy if a deploy-optional Suggests is installed but missing
       # from the manifest, so it can't silently never reach Connect.
       - if: github.event_name == 'merge_group'
-        uses: BristolMyersSquibb/blockr.ci/.github/actions/check-suggests@main
+        uses: $/.github/actions/check-suggests
         with:
           content-dir: ${{ inputs.content-dir }}
 

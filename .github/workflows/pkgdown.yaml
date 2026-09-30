@@ -125,7 +125,7 @@ jobs:
         with:
           use-public-rspm: true
 
-      - uses: BristolMyersSquibb/blockr.ci/.github/actions/parse-deps@main
+      - uses: $/.github/actions/parse-deps
         id: deps
         with:
           pr-body: ''

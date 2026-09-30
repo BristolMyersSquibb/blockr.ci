@@ -201,7 +201,7 @@ jobs:
           r-version: release
           use-public-rspm: true
 
-      - uses: BristolMyersSquibb/blockr.ci/.github/actions/release-gate@main
+      - uses: $/.github/actions/release-gate
         with:
           # Written outside the workspace on purpose: the readme job
           # below fails on a dirty tree, and a fragment dropped into the
@@ -266,7 +266,7 @@ jobs:
           r-version: release
           use-public-rspm: true
 
-      - uses: BristolMyersSquibb/blockr.ci/.github/actions/parse-deps@main
+      - uses: $/.github/actions/parse-deps
         id: deps
         with:
           pr-body: ${{ github.event.pull_request.body }}
@@ -285,7 +285,7 @@ jobs:
             ${{ steps.readme.outputs.extra }}
           quarto-version: ${{ env.QUARTO_VERSION }}
 
-      - uses: BristolMyersSquibb/blockr.ci/.github/actions/release-docs@main
+      - uses: $/.github/actions/release-docs
         with:
           summary-file: ${{ runner.temp }}/parts/20-docs.md
 
@@ -334,7 +334,7 @@ jobs:
           r-version: release
           use-public-rspm: true
 
-      - uses: BristolMyersSquibb/blockr.ci/.github/actions/parse-deps@main
+      - uses: $/.github/actions/parse-deps
         id: deps
         with:
           pr-body: ${{ github.event.pull_request.body }}
@@ -350,7 +350,7 @@ jobs:
           extra-packages: ${{ steps.deps.outputs.extra-packages }}
           needs: check
 
-      - uses: BristolMyersSquibb/blockr.ci/.github/actions/release-soft@main
+      - uses: $/.github/actions/release-soft
         with:
           summary-file: ${{ runner.temp }}/parts/30-soft.md
 
@@ -468,7 +468,7 @@ jobs:
 
           echo "Composed $(wc -l < comment.md) lines."
 
-      - uses: BristolMyersSquibb/blockr.ci/.github/actions/sticky-comment@main
+      - uses: $/.github/actions/sticky-comment
         with:
           marker: '<!-- release-gate -->'
           body-file: comment.md
