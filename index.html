@@ -132,6 +132,7 @@
 <span id="cb4-13"><a href="#cb4-13" tabindex="-1"></a><span class="at">    </span><span class="fu">secrets</span><span class="kw">:</span></span>
 <span id="cb4-14"><a href="#cb4-14" tabindex="-1"></a><span class="at">      </span><span class="fu">BLOCKR_PAT</span><span class="kw">:</span><span class="at"> ${{ secrets.BLOCKR_PAT }}</span></span></code></pre></div>
 <p>Pass secrets by name. <code>secrets: inherit</code> does not forward secrets across organisations — the inherited values silently arrive blank in the called job.</p>
+<p>Each leg installs the downstream’s dependencies and the upstream in one resolution, the upstream with its Suggests and built from the commit the queue is testing, even where the downstream’s <code>Remotes</code> pin it to a branch. When the two packages’ <code>Remotes</code> pin some other package to different commits, that resolution fails, and the leg with it: no library can hold both.</p>
 </div>
 <div class="section level3">
 <h3 id="releaseyaml--cran-pre-submission-checks-optional">
