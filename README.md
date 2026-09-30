@@ -6,6 +6,9 @@ Reusable GitHub Actions CI workflows for the [blockr](https://bristolmyerssquibb
 
 ## Usage
 
+The examples track `@main`, as the blockr packages do. To pin a release
+instead, see [Versions](#versions).
+
 Consumer repo `.github/workflows/`:
 
 ### `ci.yaml` — PR + merge-queue gate
@@ -603,6 +606,58 @@ too, and callable the same way.
 Each action's script is exercised by `bats` under
 `.github/actions/tests/`, which `bats.yaml` runs on any change below
 `.github/actions/`.
+
+## Versions
+
+Releases are tagged `v1.2.3` and published as immutable GitHub
+releases. A caller that would rather hold a known-good version than
+track `@main` pins the tag, or the commit it names with the tag in a
+trailing comment:
+
+```yaml
+jobs:
+  ci:
+    uses: BristolMyersSquibb/blockr.ci/.github/workflows/ci.yaml@v0.1.0
+```
+
+```yaml
+uses: BristolMyersSquibb/blockr.ci/.github/workflows/ci.yaml@<sha> # v0.1.0
+```
+
+With a `.github/dependabot.yml` like the one below, Dependabot then
+proposes each upgrade as a pull request, in either form, and rewrites
+the comment along with the SHA:
+
+```yaml
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+```
+
+Tagging `main` as it stands would pin little. The workflows call this
+repository's own actions at `@main`, and `uses:` takes no expression, so
+a caller on `ci.yaml@v0.1.0` would still run whatever `main` holds for
+`parse-deps`. Each release is therefore cut from a commit of its own, on
+top of `main`, that points those references at the release's tag. The
+commit sits on no branch; its tag is the only ref that reaches it.
+
+A caller pinning the SHA still reaches the actions through the tag, so
+the tag has to stay put. Immutability is what holds it there: a
+published release's tag can't be moved, and even deleting the release
+does not free the tag name for another commit.
+
+To cut a release, run the `tag` workflow on `main` with the version,
+from the Actions tab or as `gh workflow run tag.yaml -f version=1.2.3`.
+It commits the rewrite, pushes the tag, publishes the release with
+generated notes, and fails if the release came out mutable, which it
+does when "Enable release immutability" is off under Settings →
+General → Releases. Bump the major version for a release that asks
+something of callers: a removed input, a renamed required check, a
+scope they now have to grant. Below 1.0.0, such a release bumps the
+minor version instead.
 
 ## Pipeline
 
