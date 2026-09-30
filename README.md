@@ -147,13 +147,19 @@ queued commit, without gating:
 
 Those legs run in the `revdep-info` job, which `revdep-all` does not
 wait for, so neither a failure there nor a slow leg holds the queue.
-Once the last of them finishes, the `report` job writes their outcome
-into one comment on the pull request, rewritten on each queue run, and
-into its own job summary. The comment can land after the merge, which
-is enough for a tier that informs rather than gates. Each row links its
-leg's log, and a leg that did not pass also gets the downstream's own
-workflow runs at the head of its default branch, so a failure the
-downstream already has there reads as such.
+The job starts only once `revdep-all` has reported, and runs at most
+four legs at a time. An account runs a limited number of jobs at once
+across all its repositories, 20 on GitHub's free plan, so informational
+legs started beside the strict ones could leave those waiting for a
+runner.
+
+Once the last informational leg finishes, the `report` job writes their
+outcome into one comment on the pull request, rewritten on each queue
+run, and into its own job summary. The comment can land after the
+merge, which is enough for a tier that informs rather than gates. Each
+row links its leg's log, and a leg that did not pass also gets the
+downstream's own workflow runs at the head of its default branch, so a
+failure the downstream already has there reads as such.
 
 A downstream goes in one list or the other. One listed in both fails
 the `matrix` job, and `revdep-all` with it.
@@ -706,7 +712,7 @@ bumps the minor version instead.
 | Trigger | Jobs |
 |---|---|
 | `pull_request` | `lint`, `smoke`, `pkgdown-dev`, `coverage`, `docs` (parallel) |
-| `merge_group` | `check` matrix → `check-all`; `revdep` matrix → `revdep-all` (if configured); `revdep-info` matrix → `report`, gating nothing (if configured) |
+| `merge_group` | `check` matrix → `check-all`; `revdep` matrix → `revdep-all` (if configured), then `revdep-info` matrix → `report`, gating nothing (if configured) |
 | `push: main` | `pkgdown.yaml` deploy (if configured) |
 
 PR jobs run in parallel for fast feedback. The expensive multi-platform
@@ -892,7 +898,7 @@ release.
 | Input | Type | Default | Purpose |
 |---|---|---|---|
 | `revdep-packages` | newline-separated list | `''` | Downstream packages to reverse-dep check. A failing leg fails `revdep-all`, so these gate the merge. |
-| `revdep-info-packages` | newline-separated list | `''` | Downstream packages checked the same way without gating the merge. Their outcome goes to the pull request as one comment. See [Informational downstreams](#informational-downstreams). |
+| `revdep-info-packages` | newline-separated list | `''` | Downstream packages checked the same way without gating the merge, once `revdep-all` has reported and four at a time at most. Their outcome goes to the pull request as one comment. See [Informational downstreams](#informational-downstreams). |
 
 ### `release.yaml`
 

@@ -35,10 +35,10 @@
 # merge through `revdep-all`, the one required check, so each one added
 # makes its flaky tests the upstream's merge-queue problem.  Those in
 # `revdep-info-packages` are checked the same way, on the same queued
-# commit, but nothing waits on them: the queue merges on the strict tier
-# alone, and the `report` job posts the informational outcome to the pull
-# request as one comment once the last of those legs finishes, which can
-# be after the merge.
+# commit, once `revdep-all` has reported, and nothing waits on them: the
+# queue merges on the strict tier alone, and the `report` job posts the
+# informational outcome to the pull request as one comment once the last
+# of those legs finishes, which can be after the merge.
 #
 # Every job sets `timeout-minutes: 60` — see ci.yaml for why.  An hour
 # clears the observed revdep runtime (5-7 min per downstream package) by
@@ -59,10 +59,10 @@ on:
       revdep-info-packages:
         description: >
           Newline-separated list of downstream packages to check the same way
-          without gating the merge.  Their legs stay out of `revdep-all`, and
-          their outcome goes to the pull request as one comment, which can
-          land after the merge.  A package goes in one list or the other,
-          not both.
+          without gating the merge.  Their legs start once `revdep-all` has
+          reported, four at a time at most, and their outcome goes to the
+          pull request as one comment, which can land after the merge.  A
+          package goes in one list or the other, not both.
         type: string
         default: ''
         required: false
@@ -348,33 +348,6 @@ jobs:
           path: ${{ runner.temp }}/revdep-info/
           overwrite: true
 
-  # ── Informational reverse-dependency checks ──────────────────────────
-  #
-  # The downstreams in revdep-info-packages, checked by the steps anchored
-  # in `revdep` above, on the same queued commit.  Nothing required waits
-  # on this job, and that is the point of it: `revdep-all` needs only
-  # `matrix` and `revdep`, so a failure here never ejects the pull request,
-  # and a slow leg never holds the queue.
-
-  revdep-info:
-
-    needs: matrix
-
-    if: needs.matrix.outputs.has-info-packages == 'true'
-
-    runs-on: ubuntu-latest
-
-    timeout-minutes: 60
-
-    strategy:
-      fail-fast: false
-      matrix:
-        pkg: ${{ fromJson(needs.matrix.outputs.info-packages) }}
-
-    env: *revdep-env
-
-    steps: *revdep-leg
-
   # ── Aggregate revdep-matrix result for the required-checks list ──────
   #
   # `revdep-all` shields the merge-queue gate from changes to the matrix
@@ -387,9 +360,8 @@ jobs:
   # failed, so aggregating it alone would turn a failed matrix into a
   # green required check.
   #
-  # Needs neither `revdep-info` nor `report`.  Waiting on them would hold
-  # the queue for the informational tier's slowest leg even where its
-  # result is ignored.
+  # Needs neither `revdep-info` nor `report`, which wait on it instead:
+  # the queue has its answer before the informational tier starts.
 
   revdep-all:
 
@@ -414,6 +386,47 @@ jobs:
               *) exit 1 ;;
             esac
           done
+
+  # ── Informational reverse-dependency checks ──────────────────────────
+  #
+  # The downstreams in revdep-info-packages, checked by the steps anchored
+  # in `revdep` above, on the same queued commit.  Nothing required waits
+  # on this job: `revdep-all` needs only `matrix` and `revdep`, so a
+  # failure here never ejects the pull request.
+  #
+  # It starts once `revdep-all` has reported rather than beside the strict
+  # legs, and runs at most four legs at a time.  An account runs a
+  # limited number of jobs at once across all its repositories, 20 on
+  # GitHub's free plan, and a job beyond that waits for a runner.  Started
+  # together with the strict legs, a long informational list could leave
+  # one of them, or `revdep-all` itself, waiting behind it.  Started
+  # after, it competes only with the rest of the account's CI.  That
+  # includes the caller's own `check` matrix and the required `check-all`
+  # after it, which revdep.yaml cannot wait for, so `max-parallel` keeps
+  # its share to four runners.  It runs whether or not the strict tier
+  # passed, since the report is worth having either way.
+
+  revdep-info:
+
+    needs: [matrix, revdep-all]
+
+    if: >-
+      !cancelled() &&
+      needs.matrix.outputs.has-info-packages == 'true'
+
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 60
+
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        pkg: ${{ fromJson(needs.matrix.outputs.info-packages) }}
+
+    env: *revdep-env
+
+    steps: *revdep-leg
 
   # ── One sticky comment for the informational tier ───────────────────
   #
