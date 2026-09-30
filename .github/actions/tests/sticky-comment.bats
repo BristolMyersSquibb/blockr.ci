@@ -9,6 +9,9 @@ setup() {
 
   export GITHUB_REPOSITORY="acme/widget"
   export PR_NUMBER=7
+  # Blanked because the bats job itself runs inside Actions, where this
+  # is set, and a queue ref would stand in for an empty PR_NUMBER.
+  export GITHUB_REF=""
   export MARKER="<!-- release-gate -->"
   export BODY_FILE="$BATS_TEST_TMPDIR/body.md"
   export GH_LOG="$BATS_TEST_TMPDIR/gh.log"
@@ -141,6 +144,39 @@ BODY
   # No log file at all is the proof that gh was never reached.
   run test -e "$GH_LOG"
   assert_failure
+}
+
+# The merge-queue event carries no pull request, which is where
+# revdep.yaml's report job comments from.
+@test "merge queue: the pull request is read from the queue ref" {
+  export PR_NUMBER=""
+  export GITHUB_REF="refs/heads/gh-readonly-queue/main/pr-364-6161b4af40eeff93f184487af8155474639b35d0"
+
+  run bash "$SCRIPT"
+  assert_success
+
+  run cat "$GH_LOG"
+  assert_output --partial "issues/364/comments"
+}
+
+@test "a pull-request number given explicitly wins over the queue ref" {
+  export GITHUB_REF="refs/heads/gh-readonly-queue/main/pr-364-6161b4af40eeff93f184487af8155474639b35d0"
+
+  run bash "$SCRIPT"
+  assert_success
+
+  run cat "$GH_LOG"
+  assert_output --partial "issues/7/comments"
+  refute_output --partial "364"
+}
+
+@test "a ref other than the queue's does not stand in for the number" {
+  export PR_NUMBER=""
+  export GITHUB_REF="refs/heads/main"
+
+  run bash "$SCRIPT"
+  assert_success
+  assert_output --partial "nothing to comment on"
 }
 
 @test "a missing body file is an error, not a silent skip" {

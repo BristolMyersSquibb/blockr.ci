@@ -1,0 +1,45 @@
+name: Informational revdep report
+description: >
+  Compose the pull-request comment for revdep.yaml's informational tier:
+  one row per downstream with the outcome its leg recorded, and for a leg
+  that did not pass, the workflow runs at the head of the downstream's
+  own default branch, so a failure the downstream already has reads as
+  such.  Writes the body to a file for sticky-comment, and to
+  $GITHUB_STEP_SUMMARY.
+
+inputs:
+  packages:
+    description: >
+      JSON array of the informational downstreams, as owner/repo.  Each
+      one gets a row, whether or not its leg recorded an outcome.
+    required: true
+  outcomes-dir:
+    description: >
+      Directory holding the outcome each leg recorded: one JSON file per
+      leg, with `pkg`, `status` (the leg's job.status) and `job` (its
+      check run id, which links the row to the leg's log).
+    required: true
+  body-file:
+    description: >
+      Path the comment body is written to, as markdown.
+    required: true
+  token:
+    description: >
+      Token for reading each downstream's default branch and workflow
+      runs.  Pass the one that checks the downstreams out, since one may
+      be private; there it also needs Actions read access.
+    required: false
+    default: ${{ github.token }}
+
+runs:
+  using: composite
+  steps:
+    - name: Compose the report
+      shell: bash
+      env:
+        PACKAGES: ${{ inputs.packages }}
+        OUTCOMES_DIR: ${{ inputs.outcomes-dir }}
+        BODY_FILE: ${{ inputs.body-file }}
+        GH_TOKEN: ${{ inputs.token }}
+        SCRIPT_DIR: ${{ github.action_path }}
+      run: bash "$SCRIPT_DIR/revdep-report.sh"
