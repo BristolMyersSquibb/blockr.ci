@@ -16,7 +16,7 @@
 #       if: github.event_name == 'merge_group'
 #       uses: BristolMyersSquibb/blockr.ci/.github/workflows/revdep.yaml@main
 #       with:
-#         revdep-packages: |
+#         revdep-strict: |
 #           BristolMyersSquibb/blockr.dock
 #       secrets:
 #         BLOCKR_PAT: ${{ secrets.BLOCKR_PAT }}
@@ -31,11 +31,11 @@
 # across organisations — the inherited values silently arrive blank in
 # the called job.
 #
-# Downstreams come in two tiers.  Those in `revdep-packages` gate the
+# Downstreams come in two tiers.  Those in `revdep-strict` gate the
 # merge through `revdep-all`, the one required check, so each one added
 # makes its flaky tests the upstream's merge-queue problem.  Those in
-# `revdep-info-packages` are checked the same way, on the same queued
-# commit, once `revdep-all` has reported, and nothing waits on them: the
+# `revdep-info` are checked the same way, on the same queued commit,
+# once `revdep-all` has reported, and nothing waits on them: the
 # queue merges on the strict tier alone, and the `report` job posts the
 # informational outcome to the pull request as one comment once the last
 # of those legs finishes, which can be after the merge.
@@ -48,7 +48,7 @@ on:
   workflow_call:
     inputs:
 
-      revdep-packages:
+      revdep-strict:
         description: >
           Newline-separated list of downstream packages to reverse-dependency
           check.  A failing leg fails `revdep-all`, so these gate the merge.
@@ -56,7 +56,7 @@ on:
         default: ''
         required: false
 
-      revdep-info-packages:
+      revdep-info:
         description: >
           Newline-separated list of downstream packages to check the same way
           without gating the merge.  Their legs start once `revdep-all` has
@@ -86,6 +86,14 @@ on:
           the default, runs the whole suite.  A filter matching nothing is an
           error rather than an empty pass.  Ignored unless
           `revdep-test-upstream` is set.
+        type: string
+        default: ''
+        required: false
+
+      revdep-packages:
+        description: >
+          DEPRECATED.  The old name of revdep-strict, still added to it,
+          with a warning in the run, until a later release removes it.
         type: string
         default: ''
         required: false
@@ -133,7 +141,11 @@ jobs:
   # informational at once.  That is most likely a move from one list to
   # the other left half done, and only the caller can say which list it
   # belongs in, so the job fails and names the package.  Repository names
-  # are compared without case, as GitHub resolves them.
+  # are compared without case, as GitHub resolves them, and a name listed
+  # twice runs once.
+  #
+  # The deprecated `revdep-packages` still feeds the strict list, so that
+  # callers written before the rename keep checking what they did.
 
   matrix:
 
@@ -144,40 +156,49 @@ jobs:
     timeout-minutes: 60
 
     outputs:
-      packages: ${{ steps.build.outputs.packages }}
-      has-packages: ${{ steps.build.outputs.has-packages }}
-      info-packages: ${{ steps.build.outputs.info-packages }}
-      has-info-packages: ${{ steps.build.outputs.has-info-packages }}
+      strict: ${{ steps.build.outputs.strict }}
+      has-strict: ${{ steps.build.outputs.has-strict }}
+      info: ${{ steps.build.outputs.info }}
+      has-info: ${{ steps.build.outputs.has-info }}
 
     steps:
       - name: Build revdep matrix
         id: build
         env:
-          INPUT: ${{ inputs.revdep-packages }}
-          INFO_INPUT: ${{ inputs.revdep-info-packages }}
+          STRICT: ${{ inputs.revdep-strict }}
+          INFO: ${{ inputs.revdep-info }}
+          DEPRECATED: ${{ inputs.revdep-packages }}
         run: |
-          # One JSON array per list, entries trimmed, blank lines dropped.
+          # One JSON array per list, entries trimmed, blank lines and repeats
+          # dropped, keeping the first spelling of each name.
           to_json() {
-            echo "$1" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' |
-              jq -R -s -c 'split("\n") | map(select(length > 0))'
+            printf '%s\n' "$@" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' |
+              jq -R -s -c 'split("\n") | map(select(length > 0))
+                | reduce .[] as $p ([];
+                    if any(.[]; ascii_downcase == ($p | ascii_downcase))
+                    then . else . + [$p] end)'
           }
-          json=$(to_json "$INPUT")
-          info=$(to_json "$INFO_INPUT")
+          strict=$(to_json "$STRICT" "$DEPRECATED")
+          info=$(to_json "$INFO")
 
-          both=$(jq -n -r --argjson strict "$json" --argjson info "$info" \
+          if [ "$(to_json "$DEPRECATED")" != "[]" ]; then
+            echo "::warning::The revdep-packages input is deprecated. Rename it to revdep-strict; until then, its list is added to that one."
+          fi
+
+          both=$(jq -n -r --argjson strict "$strict" --argjson info "$info" \
             '[$strict[] | ascii_downcase] as $s
              | [$info[] | select(ascii_downcase | IN($s[]))] | join(", ")')
           if [ -n "$both" ]; then
-            echo "::error::In both revdep-packages and revdep-info-packages: $both. List each downstream once."
+            echo "::error::Listed as both strict and informational: $both. List each downstream once."
             exit 1
           fi
 
           non_empty() { if [ "$1" = "[]" ]; then echo false; else echo true; fi; }
           {
-            echo "packages=${json}"
-            echo "has-packages=$(non_empty "$json")"
-            echo "info-packages=${info}"
-            echo "has-info-packages=$(non_empty "$info")"
+            echo "strict=${strict}"
+            echo "has-strict=$(non_empty "$strict")"
+            echo "info=${info}"
+            echo "has-info=$(non_empty "$info")"
           } >> "$GITHUB_OUTPUT"
 
   # ── Reverse-dependency checks ────────────────────────────────────────
@@ -191,7 +212,7 @@ jobs:
 
     needs: matrix
 
-    if: needs.matrix.outputs.has-packages == 'true'
+    if: needs.matrix.outputs.has-strict == 'true'
 
     runs-on: ubuntu-latest
 
@@ -200,7 +221,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        pkg: ${{ fromJson(needs.matrix.outputs.packages) }}
+        pkg: ${{ fromJson(needs.matrix.outputs.strict) }}
 
     env: &revdep-env
       GITHUB_PAT: ${{ secrets.BLOCKR_PAT || github.token }}
@@ -389,7 +410,7 @@ jobs:
 
   # ── Informational reverse-dependency checks ──────────────────────────
   #
-  # The downstreams in revdep-info-packages, checked by the steps anchored
+  # The downstreams in revdep-info, checked by the steps anchored
   # in `revdep` above, on the same queued commit.  Nothing required waits
   # on this job: `revdep-all` needs only `matrix` and `revdep`, so a
   # failure here never ejects the pull request.
@@ -412,7 +433,7 @@ jobs:
 
     if: >-
       !cancelled() &&
-      needs.matrix.outputs.has-info-packages == 'true'
+      needs.matrix.outputs.has-info == 'true'
 
     runs-on: ubuntu-latest
 
@@ -422,7 +443,7 @@ jobs:
       fail-fast: false
       max-parallel: 4
       matrix:
-        pkg: ${{ fromJson(needs.matrix.outputs.info-packages) }}
+        pkg: ${{ fromJson(needs.matrix.outputs.info) }}
 
     env: *revdep-env
 
@@ -446,7 +467,7 @@ jobs:
 
     if: >-
       !cancelled() &&
-      needs.matrix.outputs.has-info-packages == 'true'
+      needs.matrix.outputs.has-info == 'true'
 
     runs-on: ubuntu-latest
 
@@ -468,7 +489,7 @@ jobs:
       # checked it out, since the downstream may be private.
       - uses: $/.github/actions/revdep-report
         with:
-          packages: ${{ needs.matrix.outputs.info-packages }}
+          packages: ${{ needs.matrix.outputs.info }}
           outcomes-dir: outcomes
           body-file: comment.md
           token: ${{ secrets.BLOCKR_PAT || github.token }}

@@ -97,7 +97,7 @@ jobs:
     if: github.event_name == 'merge_group'
     uses: BristolMyersSquibb/blockr.ci/.github/workflows/revdep.yaml@main
     with:
-      revdep-packages: |
+      revdep-strict: |
         BristolMyersSquibb/blockr.dock
     secrets:
       BLOCKR_PAT: ${{ secrets.BLOCKR_PAT }}
@@ -126,20 +126,20 @@ library can hold both.
 
 #### Informational downstreams
 
-A downstream in `revdep-packages` gates the merge: `revdep-all` fails
+A downstream in `revdep-strict` gates the merge: `revdep-all` fails
 when its leg does, so each one added turns its flaky tests into the
-upstream's merge-queue problem. List a downstream in
-`revdep-info-packages` instead to check it the same way, on the same
-queued commit, without gating:
+upstream's merge-queue problem. List a downstream in `revdep-info`
+instead to check it the same way, on the same queued commit, without
+gating:
 
 ```yaml
   revdep:
     if: github.event_name == 'merge_group'
     uses: BristolMyersSquibb/blockr.ci/.github/workflows/revdep.yaml@main
     with:
-      revdep-packages: |
+      revdep-strict: |
         BristolMyersSquibb/blockr.dock
-      revdep-info-packages: |
+      revdep-info: |
         BristolMyersSquibb/blockr.code
     secrets:
       BLOCKR_PAT: ${{ secrets.BLOCKR_PAT }}
@@ -163,6 +163,10 @@ failure the downstream already has there reads as such.
 
 A downstream goes in one list or the other. One listed in both fails
 the `matrix` job, and `revdep-all` with it.
+
+The `revdep-strict` input used to be called `revdep-packages`. The old
+name still feeds the strict list, with a warning in the run, until a
+later release removes it.
 
 ### `release.yaml` — CRAN pre-submission checks (optional)
 
@@ -244,7 +248,7 @@ reports `release-all`.
 
 The list is per-repo rather than derived, because the relevant flavours
 are partly a maintainer judgement no heuristic recovers. It is also
-stable in a way `revdep-packages` is not: a dependency graph moves under
+stable in a way the `revdep.yaml` lists are not: a dependency graph moves under
 you, while a platform list only changes when a package gains or loses
 compiled code.
 
@@ -891,14 +895,15 @@ release.
 | `r-version` | string | `''` | R version for the PR-leg jobs (lint, smoke, pkgdown-dev, coverage, docs). Default (`''`) runs them on `release`. Set it (e.g. `4.4.2`) for a deploy app pinned to one runtime, so its PR checks — notably the `smoke` R CMD check — exercise the deployment target. The merge-queue `check` matrix is unaffected. Pair with `connect-deploy.yaml`'s `r-version` to gate against the version Connect serves. |
 | `error-on` | string | `''` | R CMD check severity that fails the `smoke` and `check` jobs (passed to `check-r-package`'s `error-on`). Default (`''`) fails on any NOTE (`'"note"'`), holding the 0-errors/0-warnings/0-notes bar. A deploy app that declares unused `Imports` on purpose (so the Connect manifest ships them) sets `'"warning"'` to tolerate the resulting NOTE. |
 | `skip-pkgdown` | boolean | `false` | DEPRECATED — pkgdown moved to `pkgdown.yaml`. No-op. |
-| `revdep-packages` | newline-separated list | `''` | DEPRECATED — moved to `revdep.yaml`. No-op. |
+| `revdep-packages` | newline-separated list | `''` | DEPRECATED — moved to `revdep.yaml`, where it is now `revdep-strict`. No-op. |
 
 ### `revdep.yaml`
 
 | Input | Type | Default | Purpose |
 |---|---|---|---|
-| `revdep-packages` | newline-separated list | `''` | Downstream packages to reverse-dep check. A failing leg fails `revdep-all`, so these gate the merge. |
-| `revdep-info-packages` | newline-separated list | `''` | Downstream packages checked the same way without gating the merge, once `revdep-all` has reported and four at a time at most. Their outcome goes to the pull request as one comment. See [Informational downstreams](#informational-downstreams). |
+| `revdep-strict` | newline-separated list | `''` | Downstream packages to reverse-dep check. A failing leg fails `revdep-all`, so these gate the merge. |
+| `revdep-info` | newline-separated list | `''` | Downstream packages checked the same way without gating the merge, once `revdep-all` has reported and four at a time at most. Their outcome goes to the pull request as one comment. See [Informational downstreams](#informational-downstreams). |
+| `revdep-packages` | newline-separated list | `''` | DEPRECATED — renamed `revdep-strict`. Still added to it, with a warning, until a later release removes it. |
 
 ### `release.yaml`
 
@@ -1298,7 +1303,7 @@ BristolMyersSquibb/blockr.ai@my-feature-branch
 ```
 ````
 
-Each line is `owner/repo@branch` or `owner/repo#PR-number`, naming the downstream as `revdep-packages` or `revdep-info-packages` lists it. The matching revdep job checks out that ref instead of the default branch.
+Each line is `owner/repo@branch` or `owner/repo#PR-number`, naming the downstream as `revdep-strict` or `revdep-info` lists it. The matching revdep job checks out that ref instead of the default branch.
 
 That job runs the code it checks out with `BLOCKR_PAT` in its environment, so an entry can only point it at code already in the downstream repository: after `@` one of its branches, after `#` one of its pull requests opened from a branch of that same repository. An entry naming another repository, a pull request from a fork, or a SHA, tag or `refs/…` path after `@` fails the job with the entry named. To check against a contributor's fork, push the branch to the downstream repository and name it there.
 
@@ -1310,7 +1315,7 @@ The revdep job runs only in the merge queue, and it reads the deps block fresh f
 
 You're working on `blockr.dock` and need the revdep job to test against an in-progress PR on `blockr.dag`:
 
-1. Open your PR on `blockr.dock`. The configured `revdep-packages` input includes `BristolMyersSquibb/blockr.dag`, so the revdep job runs against `blockr.dag`'s default branch by default.
+1. Open your PR on `blockr.dock`. The configured `revdep-strict` input includes `BristolMyersSquibb/blockr.dag`, so the revdep job runs against `blockr.dag`'s default branch by default.
 2. To pin it to a specific PR, add to the PR body:
 
    ````markdown
@@ -1331,5 +1336,5 @@ Remotes:
 
 ## Secrets
 
-- `BLOCKR_PAT` (optional) — GitHub token the workflows only read with: pak resolves and downloads GitHub-hosted dependencies with it, and `revdep.yaml` also checks out the downstream and looks up its branches and pull requests. A fine-grained token with read-only access to public repositories is therefore enough, and buys the higher API rate limit. For a private dependency or revdep downstream, add its repository to the token with Contents: read-only, which covers all of these reads. A private downstream in `revdep-info-packages` also needs Actions: read-only, so the report can read the downstream's own workflow runs; without it, the report says they could not be read. Falls back to `GITHUB_TOKEN` if not set, which is sufficient for public repos.
+- `BLOCKR_PAT` (optional) — GitHub token the workflows only read with: pak resolves and downloads GitHub-hosted dependencies with it, and `revdep.yaml` also checks out the downstream and looks up its branches and pull requests. A fine-grained token with read-only access to public repositories is therefore enough, and buys the higher API rate limit. For a private dependency or revdep downstream, add its repository to the token with Contents: read-only, which covers all of these reads. A private downstream in `revdep-info` also needs Actions: read-only, so the report can read the downstream's own workflow runs; without it, the report says they could not be read. Falls back to `GITHUB_TOKEN` if not set, which is sufficient for public repos.
 - `CODECOV_TOKEN` — for coverage uploads
