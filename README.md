@@ -637,27 +637,28 @@ updates:
       interval: weekly
 ```
 
-Tagging `main` as it stands would pin little. The workflows call this
-repository's own actions at `@main`, and `uses:` takes no expression, so
-a caller on `ci.yaml@v0.1.0` would still run whatever `main` holds for
-`parse-deps`. Each release is therefore cut from a commit of its own, on
-top of `main`, that points those references at the release's tag. The
-commit sits on no branch; its tag is the only ref that reaches it.
+A release is a tag on a commit of `main`, and everything this
+repository contributes to a pinned caller's run comes from that commit.
+The workflows reach this repository's own actions through `$/`
+references, such as `uses: $/.github/actions/parse-deps`, which GitHub
+resolves to the repository of the file holding them, at the commit that
+is running. A caller on `ci.yaml@v0.1.0` therefore runs `parse-deps` as
+tagged, and one on `@main` runs it as `main` holds it.
 
-A caller pinning the SHA still reaches the actions through the tag, so
-the tag has to stay put. Immutability is what holds it there: a
-published release's tag can't be moved, and even deleting the release
-does not free the tag name for another commit.
+Immutability keeps a tag on the commit it was published with: the tag
+can't be moved, and even deleting the release does not free its name
+for another commit.
 
 To cut a release, run the `tag` workflow on `main` with the version,
 from the Actions tab or as `gh workflow run tag.yaml -f version=1.2.3`.
-It commits the rewrite, pushes the tag, publishes the release with
-generated notes, and fails if the release came out mutable, which it
-does when "Enable release immutability" is off under Settings →
-General → Releases. Bump the major version for a release that asks
-something of callers: a removed input, a renamed required check, a
-scope they now have to grant. Below 1.0.0, such a release bumps the
-minor version instead.
+It refuses a workflow that names this repository with a ref of its own
+rather than through `$/`, tags the commit it runs on, publishes the
+release with generated notes, and fails if the release came out
+mutable, which it does when "Enable release immutability" is off under
+Settings → General → Releases. Bump the major version for a release
+that asks something of callers: a removed input, a renamed required
+check, a scope they now have to grant. Below 1.0.0, such a release
+bumps the minor version instead.
 
 ## Pipeline
 

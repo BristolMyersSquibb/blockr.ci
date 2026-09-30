@@ -277,7 +277,7 @@ jobs:
           r-version: ${{ inputs.r-version || 'release' }}
           use-public-rspm: true
 
-      - uses: BristolMyersSquibb/blockr.ci/.github/actions/parse-deps@main
+      - uses: $/.github/actions/parse-deps
         id: deps
         with:
           pr-body: ${{ github.event.pull_request.body }}
@@ -340,7 +340,7 @@ jobs:
           r-version: ${{ inputs.r-version || 'release' }}
           use-public-rspm: true
 
-      - uses: BristolMyersSquibb/blockr.ci/.github/actions/parse-deps@main
+      - uses: $/.github/actions/parse-deps
         id: deps
         with:
           pr-body: ${{ github.event.pull_request.body }}
@@ -386,7 +386,7 @@ jobs:
           r-version: ${{ inputs.r-version || 'release' }}
           use-public-rspm: true
 
-      - uses: BristolMyersSquibb/blockr.ci/.github/actions/parse-deps@main
+      - uses: $/.github/actions/parse-deps
         id: deps
         with:
           pr-body: ${{ github.event.pull_request.body }}
@@ -438,7 +438,7 @@ jobs:
           r-version: ${{ inputs.r-version || 'release' }}
           use-public-rspm: true
 
-      - uses: BristolMyersSquibb/blockr.ci/.github/actions/parse-deps@main
+      - uses: $/.github/actions/parse-deps
         id: deps
         with:
           pr-body: ${{ github.event.pull_request.body }}
@@ -550,7 +550,7 @@ jobs:
           r-version: ${{ inputs.r-version || 'release' }}
           use-public-rspm: true
 
-      - uses: BristolMyersSquibb/blockr.ci/.github/actions/parse-deps@main
+      - uses: $/.github/actions/parse-deps
         if: steps.pin.outputs.run == 'true'
         id: deps
         with:
@@ -630,7 +630,7 @@ jobs:
           http-user-agent: ${{ matrix.config.http-user-agent }}
           use-public-rspm: true
 
-      - uses: BristolMyersSquibb/blockr.ci/.github/actions/parse-deps@main
+      - uses: $/.github/actions/parse-deps
         id: deps
         with:
           pr-body: ${{ github.event.pull_request.body }}

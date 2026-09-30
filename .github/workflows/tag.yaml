@@ -1,19 +1,19 @@
 # Cuts a release of this repository
 #
 # Run it from the Actions tab, on main, with the version as 1.2.3.  The
-# release is tagged v1.2.3 and published as a GitHub release, so a
-# caller can pin the tag, or the commit it names, instead of tracking
-# @main.
+# commit it runs on is tagged v1.2.3 and published as a GitHub release,
+# so a caller can pin the tag, or the commit it names, instead of
+# tracking @main.
 #
-# Tagging main as it stands would pin little.  The workflows call this
-# repository's own actions at @main, and `uses:` takes no expression, so
-# a caller on ci.yaml@v1.2.3 would still run whatever main holds for
-# parse-deps.  The tag names a commit of its own instead, on top of
-# main, that points every such reference at the tag.  That commit sits
-# on no branch: the tag is the only ref that reaches it.
+# The workflows reach this repository's own actions through `$/`
+# references, which GitHub resolves to the repository of the file that
+# holds them, at the commit that is running.  A caller on ci.yaml@v1.2.3
+# therefore runs this repository's actions from the tagged commit, so
+# the tag can sit on main as it stands.  A reference that names this
+# repository with a ref of its own would run that ref instead, and the
+# release refuses one.
 #
-# A caller pinning the commit still reaches the actions through the tag,
-# so the tag has to stay where this workflow puts it.  Release
+# A caller pinning the tag relies on it staying put.  Release
 # immutability, a repository setting under Settings → General →
 # Releases, locks the tag of every release published while it is on.  No
 # token here can read that setting, so the last step reads the release
@@ -33,7 +33,7 @@ on:
 
 name: tag
 
-# Pushes the tag and publishes the release.
+# Tags the commit and publishes the release.
 permissions:
   contents: write
 
@@ -50,7 +50,10 @@ jobs:
       VERSION: ${{ inputs.version }}
 
     steps:
-      # A release cut from any other branch would ship unmerged code.
+      - uses: actions/checkout@v5
+
+      # A release cut from any other branch would ship unmerged code, and
+      # an existing tag would be published as it is, wherever it points.
       - name: Check inputs
         run: |
           if [ "$GITHUB_REF" != refs/heads/main ]; then
@@ -61,40 +64,23 @@ jobs:
             echo "::error::Expected a version like 1.2.3, got '$VERSION'."
             exit 1
           fi
+          if git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" >/dev/null; then
+            echo "::error::v$VERSION already exists."
+            exit 1
+          fi
           echo "TAG=v$VERSION" >> "$GITHUB_ENV"
 
-      - uses: actions/checkout@v5
-
-      # The rewrite covers the spelling every reference uses today.  Any
-      # reference to this repository that still names another ref
-      # afterwards, such as one with a lower-case owner, a quoted one, or
-      # one left on a feature branch, fails the release instead of
-      # running under the tag from somewhere else.
-      - name: Point this repository's own references at the tag
+      # Comments are left out: the usage examples in the workflow headers
+      # name blockr.ci the way a caller does.
+      - name: Check this repository's own references
         run: |
-          ref='(BristolMyersSquibb/blockr\.ci/\.github/[^@[:space:]]+)@main([[:space:]]|$)'
-          git grep -lzE "$ref" -- .github |
-            xargs -0 -r sed -i -E "s#$ref#\1@$TAG\2#g"
-          stray=$(git grep -niE 'blockr\.ci/[^[:space:]]*@' -- .github |
-            grep -viE "blockr\.ci/[^@[:space:]]+@$TAG([[:space:]]|$)" || true)
-          if [ -n "$stray" ]; then
-            echo "$stray"
-            echo "::error::These references to this repository do not name $TAG."
+          if git grep -niE '^[[:space:]]*(-[[:space:]]*)?uses:[[:space:]]*[^#[:space:]]*blockr\.ci/' -- .github; then
+            echo '::error::Write these references as $/<path>, so that they follow the tag.'
             exit 1
           fi
 
-      - name: Commit and push the tag
-        run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit --quiet --all \
-            --message "Point this repository's own actions at $TAG" \
-            --message "This commit is on no branch; only the tag reaches it. See .github/workflows/tag.yaml."
-          git tag "$TAG"
-          git push origin "refs/tags/$TAG"
-
       - name: Publish the release
-        run: gh release create "$TAG" --verify-tag --generate-notes
+        run: gh release create "$TAG" --target "$GITHUB_SHA" --generate-notes
 
       - name: Check the release is immutable
         run: |

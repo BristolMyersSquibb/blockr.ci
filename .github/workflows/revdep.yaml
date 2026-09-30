@@ -164,7 +164,7 @@ jobs:
 
       # The ref a deps block asks for is checked against matrix.pkg's own
       # branches and pull requests, read with the token that checks it out.
-      - uses: BristolMyersSquibb/blockr.ci/.github/actions/parse-deps@main
+      - uses: $/.github/actions/parse-deps
         id: deps
         with:
           pr-body: ${{ github.event.pull_request.body }}
