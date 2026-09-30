@@ -80,6 +80,17 @@ on:
 
 name: revdep
 
+# A read-only token, as in ci.yaml, plus `pull-requests: read`.  Here
+# the deps block picks the downstream ref each leg checks out, and the
+# merge-queue event carries no pull request body, so parse-deps has to
+# fetch it.  On a private repository that fetch needs the scope, and
+# without it the block is quietly ignored.  A caller that sets its own
+# `permissions:`, or whose repository's default token is read-only, has
+# to grant the scope explicitly, or GitHub fails the run at startup.
+permissions:
+  contents: read
+  pull-requests: read
+
 # Pinned for the reason spelled out in ci.yaml's env: block — the
 # 'release' default resolves the version through an unretried curl to
 # quarto.org, which has twice killed a job on a transient response.

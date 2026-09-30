@@ -104,6 +104,13 @@ Pass secrets by name. `secrets: inherit` does not forward secrets
 across organisations — the inherited values silently arrive blank in
 the called job.
 
+The workflow asks for a read-only token of its own, `contents: read`
+plus the `pull-requests: read` it needs to fetch the deps block from
+the PR body in the merge queue, so the caller needs no `permissions:`.
+A caller that sets them, or runs in a repository whose default token is
+read-only, has to grant both, or GitHub fails the run before any job
+starts.
+
 Each leg installs the downstream's dependencies and the upstream in one
 resolution, the upstream with its Suggests and built from the commit the
 queue is testing, even where the downstream's `Remotes` pin it to a
