@@ -182,6 +182,13 @@ on:
 
 name: release
 
+# A read-only token, as in ci.yaml.  Nothing here reads a pull request
+# through the API, since the release label comes from the event payload,
+# so `contents: read` is the whole grant.  The r-devel/recheck workflow
+# called below runs under it too.
+permissions:
+  contents: read
+
 # One run per pull request at a time, as in ci.yaml — see there for the
 # group and its prefix.  Here a push cancels flavour legs allowed three
 # hours each, for a commit that is no longer the release candidate.

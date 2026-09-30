@@ -192,6 +192,19 @@ on:
 
 name: ci
 
+# A read-only token for every job, since nothing here writes to the
+# repository.  A called workflow can lower what its caller grants but
+# not raise it, so this holds whatever the caller passes.
+#
+# Only `contents: read`, although the parse-deps steps read the pull
+# request.  A caller that sets its own `permissions:` withholds every
+# scope it does not name, and GitHub fails a called workflow that asks
+# for a withheld one at startup, before any job runs.  Here the read
+# only validates the deps block, and parse-deps carries on without the
+# fresh body when it fails.
+permissions:
+  contents: read
+
 # One run per pull request at a time.  A push cancels the run still
 # checking the commit it replaces.  Any other pull-request event —
 # reopening, or a label in the release workflows — re-checks the same
