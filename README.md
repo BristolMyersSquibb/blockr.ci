@@ -617,11 +617,11 @@ trailing comment:
 ```yaml
 jobs:
   ci:
-    uses: BristolMyersSquibb/blockr.ci/.github/workflows/ci.yaml@v1.0.0
+    uses: BristolMyersSquibb/blockr.ci/.github/workflows/ci.yaml@v0.1.0
 ```
 
 ```yaml
-uses: BristolMyersSquibb/blockr.ci/.github/workflows/ci.yaml@<sha> # v1.0.0
+uses: BristolMyersSquibb/blockr.ci/.github/workflows/ci.yaml@<sha> # v0.1.0
 ```
 
 With a `.github/dependabot.yml` like the one below, Dependabot then
@@ -639,7 +639,7 @@ updates:
 
 Tagging `main` as it stands would pin little. The workflows call this
 repository's own actions at `@main`, and `uses:` takes no expression, so
-a caller on `ci.yaml@v1.0.0` would still run whatever `main` holds for
+a caller on `ci.yaml@v0.1.0` would still run whatever `main` holds for
 `parse-deps`. Each release is therefore cut from a commit of its own, on
 top of `main`, that points those references at the release's tag. The
 commit sits on no branch; its tag is the only ref that reaches it.
@@ -656,7 +656,8 @@ generated notes, and fails if the release came out mutable, which it
 does when "Enable release immutability" is off under Settings →
 General → Releases. Bump the major version for a release that asks
 something of callers: a removed input, a renamed required check, a
-scope they now have to grant.
+scope they now have to grant. Below 1.0.0, such a release bumps the
+minor version instead.
 
 ## Pipeline
 
