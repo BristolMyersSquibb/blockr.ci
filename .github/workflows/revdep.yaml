@@ -189,49 +189,35 @@ jobs:
         with:
           version: ${{ env.QUARTO_VERSION }}
 
-      # Two-pass install lets pkg's and revdep's Remotes both get followed
-      # while keeping their dependency closures separate. Walking pkg's deps
-      # at top level (e.g. via `deps::pkg` with default `dependencies = "all"`)
-      # would also pull in pkg's Suggests and the Suggests of their transitive
-      # deps — observed to leak `uuid` (via blockr.core's Suggests on `ids`)
-      # into the install, which flips httpuv/shiny to non-deterministic
-      # session nonces and breaks unrelated snapshot tests in the revdep.
+      # Each leg checks revdep against the candidate, the merge-queue commit
+      # checked out in pkg. One pak resolution installs both: revdep's deps,
+      # with revdep's Remotes followed via working-directory, and pkg as a
+      # `local::` ref. The checkout satisfies any GitHub pin of pkg in
+      # revdep's tree, direct or through another blockr package, since
+      # pkgdepends lets a local package stand in for a GitHub ref
+      # (r-lib/pkgdepends#229).
       #
-      # Pass 1: install pkg's hard deps (no Suggests) with pkg's Remotes
-      # resolved.
-      - name: Install pkg hard deps with Remotes resolved
-        shell: bash
-        run: |
-          # Use the already-installed pkgdepends (placed by parse-deps) rather
-          # than installing pak fresh. This avoids leaving an extra package in
-          # libPaths position [1] for the test run, which has been observed
-          # to perturb shiny session state in unrelated snapshot tests.
-          Rscript -e '
-            prop <- pkgdepends::new_pkg_installation_proposal(
-              c("deps::pkg", "local::pkg"),
-              config = list(dependencies = "hard")
-            )
-            prop$solve()
-            prop$download()
-            prop$install()
-          '
-
-      # Pass 2: install revdep's full deps with revdep's Remotes followed via
-      # working-directory. `dependencies: c("all", "hard")` walks Suggests for
-      # direct refs (so the test runner gets testthat / shinytest2 / etc.) but
-      # only hard deps for transitives — so e.g. blockr.core's Suggests don't
-      # expand into ids -> uuid. (`NA` here doesn't have the desired effect:
-      # pkgdepends treats it as "soft" applied to both direct and indirect.)
-      # Hard deps already installed in pass 1 are reused.
+      # When pkg's and revdep's Remotes pin some other package to different
+      # commits, the resolution fails the leg. That is deliberate: no library
+      # holds both, so there is nothing meaningful to check.
+      #
+      # With `dependencies: c("all", "hard")` pak walks Suggests for the
+      # direct refs, revdep and pkg, and only hard deps below them. The
+      # Suggests of revdep give the test runner testthat, shinytest2 and the
+      # like; those of pkg come along, and revdep's tests should pass with or
+      # without them. (`NA` here doesn't have the desired effect: pkgdepends
+      # treats it as "soft" applied to both direct and indirect.)
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
-          extra-packages: ${{ steps.deps.outputs.extra-packages }}
+          extra-packages: |
+            ${{ steps.deps.outputs.extra-packages }}
+            local::${{ github.workspace }}/pkg
           working-directory: revdep
           dependencies: 'c("all", "hard")'
           quarto-version: ${{ env.QUARTO_VERSION }}
-          # Bumped to invalidate caches built before the two-pass install
-          # landed — those caches contain Suggests-tree leftovers (e.g. `uuid`)
-          # that pak's resolver no longer pulls in but doesn't remove either.
+          # Bumped to invalidate caches built by an earlier install shape:
+          # pak's resolver doesn't remove packages it no longer pulls in, so
+          # those caches would carry leftovers.
           cache-version: 2
 
       - uses: r-lib/actions/check-r-package@v2
@@ -247,7 +233,8 @@ jobs:
       #
       # After the check rather than before: installing revdep ahead of it
       # would leave an extra package in libPaths position [1] for the test
-      # run -- the perturbation the two-pass install above exists to avoid.
+      # run, which has been observed to perturb shiny session state in
+      # unrelated snapshot tests.
       #
       # NOT_CRAN because a browser-driving test skips itself without it, and
       # a skip here is indistinguishable from a pass.
