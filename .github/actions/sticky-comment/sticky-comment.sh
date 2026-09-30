@@ -16,7 +16,8 @@
 # writes $GITHUB_STEP_SUMMARY keeps its output either way, and a missing
 # grant should not redden an otherwise-good run.
 #
-# Env vars: MARKER, BODY_FILE, PR_NUMBER, GITHUB_REPOSITORY, GH_TOKEN
+# Env vars: MARKER, BODY_FILE, PR_NUMBER, GITHUB_REPOSITORY, GITHUB_REF,
+#           GH_TOKEN
 
 set -euo pipefail
 
@@ -26,6 +27,14 @@ set -euo pipefail
 if [[ ! -f "$BODY_FILE" ]]; then
   echo "::error::sticky-comment: no body file at '$BODY_FILE'." >&2
   exit 1
+fi
+
+# Under the merge queue there is no pull_request payload to take the
+# number from. The queue ref carries it instead, as
+# refs/heads/gh-readonly-queue/<base>/pr-<N>-<sha>, where parse-deps
+# finds it too.
+if [[ -z "${PR_NUMBER:-}" && "${GITHUB_REF:-}" =~ gh-readonly-queue/.+/pr-([0-9]+)- ]]; then
+  PR_NUMBER="${BASH_REMATCH[1]}"
 fi
 
 if [[ -z "${PR_NUMBER:-}" ]]; then

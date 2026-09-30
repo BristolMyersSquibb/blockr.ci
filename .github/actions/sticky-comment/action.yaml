@@ -21,8 +21,9 @@ inputs:
   pr-number:
     description: >
       Pull request to comment on.  Defaults to the one in the event
-      payload; empty means there is nothing to comment on and the step
-      is a no-op.
+      payload.  Left empty in the merge queue, where the event carries
+      none, it is read from the queue ref instead; empty anywhere else
+      means there is nothing to comment on and the step is a no-op.
     required: false
     default: ${{ github.event.pull_request.number }}
   github-token:

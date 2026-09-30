@@ -97,7 +97,7 @@ jobs:
     if: github.event_name == 'merge_group'
     uses: BristolMyersSquibb/blockr.ci/.github/workflows/revdep.yaml@main
     with:
-      revdep-packages: |
+      revdep-strict: |
         BristolMyersSquibb/blockr.dock
     secrets:
       BLOCKR_PAT: ${{ secrets.BLOCKR_PAT }}
@@ -107,12 +107,15 @@ Pass secrets by name. `secrets: inherit` does not forward secrets
 across organisations — the inherited values silently arrive blank in
 the called job.
 
-The workflow asks for a read-only token of its own, `contents: read`
-plus the `pull-requests: read` it needs to fetch the deps block from
-the PR body in the merge queue, so the caller needs no `permissions:`.
-A caller that sets them, or runs in a repository whose default token is
-read-only, has to grant both, or GitHub fails the run before any job
-starts.
+The workflow sets its own token scopes, so the caller needs no
+`permissions:`: `contents: read`, `pull-requests: read` to fetch the
+deps block from the PR body in the merge queue, and
+`pull-requests: write` for the one job that comments on the pull
+request. A caller that sets `permissions:`, or runs in a repository
+whose default token is read-only, has to grant `contents: read` and
+`pull-requests: write`, or GitHub fails the run before any job starts.
+That holds without informational downstreams too, since GitHub checks
+every job's request at startup, including a job that would be skipped.
 
 Each leg installs the downstream's dependencies and the upstream in one
 resolution, the upstream with its Suggests and built from the commit the
@@ -120,6 +123,50 @@ queue is testing, even where the downstream's `Remotes` pin it to a
 branch. When the two packages' `Remotes` pin some other package to
 different commits, that resolution fails, and the leg with it: no
 library can hold both.
+
+#### Informational downstreams
+
+A downstream in `revdep-strict` gates the merge: `revdep-all` fails
+when its leg does, so each one added turns its flaky tests into the
+upstream's merge-queue problem. List a downstream in `revdep-info`
+instead to check it the same way, on the same queued commit, without
+gating:
+
+```yaml
+  revdep:
+    if: github.event_name == 'merge_group'
+    uses: BristolMyersSquibb/blockr.ci/.github/workflows/revdep.yaml@main
+    with:
+      revdep-strict: |
+        BristolMyersSquibb/blockr.dock
+      revdep-info: |
+        BristolMyersSquibb/blockr.code
+    secrets:
+      BLOCKR_PAT: ${{ secrets.BLOCKR_PAT }}
+```
+
+Those legs run in the `revdep-info` job, which `revdep-all` does not
+wait for, so neither a failure there nor a slow leg holds the queue.
+The job starts only once `revdep-all` has reported, and runs at most
+four legs at a time. An account runs a limited number of jobs at once
+across all its repositories, 20 on GitHub's free plan, so informational
+legs started beside the strict ones could leave those waiting for a
+runner.
+
+Once the last informational leg finishes, the `report` job writes their
+outcome into one comment on the pull request, rewritten on each queue
+run, and into its own job summary. The comment can land after the
+merge, which is enough for a tier that informs rather than gates. Each
+row links its leg's log, and a leg that did not pass also gets the
+downstream's own workflow runs at the head of its default branch, so a
+failure the downstream already has there reads as such.
+
+A downstream goes in one list or the other. One listed in both fails
+the `matrix` job, and `revdep-all` with it.
+
+The `revdep-strict` input used to be called `revdep-packages`. The old
+name still feeds the strict list, with a warning in the run, until a
+later release removes it.
 
 ### `release.yaml` — CRAN pre-submission checks (optional)
 
@@ -201,7 +248,7 @@ reports `release-all`.
 
 The list is per-repo rather than derived, because the relevant flavours
 are partly a maintainer judgement no heuristic recovers. It is also
-stable in a way `revdep-packages` is not: a dependency graph moves under
+stable in a way the `revdep.yaml` lists are not: a dependency graph moves under
 you, while a platform list only changes when a package gains or loses
 compiled code.
 
@@ -597,11 +644,15 @@ later job can `cat` them in filename order, which is all
 
 Give `sticky-comment` a marker unique to your workflow. It finds its
 comment by matching the marker against the start of each existing one,
-so two workflows sharing a marker will overwrite each other.
+so two workflows sharing a marker will overwrite each other. In the
+merge queue, whose event names no pull request, it comments on the one
+the queue ref names.
 
 The dependency-resolution and deploy helpers in the same tree —
 `parse-deps`, `check-suggests`, `setup-r-rhel` — are composite actions
-too, and callable the same way.
+too, and callable the same way. So is `revdep-report`, which composes
+`revdep.yaml`'s comment on its informational downstreams from the
+outcome each leg records.
 
 Each action's script is exercised by `bats` under
 `.github/actions/tests/`, which `bats.yaml` runs on any change below
@@ -665,7 +716,7 @@ bumps the minor version instead.
 | Trigger | Jobs |
 |---|---|
 | `pull_request` | `lint`, `smoke`, `pkgdown-dev`, `coverage`, `docs` (parallel) |
-| `merge_group` | `check` matrix → `check-all`; `revdep` matrix → `revdep-all` (if configured) |
+| `merge_group` | `check` matrix → `check-all`; `revdep` matrix → `revdep-all` (if configured), then `revdep-info` matrix → `report`, gating nothing (if configured) |
 | `push: main` | `pkgdown.yaml` deploy (if configured) |
 
 PR jobs run in parallel for fast feedback. The expensive multi-platform
@@ -844,13 +895,15 @@ release.
 | `r-version` | string | `''` | R version for the PR-leg jobs (lint, smoke, pkgdown-dev, coverage, docs). Default (`''`) runs them on `release`. Set it (e.g. `4.4.2`) for a deploy app pinned to one runtime, so its PR checks — notably the `smoke` R CMD check — exercise the deployment target. The merge-queue `check` matrix is unaffected. Pair with `connect-deploy.yaml`'s `r-version` to gate against the version Connect serves. |
 | `error-on` | string | `''` | R CMD check severity that fails the `smoke` and `check` jobs (passed to `check-r-package`'s `error-on`). Default (`''`) fails on any NOTE (`'"note"'`), holding the 0-errors/0-warnings/0-notes bar. A deploy app that declares unused `Imports` on purpose (so the Connect manifest ships them) sets `'"warning"'` to tolerate the resulting NOTE. |
 | `skip-pkgdown` | boolean | `false` | DEPRECATED — pkgdown moved to `pkgdown.yaml`. No-op. |
-| `revdep-packages` | newline-separated list | `''` | DEPRECATED — moved to `revdep.yaml`. No-op. |
+| `revdep-packages` | newline-separated list | `''` | DEPRECATED — moved to `revdep.yaml`, where it is now `revdep-strict`. No-op. |
 
 ### `revdep.yaml`
 
 | Input | Type | Default | Purpose |
 |---|---|---|---|
-| `revdep-packages` | newline-separated list | _(required)_ | Downstream packages to reverse-dep check. |
+| `revdep-strict` | newline-separated list | `''` | Downstream packages to reverse-dep check. A failing leg fails `revdep-all`, so these gate the merge. |
+| `revdep-info` | newline-separated list | `''` | Downstream packages checked the same way without gating the merge, once `revdep-all` has reported and four at a time at most. Their outcome goes to the pull request as one comment. See [Informational downstreams](#informational-downstreams). |
+| `revdep-packages` | newline-separated list | `''` | DEPRECATED — renamed `revdep-strict`. Still added to it, with a warning, until a later release removes it. |
 
 ### `release.yaml`
 
@@ -911,7 +964,7 @@ jobs:
 - **Coverage** via `covr::package_coverage()` + codecov, optional threshold — PR gate
 - **Docs freshness** — regenerate `man/` + `NAMESPACE` with the roxygen2 version pinned in `DESCRIPTION` (`Config/roxygen2/version`, or legacy `RoxygenNote`) and fail on drift — PR gate
 - **Full check** — 4-platform matrix (macOS, Windows, Ubuntu devel, Ubuntu oldrel) — merge-queue gate
-- **Reverse-dependency checks** against configurable downstream packages — merge-queue gate
+- **Reverse-dependency checks** against configurable downstream packages — merge-queue gate, plus an informational tier that reports to the pull request without gating — see [Informational downstreams](#informational-downstreams)
 - **CRAN pre-submission checks** — AddressSanitizer, UndefinedBehaviorSanitizer, valgrind, `rchk` and the Suggests-free build in the R-hub containers, plus a CRAN-style reverse dependency check, on every push to a labelled release PR — see [Release mode](#release-mode)
 - **Mechanical release checks** — the checklist half of a release, gated on every push to a labelled release PR instead of ticked by hand: three-component version, no dev-version pins, no `Remotes`, `NEWS.md` shape, real vignette titles, a `\value` on every documented function, and a README current with its source. Reports spelling, URL and `--as-cran` findings alongside without gating on them — see [`release-gate.yaml`](#release-gateyaml--mechanical-release-checks-optional)
 - **pkgdown deploy** — site build + deploy to GitHub Pages on push to `main`, via the `gh-pages` branch or, with `deploy: actions`, straight from Actions
@@ -1250,7 +1303,7 @@ BristolMyersSquibb/blockr.ai@my-feature-branch
 ```
 ````
 
-Each line is `owner/repo@branch` or `owner/repo#PR-number`, naming the downstream as `revdep-packages` lists it. The matching revdep job checks out that ref instead of the default branch.
+Each line is `owner/repo@branch` or `owner/repo#PR-number`, naming the downstream as `revdep-strict` or `revdep-info` lists it. The matching revdep job checks out that ref instead of the default branch.
 
 That job runs the code it checks out with `BLOCKR_PAT` in its environment, so an entry can only point it at code already in the downstream repository: after `@` one of its branches, after `#` one of its pull requests opened from a branch of that same repository. An entry naming another repository, a pull request from a fork, or a SHA, tag or `refs/…` path after `@` fails the job with the entry named. To check against a contributor's fork, push the branch to the downstream repository and name it there.
 
@@ -1262,7 +1315,7 @@ The revdep job runs only in the merge queue, and it reads the deps block fresh f
 
 You're working on `blockr.dock` and need the revdep job to test against an in-progress PR on `blockr.dag`:
 
-1. Open your PR on `blockr.dock`. The configured `revdep-packages` input includes `BristolMyersSquibb/blockr.dag`, so the revdep job runs against `blockr.dag`'s default branch by default.
+1. Open your PR on `blockr.dock`. The configured `revdep-strict` input includes `BristolMyersSquibb/blockr.dag`, so the revdep job runs against `blockr.dag`'s default branch by default.
 2. To pin it to a specific PR, add to the PR body:
 
    ````markdown
@@ -1283,5 +1336,5 @@ Remotes:
 
 ## Secrets
 
-- `BLOCKR_PAT` (optional) — GitHub token the workflows only read with: pak resolves and downloads GitHub-hosted dependencies with it, and `revdep.yaml` also checks out the downstream and looks up its branches and pull requests. A fine-grained token with read-only access to public repositories is therefore enough, and buys the higher API rate limit. For a private dependency or revdep downstream, add its repository to the token with Contents: read-only, which covers all of these reads. Falls back to `GITHUB_TOKEN` if not set, which is sufficient for public repos.
+- `BLOCKR_PAT` (optional) — GitHub token the workflows only read with: pak resolves and downloads GitHub-hosted dependencies with it, and `revdep.yaml` also checks out the downstream and looks up its branches and pull requests. A fine-grained token with read-only access to public repositories is therefore enough, and buys the higher API rate limit. For a private dependency or revdep downstream, add its repository to the token with Contents: read-only, which covers all of these reads. A private downstream in `revdep-info` also needs Actions: read-only, so the report can read the downstream's own workflow runs; without it, the report says they could not be read. Falls back to `GITHUB_TOKEN` if not set, which is sufficient for public repos.
 - `CODECOV_TOKEN` — for coverage uploads

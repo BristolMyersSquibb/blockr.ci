@@ -16,7 +16,7 @@
 #       if: github.event_name == 'merge_group'
 #       uses: BristolMyersSquibb/blockr.ci/.github/workflows/revdep.yaml@main
 #       with:
-#         revdep-packages: |
+#         revdep-strict: |
 #           BristolMyersSquibb/blockr.dock
 #       secrets:
 #         BLOCKR_PAT: ${{ secrets.BLOCKR_PAT }}
@@ -31,6 +31,15 @@
 # across organisations — the inherited values silently arrive blank in
 # the called job.
 #
+# Downstreams come in two tiers.  Those in `revdep-strict` gate the
+# merge through `revdep-all`, the one required check, so each one added
+# makes its flaky tests the upstream's merge-queue problem.  Those in
+# `revdep-info` are checked the same way, on the same queued commit,
+# once `revdep-all` has reported, and nothing waits on them: the
+# queue merges on the strict tier alone, and the `report` job posts the
+# informational outcome to the pull request as one comment once the last
+# of those legs finishes, which can be after the merge.
+#
 # Every job sets `timeout-minutes: 60` — see ci.yaml for why.  An hour
 # clears the observed revdep runtime (5-7 min per downstream package) by
 # a wide margin.
@@ -39,12 +48,24 @@ on:
   workflow_call:
     inputs:
 
-      revdep-packages:
+      revdep-strict:
         description: >
           Newline-separated list of downstream packages to reverse-dependency
-          check.
+          check.  A failing leg fails `revdep-all`, so these gate the merge.
         type: string
-        required: true
+        default: ''
+        required: false
+
+      revdep-info:
+        description: >
+          Newline-separated list of downstream packages to check the same way
+          without gating the merge.  Their legs start once `revdep-all` has
+          reported, four at a time at most, and their outcome goes to the
+          pull request as one comment, which can land after the merge.  A
+          package goes in one list or the other, not both.
+        type: string
+        default: ''
+        required: false
 
       revdep-test-upstream:
         description: >
@@ -69,6 +90,14 @@ on:
         default: ''
         required: false
 
+      revdep-packages:
+        description: >
+          DEPRECATED.  The old name of revdep-strict, still added to it,
+          with a warning in the run, until a later release removes it.
+        type: string
+        default: ''
+        required: false
+
     secrets:
 
       BLOCKR_PAT:
@@ -84,9 +113,15 @@ name: revdep
 # the deps block picks the downstream ref each leg checks out, and the
 # merge-queue event carries no pull request body, so parse-deps has to
 # fetch it.  On a private repository that fetch needs the scope, and
-# without it the block is quietly ignored.  A caller that sets its own
-# `permissions:`, or whose repository's default token is read-only, has
-# to grant the scope explicitly, or GitHub fails the run at startup.
+# without it the block is quietly ignored.
+#
+# The `report` job alone asks for `pull-requests: write`, for its
+# comment.  GitHub checks what every job asks for against the caller's
+# grant when the run starts, whether or not the job would run, so a
+# caller that sets its own `permissions:`, or whose repository's default
+# token is read-only, has to grant `contents: read` and
+# `pull-requests: write` even without an informational tier, or GitHub
+# fails the run at startup.
 permissions:
   contents: read
   pull-requests: read
@@ -100,7 +135,17 @@ env:
 
 jobs:
 
-  # ── Build the per-package matrix from revdep-packages ─────────────────
+  # ── Build the per-package matrices from the two lists ─────────────────
+  #
+  # A downstream in both lists would gate the merge and be reported as
+  # informational at once.  That is most likely a move from one list to
+  # the other left half done, and only the caller can say which list it
+  # belongs in, so the job fails and names the package.  Repository names
+  # are compared without case, as GitHub resolves them, and a name listed
+  # twice runs once.
+  #
+  # The deprecated `revdep-packages` still feeds the strict list, so that
+  # callers written before the rename keep checking what they did.
 
   matrix:
 
@@ -111,31 +156,63 @@ jobs:
     timeout-minutes: 60
 
     outputs:
-      packages: ${{ steps.build.outputs.packages }}
-      has-packages: ${{ steps.build.outputs.has-packages }}
+      strict: ${{ steps.build.outputs.strict }}
+      has-strict: ${{ steps.build.outputs.has-strict }}
+      info: ${{ steps.build.outputs.info }}
+      has-info: ${{ steps.build.outputs.has-info }}
 
     steps:
       - name: Build revdep matrix
         id: build
         env:
-          INPUT: ${{ inputs.revdep-packages }}
+          STRICT: ${{ inputs.revdep-strict }}
+          INFO: ${{ inputs.revdep-info }}
+          DEPRECATED: ${{ inputs.revdep-packages }}
         run: |
-          pkgs=$(echo "$INPUT" | tr -d '\r' | sed '/^[[:space:]]*$/d' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-          json=$(echo "$pkgs" | jq -R -s -c 'split("\n") | map(select(length > 0))')
-          echo "packages=${json}" >> "$GITHUB_OUTPUT"
-          if [ "$json" = "[]" ]; then
-            echo "has-packages=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "has-packages=true" >> "$GITHUB_OUTPUT"
+          # One JSON array per list, entries trimmed, blank lines and repeats
+          # dropped, keeping the first spelling of each name.
+          to_json() {
+            printf '%s\n' "$@" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' |
+              jq -R -s -c 'split("\n") | map(select(length > 0))
+                | reduce .[] as $p ([];
+                    if any(.[]; ascii_downcase == ($p | ascii_downcase))
+                    then . else . + [$p] end)'
+          }
+          strict=$(to_json "$STRICT" "$DEPRECATED")
+          info=$(to_json "$INFO")
+
+          if [ "$(to_json "$DEPRECATED")" != "[]" ]; then
+            echo "::warning::The revdep-packages input is deprecated. Rename it to revdep-strict; until then, its list is added to that one."
           fi
 
+          both=$(jq -n -r --argjson strict "$strict" --argjson info "$info" \
+            '[$strict[] | ascii_downcase] as $s
+             | [$info[] | select(ascii_downcase | IN($s[]))] | join(", ")')
+          if [ -n "$both" ]; then
+            echo "::error::Listed as both strict and informational: $both. List each downstream once."
+            exit 1
+          fi
+
+          non_empty() { if [ "$1" = "[]" ]; then echo false; else echo true; fi; }
+          {
+            echo "strict=${strict}"
+            echo "has-strict=$(non_empty "$strict")"
+            echo "info=${info}"
+            echo "has-info=$(non_empty "$info")"
+          } >> "$GITHUB_OUTPUT"
+
   # ── Reverse-dependency checks ────────────────────────────────────────
+  #
+  # The strict tier.  Its env and steps carry YAML anchors, which
+  # `revdep-info` below repeats as aliases, so both tiers check a
+  # downstream with the same steps rather than with two copies kept in
+  # step by hand.
 
   revdep:
 
     needs: matrix
 
-    if: needs.matrix.outputs.has-packages == 'true'
+    if: needs.matrix.outputs.has-strict == 'true'
 
     runs-on: ubuntu-latest
 
@@ -144,15 +221,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        pkg: ${{ fromJson(needs.matrix.outputs.packages) }}
+        pkg: ${{ fromJson(needs.matrix.outputs.strict) }}
 
-    env:
+    env: &revdep-env
       GITHUB_PAT: ${{ secrets.BLOCKR_PAT || github.token }}
       R_KEEP_PKG_SOURCE: yes
 
     # Both checkouts leave their token out of .git/config: the steps below
     # run both packages' code, and none of them reaches a remote with git.
-    steps:
+    steps: &revdep-leg
       - uses: actions/checkout@v5
         with:
           path: pkg
@@ -260,6 +337,38 @@ jobs:
           Rscript -e 'filter <- Sys.getenv("REVDEP_FILTER")
             testthat::test_local("pkg", filter = if (nzchar(filter)) filter)'
 
+      # The last two steps run in the informational legs only, for the
+      # `report` job.  A matrix job has one set of outputs, which the last
+      # leg to finish overwrites, so each leg leaves its outcome in an
+      # artifact of its own instead: the package, job.status, and the
+      # check run id that links the leg's log.  Under always(), so a failed
+      # leg reports too.  A leg that records nothing at all appears in the
+      # report as having no result.
+      #
+      # Inside a called workflow, github.job is the job's id in this file,
+      # whatever the caller named its own job.
+      - name: Record the outcome for the report
+        if: always() && github.job == 'revdep-info'
+        env:
+          PKG: ${{ matrix.pkg }}
+          STATUS: ${{ job.status }}
+          JOB_ID: ${{ job.check_run_id }}
+          OUT: ${{ runner.temp }}/revdep-info/${{ strategy.job-index }}.json
+        run: |
+          mkdir -p "$(dirname "$OUT")"
+          jq -n --arg pkg "$PKG" --arg status "$STATUS" --arg job "$JOB_ID" \
+            '{pkg: $pkg, status: $status, job: $job}' > "$OUT"
+
+      # With `overwrite`, a re-run of the leg replaces its earlier outcome,
+      # so the report describes the latest attempt.
+      - name: Upload the outcome
+        if: always() && github.job == 'revdep-info'
+        uses: actions/upload-artifact@v6
+        with:
+          name: revdep-info-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/revdep-info/
+          overwrite: true
+
   # ── Aggregate revdep-matrix result for the required-checks list ──────
   #
   # `revdep-all` shields the merge-queue gate from changes to the matrix
@@ -271,6 +380,9 @@ jobs:
   # the matrix job fails, `revdep` is reported as skipped rather than
   # failed, so aggregating it alone would turn a failed matrix into a
   # green required check.
+  #
+  # Needs neither `revdep-info` nor `report`, which wait on it instead:
+  # the queue has its answer before the informational tier starts.
 
   revdep-all:
 
@@ -295,3 +407,96 @@ jobs:
               *) exit 1 ;;
             esac
           done
+
+  # ── Informational reverse-dependency checks ──────────────────────────
+  #
+  # The downstreams in revdep-info, checked by the steps anchored
+  # in `revdep` above, on the same queued commit.  Nothing required waits
+  # on this job: `revdep-all` needs only `matrix` and `revdep`, so a
+  # failure here never ejects the pull request.
+  #
+  # It starts once `revdep-all` has reported rather than beside the strict
+  # legs, and runs at most four legs at a time.  An account runs a
+  # limited number of jobs at once across all its repositories, 20 on
+  # GitHub's free plan, and a job beyond that waits for a runner.  Started
+  # together with the strict legs, a long informational list could leave
+  # one of them, or `revdep-all` itself, waiting behind it.  Started
+  # after, it competes only with the rest of the account's CI.  That
+  # includes the caller's own `check` matrix and the required `check-all`
+  # after it, which revdep.yaml cannot wait for, so `max-parallel` keeps
+  # its share to four runners.  It runs whether or not the strict tier
+  # passed, since the report is worth having either way.
+
+  revdep-info:
+
+    needs: [matrix, revdep-all]
+
+    if: >-
+      !cancelled() &&
+      needs.matrix.outputs.has-info == 'true'
+
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 60
+
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        pkg: ${{ fromJson(needs.matrix.outputs.info) }}
+
+    env: *revdep-env
+
+    steps: *revdep-leg
+
+  # ── One sticky comment for the informational tier ───────────────────
+  #
+  # Runs once every informational leg has finished, failed ones included,
+  # since a failure is what the comment is for.  Nothing required waits on
+  # it, so it can post after the merge.  Rewritten in place on every queue
+  # run of the pull request, so it describes the latest.
+  #
+  # The one job with a write scope, which is what the caller has to grant
+  # -- see the note on `permissions:` above.  No code from either package
+  # runs here: the leg outcomes arrive as data, and the revdep-report
+  # action reads them as such.
+
+  report:
+
+    needs: [matrix, revdep-info]
+
+    if: >-
+      !cancelled() &&
+      needs.matrix.outputs.has-info == 'true'
+
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 60
+
+    permissions:
+      pull-requests: write
+
+    steps:
+      - name: Collect the leg outcomes
+        continue-on-error: true
+        uses: actions/download-artifact@v6
+        with:
+          pattern: revdep-info-*
+          merge-multiple: true
+          path: outcomes
+
+      # Reads each failing downstream's own runs with the token that
+      # checked it out, since the downstream may be private.
+      - uses: $/.github/actions/revdep-report
+        with:
+          packages: ${{ needs.matrix.outputs.info }}
+          outcomes-dir: outcomes
+          body-file: comment.md
+          token: ${{ secrets.BLOCKR_PAT || github.token }}
+
+      # The merge-queue event carries no pull request, so sticky-comment
+      # reads its number from the queue ref.
+      - uses: $/.github/actions/sticky-comment
+        with:
+          marker: '<!-- revdep-info -->'
+          body-file: comment.md
