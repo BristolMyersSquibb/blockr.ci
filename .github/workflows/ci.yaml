@@ -86,7 +86,7 @@
 # the action's 'release' default — see the env: block for why.
 #
 # Every job in every workflow here sets `timeout-minutes: 60`, with one
-# deliberate exception noted below; the other six files carry a one-line
+# deliberate exception noted below; the other seven files carry a one-line
 # pointer back to this paragraph, so keep them in step (`grep -rn
 # timeout-minutes .github/workflows`).
 #

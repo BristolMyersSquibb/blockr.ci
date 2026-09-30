@@ -1,0 +1,105 @@
+# Cuts a release of this repository
+#
+# Run it from the Actions tab, on main, with the version as 1.2.3.  The
+# release is tagged v1.2.3 and published as a GitHub release, so a
+# caller can pin the tag, or the commit it names, instead of tracking
+# @main.
+#
+# Tagging main as it stands would pin little.  The workflows call this
+# repository's own actions at @main, and `uses:` takes no expression, so
+# a caller on ci.yaml@v1.2.3 would still run whatever main holds for
+# parse-deps.  The tag names a commit of its own instead, on top of
+# main, that points every such reference at the tag.  That commit sits
+# on no branch: the tag is the only ref that reaches it.
+#
+# A caller pinning the commit still reaches the actions through the tag,
+# so the tag has to stay where this workflow puts it.  Release
+# immutability, a repository setting under Settings → General →
+# Releases, locks the tag of every release published while it is on.  No
+# token here can read that setting, so the last step reads the release
+# instead and fails one that came out mutable.
+#
+# Every job sets `timeout-minutes: 60` — see ci.yaml for why.
+
+on:
+  workflow_dispatch:
+    inputs:
+
+      version:
+        description: >
+          Version to release, as 1.2.3.  The tag is v1.2.3.
+        type: string
+        required: true
+
+name: tag
+
+# Pushes the tag and publishes the release.
+permissions:
+  contents: write
+
+jobs:
+
+  tag:
+
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 60
+
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ inputs.version }}
+
+    steps:
+      # A release cut from any other branch would ship unmerged code.
+      - name: Check inputs
+        run: |
+          if [ "$GITHUB_REF" != refs/heads/main ]; then
+            echo "::error::Run this on main, not $GITHUB_REF."
+            exit 1
+          fi
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Expected a version like 1.2.3, got '$VERSION'."
+            exit 1
+          fi
+          echo "TAG=v$VERSION" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v5
+
+      # The rewrite covers the spelling every reference uses today.  Any
+      # reference to this repository that still names another ref
+      # afterwards, such as one with a lower-case owner, a quoted one, or
+      # one left on a feature branch, fails the release instead of
+      # running under the tag from somewhere else.
+      - name: Point this repository's own references at the tag
+        run: |
+          ref='(BristolMyersSquibb/blockr\.ci/\.github/[^@[:space:]]+)@main([[:space:]]|$)'
+          git grep -lzE "$ref" -- .github |
+            xargs -0 -r sed -i -E "s#$ref#\1@$TAG\2#g"
+          stray=$(git grep -niE 'blockr\.ci/[^[:space:]]*@' -- .github |
+            grep -viE "blockr\.ci/[^@[:space:]]+@$TAG([[:space:]]|$)" || true)
+          if [ -n "$stray" ]; then
+            echo "$stray"
+            echo "::error::These references to this repository do not name $TAG."
+            exit 1
+          fi
+
+      - name: Commit and push the tag
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit --quiet --all \
+            --message "Point this repository's own actions at $TAG" \
+            --message "This commit is on no branch; only the tag reaches it. See .github/workflows/tag.yaml."
+          git tag "$TAG"
+          git push origin "refs/tags/$TAG"
+
+      - name: Publish the release
+        run: gh release create "$TAG" --verify-tag --generate-notes
+
+      - name: Check the release is immutable
+        run: |
+          immutable=$(gh release view "$TAG" --json isImmutable --jq .isImmutable)
+          if [ "$immutable" != true ]; then
+            echo "::error::$TAG came out mutable, so its tag can still be moved. Enable release immutability under Settings → General → Releases, delete the release and the tag, and run this again."
+            exit 1
+          fi
