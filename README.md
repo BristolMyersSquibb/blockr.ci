@@ -104,6 +104,13 @@ Pass secrets by name. `secrets: inherit` does not forward secrets
 across organisations — the inherited values silently arrive blank in
 the called job.
 
+Each leg installs the downstream's dependencies and the upstream in one
+resolution, the upstream with its Suggests and built from the commit the
+queue is testing, even where the downstream's `Remotes` pin it to a
+branch. When the two packages' `Remotes` pin some other package to
+different commits, that resolution fails, and the leg with it: no
+library can hold both.
+
 ### `release.yaml` — CRAN pre-submission checks (optional)
 
 CRAN runs check flavours the `ci.yaml` matrix does not: AddressSanitizer,
