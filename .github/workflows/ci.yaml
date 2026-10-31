@@ -20,16 +20,17 @@
 # in BristolMyersSquibb/blockr.ci) — the inherited values silently arrive blank in
 # the called job.
 #
-# PR jobs (lint, smoke, pkgdown-dev, coverage, docs) run in parallel and
-# gate the PR.  The merge-queue gate is `check-all`, which aggregates the
-# multi-platform `check` matrix; the queue runs only the check matrix
-# and skips the PR-side jobs.  Required-status-checks list:
+# PR jobs (lint, smoke, pkgdown-dev, coverage, docs, typescript) run in
+# parallel and gate the PR.  The merge-queue gate is `check-all`, which
+# aggregates the multi-platform `check` matrix; the queue runs only the
+# check matrix and skips the PR-side jobs.  Required-status-checks list:
 #
 #   ci / lint
 #   ci / smoke
 #   ci / pkgdown-dev
 #   ci / coverage
 #   ci / docs
+#   ci / typescript    (callers that set typescript-dir)
 #   ci / check-all
 #
 # Skipped jobs satisfy required checks, so the queue accepts the PR-only
@@ -54,12 +55,13 @@
 # when the working tree is then dirty.  A package that carries neither
 # field — one that doesn't run roxygen2 — skips the check.
 #
-# The lint and docs jobs resolve hard dependencies only.  Neither runs
-# the test suite or builds vignettes, so the Suggests closure buys them
-# nothing but install time — and for a package that suggests chromote or
-# shinytest2 it also drags in a 125 MB Chromium from a PPA the job never
-# launches, since chromote picks the runner image's Google Chrome first.
-# The other four jobs run the suite or build the site and keep Suggests.
+# The lint, docs and typescript jobs resolve hard dependencies only.
+# None of them runs the test suite or builds vignettes, so the Suggests
+# closure buys them nothing but install time — and for a package that
+# suggests chromote or shinytest2 it also drags in a 125 MB Chromium
+# from a PPA the job never launches, since chromote picks the runner
+# image's Google Chrome first.  The other four jobs run the suite or
+# build the site and keep Suggests.
 #
 # A package that does need a suggested package at lint or roxygenize
 # time declares it in Config/Needs/lint or Config/Needs/roxygenize.  Two
@@ -133,11 +135,12 @@ on:
       r-version:
         description: >
           R version for the PR-leg jobs (lint, smoke, pkgdown-dev,
-          coverage, docs).  Default '' runs them on 'release'.  Set it (e.g.
-          '4.4.2') for a deploy app that runs on exactly one R version,
-          so its PR checks — notably the smoke R CMD check — exercise the
-          deployment target.  The merge-queue check matrix is unaffected
-          and keeps its cross-platform release/devel/oldrel spread.
+          coverage, docs, typescript).  Default '' runs them on 'release'.
+          Set it (e.g. '4.4.2') for a deploy app that runs on exactly one
+          R version, so its PR checks — notably the smoke R CMD check —
+          exercise the deployment target.  The merge-queue check matrix
+          is unaffected and keeps its cross-platform release/devel/oldrel
+          spread.
         type: string
         default: ''
         required: false
@@ -151,6 +154,17 @@ on:
           unused Imports on purpose — so the Connect manifest ships
           them — sets '"warning"' to tolerate the resulting "All
           declared Imports should be used" NOTE.
+        type: string
+        default: ''
+        required: false
+
+      typescript-dir:
+        description: >
+          Directory of the package's package.json, relative to the
+          repository root (e.g. '.').  Setting it turns on the typescript
+          job, which runs the package's typecheck, lint, test and build
+          scripts and fails where the build leaves inst/ other than
+          committed.  Default '' skips the job.
         type: string
         default: ''
         required: false
@@ -584,6 +598,90 @@ jobs:
           echo "::error::Generated documentation is out of date. Regenerate with the pinned roxygen2 (roxygen2::roxygenise()) and commit the updated man/ and NAMESPACE."
           git add -A
           git diff --cached
+          exit 1
+        shell: bash
+
+  # ── TypeScript gates (PR gate, opt-in via typescript-dir) ────────────
+  #
+  # Run the package's own typecheck, lint, test and build scripts in the
+  # directory typescript-dir names, assuming nothing of the tools behind
+  # them, and fail where the build leaves inst/ other than committed:
+  # R CMD check and CRAN run no Node, so a package that builds its
+  # modules commits what the build writes there.  One that writes its
+  # modules in JS has no build script to run.
+  #
+  # The JS a package builds against ships inside its R dependencies, as
+  # blockr.core's types do, so R and the hard dependencies come first.
+  # Each script runs once npm ci has succeeded, so one run reports every
+  # gate that fails.  Node is pinned to the 24 LTS line, which the runner
+  # image caches, so setup-node downloads nothing; bump it deliberately.
+
+  typescript:
+
+    if: github.event_name == 'pull_request' && inputs.typescript-dir != ''
+
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 60
+
+    env:
+      GITHUB_PAT: ${{ secrets.BLOCKR_PAT || github.token }}
+
+    defaults:
+      run:
+        working-directory: ${{ inputs.typescript-dir }}
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: ${{ inputs.r-version || 'release' }}
+          use-public-rspm: true
+
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          dependencies: '"hard"'
+          quarto-version: ${{ env.QUARTO_VERSION }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: ${{ inputs.typescript-dir }}/package-lock.json
+
+      - name: Install npm dependencies
+        id: install
+        run: npm ci
+
+      - name: Type-check
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm run typecheck
+
+      - name: Lint
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm run lint
+
+      - name: Test
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm test
+
+      - name: Build
+        id: build
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm run build --if-present
+
+      - name: Fail on stale inst/
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        working-directory: ${{ github.workspace }}
+        run: |
+          if [ -z "$(git status --porcelain -- inst)" ]; then
+            echo "Nothing in inst/ changed."
+            exit 0
+          fi
+          git add --all -- inst
+          echo "::error::The build changed files under inst/: $(git diff --cached --name-only -- inst | paste -sd ' '). Run npm run build and commit what it writes there."
+          git diff --cached --stat -- inst
           exit 1
         shell: bash
 
