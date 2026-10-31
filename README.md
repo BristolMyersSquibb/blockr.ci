@@ -715,7 +715,7 @@ bumps the minor version instead.
 
 | Trigger | Jobs |
 |---|---|
-| `pull_request` | `lint`, `smoke`, `pkgdown-dev`, `coverage`, `docs` (parallel) |
+| `pull_request` | `lint`, `smoke`, `pkgdown-dev`, `coverage`, `docs`, `typescript` (if configured) — in parallel |
 | `merge_group` | `check` matrix → `check-all`; `revdep` matrix → `revdep-all` (if configured), then `revdep-info` matrix → `report`, gating nothing (if configured) |
 | `push: main` | `pkgdown.yaml` deploy (if configured) |
 
@@ -738,7 +738,7 @@ on the pull-request ref, on every push:
 
 | Job | Ordinary PR | Release PR | Merge queue |
 |---|---|---|---|
-| `lint`, `smoke`, `pkgdown-dev`, `coverage`, `docs` | runs | runs | skipped |
+| `lint`, `smoke`, `pkgdown-dev`, `coverage`, `docs`, `typescript` | runs | runs | skipped |
 | `ci / check` (macOS, Windows, devel, oldrel) | skipped | **runs** | runs |
 | `release` (R-hub flavours) | skipped | **runs** | skipped |
 | `release-gate` (mechanical checks) | skipped | **runs** | skipped |
@@ -779,6 +779,7 @@ To enable, in the consumer repo's branch protection settings for `main`:
    - `ci / pkgdown-dev`
    - `ci / coverage`
    - `ci / docs`
+   - `ci / typescript` (if `typescript-dir` is set)
    - `ci / check-all`
    - `revdep / revdep-all` (if `revdep.yaml` is configured)
    - `release / release-all` (if `release.yaml` is configured)
@@ -892,8 +893,9 @@ release.
 |---|---|---|---|
 | `lintr-exclusions` | newline-separated list | `''` | File paths to exclude from linting |
 | `coverage-threshold` | number | `0` | Minimum coverage percent for the `coverage` job to pass. `0` disables the gate; coverage is still uploaded to Codecov. |
-| `r-version` | string | `''` | R version for the PR-leg jobs (lint, smoke, pkgdown-dev, coverage, docs). Default (`''`) runs them on `release`. Set it (e.g. `4.4.2`) for a deploy app pinned to one runtime, so its PR checks — notably the `smoke` R CMD check — exercise the deployment target. The merge-queue `check` matrix is unaffected. Pair with `connect-deploy.yaml`'s `r-version` to gate against the version Connect serves. |
+| `r-version` | string | `''` | R version for the PR-leg jobs (lint, smoke, pkgdown-dev, coverage, docs, typescript). Default (`''`) runs them on `release`. Set it (e.g. `4.4.2`) for a deploy app pinned to one runtime, so its PR checks — notably the `smoke` R CMD check — exercise the deployment target. The merge-queue `check` matrix is unaffected. Pair with `connect-deploy.yaml`'s `r-version` to gate against the version Connect serves. |
 | `error-on` | string | `''` | R CMD check severity that fails the `smoke` and `check` jobs (passed to `check-r-package`'s `error-on`). Default (`''`) fails on any NOTE (`'"note"'`), holding the 0-errors/0-warnings/0-notes bar. A deploy app that declares unused `Imports` on purpose (so the Connect manifest ships them) sets `'"warning"'` to tolerate the resulting NOTE. |
+| `typescript-dir` | string | `''` | Directory of the package's `package.json`, relative to the repository root, such as `.`. Setting it turns on the `typescript` job; the default (`''`) skips it. See [TypeScript gates](#typescript-gates). |
 | `skip-pkgdown` | boolean | `false` | DEPRECATED — pkgdown moved to `pkgdown.yaml`. No-op. |
 | `revdep-packages` | newline-separated list | `''` | DEPRECATED — moved to `revdep.yaml`, where it is now `revdep-strict`. No-op. |
 
@@ -963,6 +965,7 @@ jobs:
 - **pkgdown-dev** — `pkgdown::build_site(devel = TRUE)`, artifact upload, no deploy — PR gate
 - **Coverage** via `covr::package_coverage()` + codecov, optional threshold — PR gate
 - **Docs freshness** — regenerate `man/` + `NAMESPACE` with the roxygen2 version pinned in `DESCRIPTION` (`Config/roxygen2/version`, or legacy `RoxygenNote`) and fail on drift — PR gate
+- **TypeScript gates** — the package's `typecheck`, `lint`, `test` and `build` scripts, and a check that the build leaves `inst/` as committed — PR gate, off unless `typescript-dir` is set — see [TypeScript gates](#typescript-gates)
 - **Full check** — 4-platform matrix (macOS, Windows, Ubuntu devel, Ubuntu oldrel) — merge-queue gate
 - **Reverse-dependency checks** against configurable downstream packages — merge-queue gate, plus an informational tier that reports to the pull request without gating — see [Informational downstreams](#informational-downstreams)
 - **CRAN pre-submission checks** — AddressSanitizer, UndefinedBehaviorSanitizer, valgrind, `rchk` and the Suggests-free build in the R-hub containers, plus a CRAN-style reverse dependency check, on every push to a labelled release PR — see [Release mode](#release-mode)
@@ -995,6 +998,45 @@ bump as a deliberate toolchain change rather than routine upkeep.
 Windows is exempt: quarto-actions installs through scoop there and
 never performs the lookup, so the `check` matrix leaves that leg on the
 default.
+
+### TypeScript gates
+
+A package with client code, in strict TypeScript or in JS checked
+through `// @ts-check`, turns on the `typescript` job by setting
+`typescript-dir` to the directory of its `package.json`, `.` for one at
+the repository root:
+
+```yaml
+jobs:
+  ci:
+    uses: BristolMyersSquibb/blockr.ci/.github/workflows/ci.yaml@main
+    with:
+      typescript-dir: .
+```
+
+The job installs R and the package's hard dependencies first, as `lint`
+does, since the JS a package builds against ships inside its R
+dependencies, such as blockr.core's types. Then it installs Node 24 and
+the package's npm dependencies from its lockfile with `npm ci`, and runs
+`npm run typecheck`, `npm run lint`, `npm test` and `npm run build` in
+that directory. The scripts are the package's own, so the job assumes
+their names and nothing of the tools behind them. Each runs once
+`npm ci` has succeeded, so one run reports every gate that fails.
+
+R CMD check and CRAN run no Node, so a package that builds its modules
+commits what the build writes to `inst/`. The job fails when the build
+leaves `inst/` other than committed, and names the files it changed,
+added or removed. A package that writes its modules in JS has no build
+step and needs no `build` script.
+
+Like `lint`, the job runs on pull requests only. A caller that turns it
+on adds `ci / typescript` to its required checks; for every other caller
+it reports as skipped, which satisfies a required check.
+
+Node stays on the 24 LTS line, which the `ubuntu-latest` image caches,
+so `setup-node` neither resolves a version over the network nor
+downloads one, for the reason given under [Quarto pin](#quarto-pin).
+Bump it deliberately.
 
 ## Connect deployment setup
 
