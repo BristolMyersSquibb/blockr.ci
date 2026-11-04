@@ -38,9 +38,8 @@
 #
 # A deploy app runs on exactly one R version (whatever Posit Connect
 # serves).  Pass `r-version:` (e.g. "4.4.2") so the PR-leg jobs — notably
-# the smoke R CMD check — run on that version instead of `release`.  The
-# merge-queue `check` matrix is unaffected and keeps its cross-platform
-# release/devel/oldrel spread.
+# the smoke R CMD check — run on that version instead of `release`.
+# The `check` matrix is unaffected and keeps its own R versions.
 #
 # The smoke and check R CMD check jobs fail on NOTEs by default
 # (`error-on: '"note"'`), holding the fleet's 0-errors/0-warnings/
@@ -138,9 +137,8 @@ on:
           coverage, docs, typescript).  Default '' runs them on 'release'.
           Set it (e.g. '4.4.2') for a deploy app that runs on exactly one
           R version, so its PR checks — notably the smoke R CMD check —
-          exercise the deployment target.  The merge-queue check matrix
-          is unaffected and keeps its cross-platform release/devel/oldrel
-          spread.
+          exercise the deployment target.
+          The check matrix is unaffected and keeps its own R versions.
         type: string
         default: ''
         required: false
@@ -696,6 +694,14 @@ jobs:
     # well, for every pull request including that one: the queue tests
     # the would-be merge commit, and skipping it there would reopen the
     # red-main gap the queue exists to close.
+    #
+    # The R-devel leg is the one exception.
+    # It runs on a release pull request only, never at the queue.
+    # The leg builds its dependencies from source, so in blockr.core's
+    # queue it took 15–22 minutes, against 3–7 for the other legs.
+    # In 187 queue runs, it found nothing the other legs missed (#95).
+    # An R-devel failure can therefore reach main.
+    # It then shows up at the next release.
     if: >-
       github.event_name != 'pull_request' ||
       contains(github.event.pull_request.labels.*.name, 'release')
@@ -710,8 +716,12 @@ jobs:
         config:
           - {os: macos-latest,   r: 'release'}
           - {os: windows-latest, r: 'release'}
-          - {os: ubuntu-latest,  r: 'devel', http-user-agent: 'release'}
           - {os: ubuntu-latest,  r: 'oldrel-1'}
+        # R-devel joins on a release pull request only — see above.
+        include: >-
+          ${{ fromJSON(contains(github.event.pull_request.labels.*.name, 'release')
+          && '[{"config": {"os": "ubuntu-latest", "r": "devel", "http-user-agent": "release"}}]'
+          || '[]') }}
 
     env:
       GITHUB_PAT: ${{ secrets.BLOCKR_PAT || github.token }}
