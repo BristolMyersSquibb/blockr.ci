@@ -611,10 +611,17 @@
 </tr>
 <tr>
 <td>
-<code>ci / check</code> (macOS, Windows, devel, oldrel)</td>
+<code>ci / check</code> (macOS, Windows, oldrel)</td>
 <td>skipped</td>
 <td><strong>runs</strong></td>
 <td>runs</td>
+</tr>
+<tr>
+<td>
+<code>ci / check</code> (devel)</td>
+<td>skipped</td>
+<td><strong>runs</strong></td>
+<td>skipped</td>
 </tr>
 <tr>
 <td>
@@ -657,6 +664,7 @@
 </table>
 <p>The label is read straight from the event payload — <code>contains(github.event.pull_request.labels.*.name, 'release')</code> — so the whole mechanism is one condition per job, with no detection step anywhere.</p>
 <p>The queue keeps running the full pipeline for a release pull request, same as any other. Skipping the <code>check</code> matrix there would save a run, but the queue tests the would-be merge commit rather than the pull request head, and dropping it would reopen exactly the red-<code>main</code> gap described below. Our <code>revdep</code> likewise keeps running at the queue: it gates the merge, while <code>recheck</code> answers the different question the submission asks — see <a href="#reverse-dependencies-before-a-cran-submission">Reverse dependencies before a CRAN submission</a>. A release pull request is rare enough that paying for the queue leg twice over is the cheaper mistake.</p>
+<p>The R-devel leg of <code>ci / check</code> is the one exception. It runs on a release pull request only, never at the queue. The leg builds its dependencies from source, so in blockr.core’s queue it took 15–22 minutes, against 3–7 for the other legs, and every queue entry waited for it. In 187 queue runs, it found nothing that the other legs missed (<a href="https://github.com/BristolMyersSquibb/blockr.ci/issues/95" class="external-link">#95</a>). An R-devel failure can therefore reach <code>main</code>. It then shows up at the next release.</p>
 </div>
 <div class="section level3">
 <h3 id="merge-queue">Merge queue<a class="anchor" aria-label="anchor" href="#merge-queue"></a>
@@ -969,7 +977,8 @@
 <strong>TypeScript gates</strong> — the package’s <code>typecheck</code>, <code>lint</code>, <code>test</code> and <code>build</code> scripts, and a check that the build leaves <code>inst/</code> as committed — PR gate, off unless <code>typescript-dir</code> is set — see <a href="#typescript-gates">TypeScript gates</a>
 </li>
 <li>
-<strong>Full check</strong> — 4-platform matrix (macOS, Windows, Ubuntu devel, Ubuntu oldrel) — merge-queue gate</li>
+<strong>Full check</strong> — 3-platform matrix (macOS, Windows, Ubuntu oldrel) — merge-queue gate, plus Ubuntu devel on every push to a labelled release PR — see <a href="#release-mode">Release mode</a>
+</li>
 <li>
 <strong>Reverse-dependency checks</strong> against configurable downstream packages — merge-queue gate, plus an informational tier that reports to the pull request without gating — see <a href="#informational-downstreams">Informational downstreams</a>
 </li>
