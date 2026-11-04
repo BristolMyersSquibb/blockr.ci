@@ -739,7 +739,8 @@ on the pull-request ref, on every push:
 | Job | Ordinary PR | Release PR | Merge queue |
 |---|---|---|---|
 | `lint`, `smoke`, `pkgdown-dev`, `coverage`, `docs`, `typescript` | runs | runs | skipped |
-| `ci / check` (macOS, Windows, devel, oldrel) | skipped | **runs** | runs |
+| `ci / check` (macOS, Windows, oldrel) | skipped | **runs** | runs |
+| `ci / check` (devel) | skipped | **runs** | skipped |
 | `release` (R-hub flavours) | skipped | **runs** | skipped |
 | `release-gate` (mechanical checks) | skipped | **runs** | skipped |
 | `release-gate / soft` (URLs, `--as-cran` notes) | skipped | **runs**, reports without gating | skipped |
@@ -761,6 +762,13 @@ submission asks — see [Reverse dependencies before a CRAN
 submission](#reverse-dependencies-before-a-cran-submission). A release
 pull request is rare enough that paying for the queue leg twice over is
 the cheaper mistake.
+
+The R-devel leg of `ci / check` is the one exception.
+It runs on a release pull request only, never at the queue.
+The leg builds its dependencies from source, so in blockr.core's queue it took 15–22 minutes, against 3–7 for the other legs, and every queue entry waited for it.
+In 187 queue runs, it found nothing that the other legs missed ([#95](https://github.com/BristolMyersSquibb/blockr.ci/issues/95)).
+An R-devel failure can therefore reach `main`.
+It then shows up at the next release.
 
 ### Merge queue
 
@@ -966,7 +974,7 @@ jobs:
 - **Coverage** via `covr::package_coverage()` + codecov, optional threshold — PR gate
 - **Docs freshness** — regenerate `man/` + `NAMESPACE` with the roxygen2 version pinned in `DESCRIPTION` (`Config/roxygen2/version`, or legacy `RoxygenNote`) and fail on drift — PR gate
 - **TypeScript gates** — the package's `typecheck`, `lint`, `test` and `build` scripts, and a check that the build leaves `inst/` as committed — PR gate, off unless `typescript-dir` is set — see [TypeScript gates](#typescript-gates)
-- **Full check** — 4-platform matrix (macOS, Windows, Ubuntu devel, Ubuntu oldrel) — merge-queue gate
+- **Full check** — 3-platform matrix (macOS, Windows, Ubuntu oldrel) — merge-queue gate, plus Ubuntu devel on every push to a labelled release PR — see [Release mode](#release-mode)
 - **Reverse-dependency checks** against configurable downstream packages — merge-queue gate, plus an informational tier that reports to the pull request without gating — see [Informational downstreams](#informational-downstreams)
 - **CRAN pre-submission checks** — AddressSanitizer, UndefinedBehaviorSanitizer, valgrind, `rchk` and the Suggests-free build in the R-hub containers, plus a CRAN-style reverse dependency check, on every push to a labelled release PR — see [Release mode](#release-mode)
 - **Mechanical release checks** — the checklist half of a release, gated on every push to a labelled release PR instead of ticked by hand: three-component version, no dev-version pins, no `Remotes`, `NEWS.md` shape, real vignette titles, a `\value` on every documented function, and a README current with its source. Reports spelling, URL and `--as-cran` findings alongside without gating on them — see [`release-gate.yaml`](#release-gateyaml--mechanical-release-checks-optional)
