@@ -6,6 +6,8 @@
 #                   fences, comments, blanks)
 #   DESC_PATH     : path to DESCRIPTION (may be "" if none was found)
 #   PKG           : owner/repo this run is asking for a `ref` for ("" if none)
+#   PKG_BRANCH    : branch of PKG the `ref` falls back to when the deps block
+#                   names no ref for PKG ("" for PKG's default branch)
 #   BASE_PACKAGES : the extra-packages output, verbatim (deps-block entries
 #                   are NEVER appended)
 #   GITHUB_OUTPUT : path to write outputs to
@@ -18,6 +20,7 @@ env <- function(x) Sys.getenv(x, unset = "")
 deps_text <- env("DEPS_LINES")
 desc_path <- env("DESC_PATH")
 pkg_filter <- env("PKG")
+pkg_branch <- env("PKG_BRANCH")
 base_pkgs <- env("BASE_PACKAGES")
 out_path <- env("GITHUB_OUTPUT")
 
@@ -81,6 +84,14 @@ gh_api <- function(...) {
   if (is.null(attr(out, "status"))) out else NULL
 }
 
+# The names of PKG's branches, or NULL if they cannot be listed.
+pkg_branches <- function() {
+  gh_api(
+    "--paginate", sprintf("repos/%s/branches?per_page=100", pkg_filter),
+    "--jq", ".[].name"
+  )
+}
+
 # The revdep job checks PKG out at this ref and runs its code with BLOCKR_PAT
 # in the environment, so the ref must hold code already in PKG: one of its
 # branches, or a pull request opened from one. A pull request from a fork
@@ -122,10 +133,7 @@ if (nzchar(pkg_filter) && length(parsed)) {
           ref_out <- sprintf("refs/pull/%s/head", pull)
         }
       } else if (nzchar(commitish) && commitish != "HEAD") {
-        branches <- gh_api(
-          "--paginate", sprintf("repos/%s/branches?per_page=100", pkg_filter),
-          "--jq", ".[].name"
-        )
+        branches <- pkg_branches()
         if (is.null(branches)) {
           errors <- c(errors, sprintf(
             "  - '%s': could not list the branches of %s.",
@@ -150,6 +158,29 @@ if (length(errors)) {
   message("parse-deps: invalid deps block")
   for (e in errors) message(e)
   quit(status = 1)
+}
+
+# An entry of revdep-strict or revdep-info can name a branch of PKG. The
+# leg checks that branch out when the deps block names no ref for PKG, and
+# only then does this look it up, in the same list of branches.
+if (nzchar(pkg_filter) && nzchar(pkg_branch) && !nzchar(ref_out)) {
+  entry <- sprintf("'%s@%s'", pkg_filter, pkg_branch)
+  branches <- pkg_branches()
+  if (is.null(branches)) {
+    message(sprintf(
+      "parse-deps: %s: could not list the branches of %s.",
+      entry, pkg_filter
+    ))
+    quit(status = 1)
+  }
+  if (!pkg_branch %in% branches) {
+    message(sprintf(
+      "parse-deps: %s: '%s' is not a branch of %s.",
+      entry, pkg_branch, pkg_filter
+    ))
+    quit(status = 1)
+  }
+  ref_out <- paste0("refs/heads/", pkg_branch)
 }
 
 # `extra-packages` is base only; deps-block entries are never appended.

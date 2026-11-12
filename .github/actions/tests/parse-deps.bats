@@ -299,6 +299,80 @@ owner/repo@queued-branch
   assert [ -n "$(grep '^pkg-token api --paginate repos/owner/repo/branches' "$GH_CALLS")" ]
 }
 
+@test "PKG_BRANCH without a deps block: ref = refs/heads/<branch>, looked up with PKG_TOKEN" {
+  write_description
+  export PR_BODY="Just a regular PR body with no deps."
+  export GH_TOKEN="upstream-token"
+  export PKG_TOKEN="pkg-token"
+  export PKG="owner/repo"
+  export PKG_BRANCH="feature-branch"
+  export BASE_PACKAGES="any::rcmdcheck"
+
+  run bash "$SCRIPT"
+  assert_success
+
+  assert_equal "$(get_output ref)" "refs/heads/feature-branch"
+  assert [ -n "$(grep '^pkg-token api --paginate repos/owner/repo/branches' "$GH_CALLS")" ]
+}
+
+@test "PKG_BRANCH with a deps-block entry naming no ref: ref = refs/heads/<branch>" {
+  write_description
+  export PR_BODY='```deps
+owner/repo
+```'
+  export PKG="owner/repo"
+  export PKG_BRANCH="feature-branch"
+  export BASE_PACKAGES="any::rcmdcheck"
+
+  run bash "$SCRIPT"
+  assert_success
+
+  assert_equal "$(get_output ref)" "refs/heads/feature-branch"
+}
+
+@test "PKG_BRANCH with a deps-block entry naming a ref: the entry's ref, branch not looked up" {
+  write_description
+  export PR_BODY='```deps
+owner/repo#42
+```'
+  export PKG="owner/repo"
+  export PKG_BRANCH="no-such-branch"
+  export BASE_PACKAGES="any::rcmdcheck"
+
+  run bash "$SCRIPT"
+  assert_success
+
+  assert_equal "$(get_output ref)" "refs/pull/42/head"
+  refute [ -n "$(grep 'branches' "$GH_CALLS")" ]
+}
+
+@test "PKG_BRANCH that is not a branch of PKG: error naming the entry" {
+  write_description
+  export PR_BODY="Just a regular PR body with no deps."
+  export PKG="owner/repo"
+  export PKG_BRANCH="js-state"
+  export BASE_PACKAGES="any::rcmdcheck"
+
+  run bash "$SCRIPT"
+  assert_failure
+
+  assert_output --partial "'owner/repo@js-state': 'js-state' is not a branch of owner/repo"
+  assert_equal "$(get_output ref)" ""
+}
+
+@test "PKG_BRANCH whose branches cannot be listed: error" {
+  write_description
+  export PR_BODY="Just a regular PR body with no deps."
+  export PKG="owner/private"
+  export PKG_BRANCH="main"
+  export BASE_PACKAGES="any::rcmdcheck"
+
+  run bash "$SCRIPT"
+  assert_failure
+
+  assert_output --partial "'owner/private@main': could not list the branches of owner/private"
+}
+
 @test "PKG not matching any dep: ref empty" {
   write_description
   export PR_BODY='```deps

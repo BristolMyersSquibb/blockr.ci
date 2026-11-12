@@ -3,15 +3,18 @@ description: >
   Compose the pull-request comment for revdep.yaml's informational tier:
   one row per downstream with the outcome its leg recorded, and for a leg
   that did not pass, the workflow runs at the head of the downstream's
-  own default branch, so a failure the downstream already has reads as
-  such.  Writes the body to a file for sticky-comment, and to
-  $GITHUB_STEP_SUMMARY.
+  own branch, the one its entry names or else its default branch, so a
+  failure the downstream already has reads as such.  Writes the body to a
+  file for sticky-comment, and to $GITHUB_STEP_SUMMARY.
 
 inputs:
   packages:
     description: >
-      JSON array of the informational downstreams, as owner/repo.  Each
-      one gets a row, whether or not its leg recorded an outcome.
+      JSON array of the informational downstreams, each an object with
+      the repository as `pkg`, owner/repo, and the branch its entry names
+      as `branch`, left out for an entry that names none.  A bare
+      owner/repo string counts as an entry without a branch.  Each one
+      gets a row, whether or not its leg recorded an outcome.
     required: true
   outcomes-dir:
     description: >
@@ -25,9 +28,9 @@ inputs:
     required: true
   token:
     description: >
-      Token for reading each downstream's default branch and workflow
-      runs.  Pass the one that checks the downstreams out, since one may
-      be private; there it also needs Actions read access.
+      Token for reading the head of each downstream's branch and its
+      workflow runs.  Pass the one that checks the downstreams out, since
+      one may be private; there it also needs Actions read access.
     required: false
     default: ${{ github.token }}
 

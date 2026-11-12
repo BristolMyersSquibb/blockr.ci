@@ -24,6 +24,15 @@ inputs:
       (owner/repo). Used by the revdep workflow.
     required: false
     default: ''
+  branch:
+    description: >
+      A branch of pkg for the `ref` output to fall back to when the deps
+      block names no ref for pkg.  The action fails if pkg has no such
+      branch.  Empty, the default, leaves `ref` empty in that case, for
+      pkg's default branch.  Used by the revdep workflow, for an entry
+      that names its branch.
+    required: false
+    default: ''
   token:
     description: >
       Token for reading pkg's branches and pull requests, which the ref is
@@ -45,10 +54,12 @@ outputs:
     value: ${{ steps.parse.outputs.extra-packages }}
   ref:
     description: >
-      Git ref for the requested package, empty if not found: a branch of
-      pkg (refs/heads/<branch>) or a pull request opened from one
-      (refs/pull/N/head).  An entry for pkg that resolves to anything else
-      fails the action.
+      Git ref for the requested package.  A deps-block entry for pkg can
+      name one: a branch of pkg (refs/heads/<branch>) or a pull request
+      opened from one (refs/pull/N/head).  An entry for pkg that resolves
+      to anything else fails the action.  Where no entry names a ref, the
+      `branch` input gives it as refs/heads/<branch>, and an empty
+      `branch` leaves it empty.
     value: ${{ steps.parse.outputs.ref }}
 
 runs:
@@ -67,6 +78,7 @@ runs:
         PR_NUMBER: ${{ inputs.pr-number }}
         GH_TOKEN: ${{ github.token }}
         PKG: ${{ inputs.pkg }}
+        PKG_BRANCH: ${{ inputs.branch }}
         PKG_TOKEN: ${{ inputs.token }}
         BASE_PACKAGES: ${{ inputs.base-packages }}
         SCRIPT_DIR: ${{ github.action_path }}

@@ -3,9 +3,9 @@
 #
 # One row per downstream in PACKAGES, from the outcome its leg left in
 # OUTCOMES_DIR. A leg that did not pass also gets the workflow runs at the
-# head of the downstream's own default branch, so a failure the downstream
-# already has reads as such rather than as something the pull request
-# broke.
+# head of the downstream's own branch, the one its entry names or else its
+# default branch, so a failure the downstream already has reads as such
+# rather than as something the pull request broke.
 #
 # The outcome files are written after the downstream's own code has run,
 # so they are read as data: the rows come from PACKAGES, a status has to
@@ -43,12 +43,16 @@ outcomes=$(
   done | jq -s '.'
 )
 
-# The runs at the head of a downstream's default branch, which HEAD
-# names on the API, as "`abc1234`: [ci](url) success, [pkgdown](url)
-# success".
+# The runs at the head of a downstream's branch, as "`abc1234`: [ci](url)
+# success, [pkgdown](url) success": own_branch <pkg> <branch>. An empty
+# branch stands for the default one, which HEAD names on the API. A branch
+# goes into the path encoded, since its name can hold a # or a %.
 own_branch() {
-  local pkg=$1 head runs
-  if ! head=$(gh api "repos/$pkg/commits/HEAD" 2>/dev/null | jq -er '.sha') ||
+  local pkg=$1 ref=HEAD head runs
+  if [[ -n "$2" ]]; then
+    ref="heads/$(jq -rn --arg branch "$2" '$branch | @uri')"
+  fi
+  if ! head=$(gh api "repos/$pkg/commits/$ref" 2>/dev/null | jq -er '.sha') ||
      ! runs=$(gh api "repos/$pkg/actions/runs?head_sha=$head&per_page=100" 2>/dev/null |
                 jq -er ".workflow_runs
                   | map(\"[\(.name | $escape)](\(.html_url)) \(.conclusion // .status | gsub(\"_\"; \" \"))\")
@@ -63,7 +67,12 @@ rows=""
 total=0
 failed=0
 
-while IFS= read -r pkg; do
+# An entry is an object with the repository as `pkg` and, where the leg
+# checked one, a `branch`, as revdep.yaml's matrix job writes it. A bare
+# string is a repository without a branch.
+while IFS= read -r entry; do
+  pkg=$(jq -r '.pkg' <<< "$entry")
+  branch=$(jq -r '.branch // ""' <<< "$entry")
   total=$((total + 1))
 
   outcome=$(jq -c --arg pkg "$pkg" '
@@ -90,11 +99,11 @@ while IFS= read -r pkg; do
   own=""
   if [[ "$status" != success ]]; then
     failed=$((failed + 1))
-    own=$(own_branch "$pkg")
+    own=$(own_branch "$pkg" "$branch")
   fi
 
-  rows+="| \`$pkg\` | $icon [$status]($link) | $own |"$'\n'
-done < <(jq -r '.[]' <<< "$PACKAGES")
+  rows+="| \`$pkg${branch:+@$branch}\` | $icon [$status]($link) | $own |"$'\n'
+done < <(jq -c '.[] | if type == "string" then {pkg: .} else . end' <<< "$PACKAGES")
 
 if (( total == 0 )); then
   echo "::error::revdep-report: PACKAGES lists no downstream to report on." >&2
@@ -112,11 +121,11 @@ fi
   echo
   echo "$headline"
   echo
-  echo "| Downstream | Result | Its own default branch |"
+  echo "| Downstream | Result | Its own branch |"
   echo "| --- | --- | --- |"
   printf '%s' "$rows"
   echo
-  echo "These downstreams are checked in the merge queue the same way as the ones behind \`revdep-all\`, but none of them holds the merge. For a leg that did not pass, the last column gives the downstream's own workflow runs at the head of its default branch. If those fail as well, the failure likely predates this pull request."
+  echo "These downstreams are checked in the merge queue the same way as the ones behind \`revdep-all\`, but none of them holds the merge. For a leg that did not pass, the last column gives the downstream's own workflow runs at the head of the branch its entry names, or of its default branch for an entry that names none. If those fail as well, the failure likely predates this pull request."
   echo
   echo "<sub>Rewritten by \`revdep\` on every merge-queue run of this pull request. It is posted once [the run]($run_url) has finished every informational leg, which can be after the merge.</sub>"
 } > "$BODY_FILE"
