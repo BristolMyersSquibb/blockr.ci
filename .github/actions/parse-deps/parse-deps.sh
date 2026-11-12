@@ -4,8 +4,8 @@
 # extraction); everything that involves package metadata is delegated to
 # parse-deps.R, which uses pkgdepends (the tool that owns the syntax).
 #
-# Env vars: PR_BODY, PR_NUMBER, GH_TOKEN, PKG, PKG_TOKEN, BASE_PACKAGES,
-#           GITHUB_OUTPUT, SCRIPT_DIR
+# Env vars: PR_BODY, PR_NUMBER, GH_TOKEN, PKG, PKG_BRANCH, PKG_TOKEN,
+#           BASE_PACKAGES, GITHUB_OUTPUT, SCRIPT_DIR
 
 set -euo pipefail
 
@@ -44,6 +44,7 @@ done
 
 export DEPS_LINES DESC_PATH
 export PKG="${PKG:-}"
+export PKG_BRANCH="${PKG_BRANCH:-}"
 export BASE_PACKAGES="${BASE_PACKAGES:-}"
 export GITHUB_OUTPUT="${GITHUB_OUTPUT:-}"
 

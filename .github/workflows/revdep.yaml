@@ -51,7 +51,9 @@ on:
       revdep-strict:
         description: >
           Newline-separated list of downstream packages to reverse-dependency
-          check.  A failing leg fails `revdep-all`, so these gate the merge.
+          check, each as owner/repo, or as owner/repo@branch to check that
+          branch rather than the default one.  A failing leg fails
+          `revdep-all`, so these gate the merge.
         type: string
         default: ''
         required: false
@@ -59,10 +61,11 @@ on:
       revdep-info:
         description: >
           Newline-separated list of downstream packages to check the same way
-          without gating the merge.  Their legs start once `revdep-all` has
-          reported, four at a time at most, and their outcome goes to the
-          pull request as one comment, which can land after the merge.  A
-          package goes in one list or the other, not both.
+          without gating the merge, in the same form.  Their legs start once
+          `revdep-all` has reported, four at a time at most, and their
+          outcome goes to the pull request as one comment, which can land
+          after the merge.  A package goes in one list or the other, not
+          both.
         type: string
         default: ''
         required: false
@@ -137,12 +140,25 @@ jobs:
 
   # ── Build the per-package matrices from the two lists ─────────────────
   #
+  # An entry names a downstream as owner/repo, or as owner/repo@branch for
+  # its leg to check that branch out rather than the default one.  Each
+  # matrix entry keeps the two apart, as `pkg`, the repository, and
+  # `branch`, present only for an entry that names one.  A leg passes
+  # `branch` to parse-deps alone, and the report reads it for its last
+  # column.  The checkout, parse-deps' `pkg`, REVDEP_PKG and the recorded
+  # outcome take `pkg` alone.  An entry of any other form fails the job,
+  # and the error names it.
+  #
   # A downstream in both lists would gate the merge and be reported as
   # informational at once.  That is most likely a move from one list to
   # the other left half done, and only the caller can say which list it
-  # belongs in, so the job fails and names the package.  Repository names
-  # are compared without case, as GitHub resolves them, and a name listed
-  # twice runs once.
+  # belongs in, so the job fails and names the package, whatever branches
+  # the two entries name.  A repository listed twice in one list with two
+  # different branches fails the job too: a leg checks out one ref per
+  # repository, and only the caller can say which branch it means.
+  # Repository names are compared without case, as GitHub resolves them,
+  # and branch names exactly, as git does.  An entry listed twice runs
+  # once.
   #
   # The deprecated `revdep-packages` still feeds the strict list, so that
   # callers written before the rename keep checking what they did.
@@ -169,14 +185,30 @@ jobs:
           INFO: ${{ inputs.revdep-info }}
           DEPRECATED: ${{ inputs.revdep-packages }}
         run: |
-          # One JSON array per list, entries trimmed, blank lines and repeats
-          # dropped, keeping the first spelling of each name.
-          to_json() {
+          # The entries of the lists as one JSON array, trimmed, blank lines
+          # dropped.
+          entries() {
             printf '%s\n' "$@" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' |
-              jq -R -s -c 'split("\n") | map(select(length > 0))
-                | reduce .[] as $p ([];
-                    if any(.[]; ascii_downcase == ($p | ascii_downcase))
-                    then . else . + [$p] end)'
+              jq -R -s -c 'split("\n") | map(select(length > 0))'
+          }
+
+          bad=$(entries "$STRICT" "$DEPRECATED" "$INFO" |
+            jq -r 'map(select(test("^[^/@\\s]+/[^/@\\s]+(@\\S+)?$") | not)) | join(", ")')
+          if [ -n "$bad" ]; then
+            echo "::error::Neither owner/repo nor owner/repo@branch: $bad."
+            exit 1
+          fi
+
+          # One JSON array of matrix entries per list, split at the first @,
+          # with a repeated entry kept once, in its first spelling.
+          to_json() {
+            entries "$@" |
+              jq -c 'map(capture("^(?<pkg>[^@]+)(@(?<branch>.+))?$")
+                      | with_entries(select(.value != null)))
+                | reduce .[] as $e ([];
+                    if any(.[]; (.pkg | ascii_downcase) == ($e.pkg | ascii_downcase)
+                                and .branch == $e.branch)
+                    then . else . + [$e] end)'
           }
           strict=$(to_json "$STRICT" "$DEPRECATED")
           info=$(to_json "$INFO")
@@ -185,9 +217,20 @@ jobs:
             echo "::warning::The revdep-packages input is deprecated. Rename it to revdep-strict; until then, its list is added to that one."
           fi
 
+          # With repeats gone, a repository listed twice in one list names
+          # two branches.
+          for list in "$strict" "$info"; do
+            twice=$(jq -r 'group_by(.pkg | ascii_downcase)
+              | map(select(length > 1) | .[0].pkg) | join(", ")' <<< "$list")
+            if [ -n "$twice" ]; then
+              echo "::error::Listed twice with different branches: $twice. List each downstream once."
+              exit 1
+            fi
+          done
+
           both=$(jq -n -r --argjson strict "$strict" --argjson info "$info" \
-            '[$strict[] | ascii_downcase] as $s
-             | [$info[] | select(ascii_downcase | IN($s[]))] | join(", ")')
+            '[$strict[].pkg | ascii_downcase] as $s
+             | [$info[].pkg | select(ascii_downcase | IN($s[]))] | join(", ")')
           if [ -n "$both" ]; then
             echo "::error::Listed as both strict and informational: $both. List each downstream once."
             exit 1
@@ -221,7 +264,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        pkg: ${{ fromJson(needs.matrix.outputs.strict) }}
+        include: ${{ fromJson(needs.matrix.outputs.strict) }}
 
     env: &revdep-env
       GITHUB_PAT: ${{ secrets.BLOCKR_PAT || github.token }}
@@ -241,12 +284,16 @@ jobs:
 
       # The ref a deps block asks for is checked against matrix.pkg's own
       # branches and pull requests, read with the token that checks it out.
+      # Where the deps block names none, the branch the entry names is
+      # checked the same way, and an entry without one leaves the ref
+      # empty, for the default branch.
       - uses: $/.github/actions/parse-deps
         id: deps
         with:
           pr-body: ${{ github.event.pull_request.body }}
           pr-number: ${{ github.event.pull_request.number }}
           pkg: ${{ matrix.pkg }}
+          branch: ${{ matrix.branch }}
           token: ${{ secrets.BLOCKR_PAT || github.token }}
           base-packages: |
             any::rcmdcheck
@@ -443,7 +490,7 @@ jobs:
       fail-fast: false
       max-parallel: 4
       matrix:
-        pkg: ${{ fromJson(needs.matrix.outputs.info) }}
+        include: ${{ fromJson(needs.matrix.outputs.info) }}
 
     env: *revdep-env
 

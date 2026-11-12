@@ -15,7 +15,7 @@ setup() {
   # is set: without it every test would append its report to the real
   # step summary.
   export GITHUB_STEP_SUMMARY=""
-  export PACKAGES='["acme/one","acme/two"]'
+  export PACKAGES='[{"pkg":"acme/one"},{"pkg":"acme/two"}]'
   export OUTCOMES_DIR="$BATS_TEST_TMPDIR/outcomes"
   export BODY_FILE="$BATS_TEST_TMPDIR/comment.md"
   export GH_LOG="$BATS_TEST_TMPDIR/gh.log"
@@ -49,11 +49,12 @@ outcome() {
     '{pkg: $pkg, status: $status, job: $job}' > "$OUTCOMES_DIR/$1.json"
 }
 
-# The head of a downstream's default branch, and the runs on it:
-# own_runs <pkg> <workflow_runs array>.
+# The head of a downstream's branch, and the runs on it:
+# own_runs <pkg> <workflow_runs array> [<ref>], where the ref defaults to
+# HEAD, the default branch, and is heads/<branch> for a branch.
 own_runs() {
   local key
-  key=$(printf '%s' "repos/$1/commits/HEAD" | tr '/?=&' '____')
+  key=$(printf '%s' "repos/$1/commits/${3:-HEAD}" | tr '/?=&' '____')
   printf '{"sha": "%s"}' "$HEAD_SHA" > "$GH_FIXTURES/$key"
   key=$(printf '%s' "repos/$1/actions/runs?head_sha=$HEAD_SHA&per_page=100" | tr '/?=&' '____')
   printf '{"workflow_runs": %s}' "$2" > "$GH_FIXTURES/$key"
@@ -99,6 +100,49 @@ report() {
   # Only the leg that did not pass is looked up.
   run cat "$GH_LOG"
   refute_output --partial "acme/one"
+}
+
+@test "an entry naming a branch: its row names it, with the runs at the head of that branch" {
+  export PACKAGES='[{"pkg":"acme/one"},{"pkg":"acme/two","branch":"js-state"}]'
+  outcome 0 acme/one success 11
+  outcome 1 acme/two failure 12
+  own_runs acme/two '[{"name": "ci", "status": "completed", "conclusion": "failure", "html_url": "https://github.com/acme/two/actions/runs/1"}]' heads/js-state
+
+  report
+  assert_success
+
+  run cat "$BODY_FILE"
+  assert_output --partial "| \`acme/two@js-state\` | :x: [failure](https://github.com/acme/widget/actions/runs/99/job/12) | [\`7a8341d\`](https://github.com/acme/two/commit/$HEAD_SHA): [ci](https://github.com/acme/two/actions/runs/1) failure |"
+  assert_output --partial '| `acme/one` | :white_check_mark: [success](https://github.com/acme/widget/actions/runs/99/job/11) |  |'
+
+  run cat "$GH_LOG"
+  refute_output --partial "commits/HEAD"
+}
+
+@test "a branch goes into the lookup encoded" {
+  export PACKAGES='[{"pkg":"acme/two","branch":"feature/x#2"}]'
+  outcome 0 acme/two failure 12
+  own_runs acme/two '[]' heads/feature%2Fx%232
+
+  report
+  assert_success
+
+  run cat "$BODY_FILE"
+  assert_output --partial "| \`acme/two@feature/x#2\` | :x: [failure](https://github.com/acme/widget/actions/runs/99/job/12) | [\`7a8341d\`](https://github.com/acme/two/commit/$HEAD_SHA): no workflow run |"
+}
+
+@test "a bare repository string is an entry without a branch" {
+  export PACKAGES='["acme/one","acme/two"]'
+  outcome 0 acme/one success 11
+  outcome 1 acme/two failure 12
+  own_runs acme/two '[]'
+
+  report
+  assert_success
+
+  run cat "$BODY_FILE"
+  assert_output --partial '| `acme/one` | :white_check_mark: [success](https://github.com/acme/widget/actions/runs/99/job/11) |  |'
+  assert_output --partial "| \`acme/two\` | :x: [failure](https://github.com/acme/widget/actions/runs/99/job/12) | [\`7a8341d\`](https://github.com/acme/two/commit/$HEAD_SHA): no workflow run |"
 }
 
 # Also the status of a leg stopped by timeout-minutes.

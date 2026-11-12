@@ -124,6 +124,27 @@ branch. When the two packages' `Remotes` pin some other package to
 different commits, that resolution fails, and the leg with it: no
 library can hold both.
 
+#### A branch of a downstream
+
+An entry of `revdep-strict` or `revdep-info` can name a branch of its downstream after an `@`, as in `BristolMyersSquibb/blockr.dock@js-state`.
+Its leg then checks out that branch instead of the default one, and fails if the downstream has no such branch.
+This is for an upstream branch that works only against a matching branch of its downstream, such as an integration branch that several repositories share.
+
+```yaml
+  revdep:
+    if: github.event_name == 'merge_group'
+    uses: BristolMyersSquibb/blockr.ci/.github/workflows/revdep.yaml@main
+    with:
+      revdep-strict: |
+        BristolMyersSquibb/blockr.dock@js-state
+    secrets:
+      BLOCKR_PAT: ${{ secrets.BLOCKR_PAT }}
+```
+
+A deps block in the pull request body can still point the leg at another ref, as [Per-PR revdep refs](#per-pr-revdep-refs) describes.
+Each repository is listed once.
+A repository listed twice with different branches fails the `matrix` job, and so does an entry that is neither `owner/repo` nor `owner/repo@branch`.
+
 #### Informational downstreams
 
 A downstream in `revdep-strict` gates the merge: `revdep-all` fails
@@ -158,7 +179,8 @@ outcome into one comment on the pull request, rewritten on each queue
 run, and into its own job summary. The comment can land after the
 merge, which is enough for a tier that informs rather than gates. Each
 row links its leg's log, and a leg that did not pass also gets the
-downstream's own workflow runs at the head of its default branch, so a
+downstream's own workflow runs at the head of the branch its entry
+names, or of its default branch for an entry that names none, so a
 failure the downstream already has there reads as such.
 
 A downstream goes in one list or the other. One listed in both fails
@@ -911,8 +933,8 @@ release.
 
 | Input | Type | Default | Purpose |
 |---|---|---|---|
-| `revdep-strict` | newline-separated list | `''` | Downstream packages to reverse-dep check. A failing leg fails `revdep-all`, so these gate the merge. |
-| `revdep-info` | newline-separated list | `''` | Downstream packages checked the same way without gating the merge, once `revdep-all` has reported and four at a time at most. Their outcome goes to the pull request as one comment. See [Informational downstreams](#informational-downstreams). |
+| `revdep-strict` | newline-separated list | `''` | Downstream packages to reverse-dep check, each as `owner/repo`, or as `owner/repo@branch` to check that branch. See [A branch of a downstream](#a-branch-of-a-downstream). A failing leg fails `revdep-all`, so these gate the merge. |
+| `revdep-info` | newline-separated list | `''` | Downstream packages checked the same way, in the same form, without gating the merge, once `revdep-all` has reported and four at a time at most. Their outcome goes to the pull request as one comment. See [Informational downstreams](#informational-downstreams). |
 | `revdep-packages` | newline-separated list | `''` | DEPRECATED — renamed `revdep-strict`. Still added to it, with a warning, until a later release removes it. |
 
 ### `release.yaml`
@@ -1353,7 +1375,7 @@ BristolMyersSquibb/blockr.ai@my-feature-branch
 ```
 ````
 
-Each line is `owner/repo@branch` or `owner/repo#PR-number`, naming the downstream as `revdep-strict` or `revdep-info` lists it. The matching revdep job checks out that ref instead of the default branch.
+Each line is `owner/repo@branch` or `owner/repo#PR-number`, naming the downstream's repository as `revdep-strict` or `revdep-info` lists it. The matching revdep job checks out that ref instead of the default branch, or instead of the branch that the list's entry names.
 
 That job runs the code it checks out with `BLOCKR_PAT` in its environment, so an entry can only point it at code already in the downstream repository: after `@` one of its branches, after `#` one of its pull requests opened from a branch of that same repository. An entry naming another repository, a pull request from a fork, or a SHA, tag or `refs/…` path after `@` fails the job with the entry named. To check against a contributor's fork, push the branch to the downstream repository and name it there.
 
