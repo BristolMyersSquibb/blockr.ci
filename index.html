@@ -543,8 +543,8 @@
 <span id="cb14-7"><a href="#cb14-7" tabindex="-1"></a><span class="at">    </span><span class="fu">marker</span><span class="kw">:</span><span class="at"> </span><span class="st">'&lt;!-- my-workflow --&gt;'</span></span>
 <span id="cb14-8"><a href="#cb14-8" tabindex="-1"></a><span class="at">    </span><span class="fu">body-file</span><span class="kw">:</span><span class="at"> comment.md</span></span></code></pre></div>
 <p>Give <code>sticky-comment</code> a marker unique to your workflow. It finds its comment by matching the marker against the start of each existing one, so two workflows sharing a marker will overwrite each other. In the merge queue, whose event names no pull request, it comments on the one the queue ref names.</p>
-<p>The dependency-resolution and deploy helpers in the same tree — <code>parse-deps</code>, <code>check-suggests</code>, <code>setup-r-rhel</code> — are composite actions too, and callable the same way. So is <code>revdep-report</code>, which composes <code>revdep.yaml</code>’s comment on its informational downstreams from the outcome each leg records.</p>
-<p>Each action’s script is exercised by <code>bats</code> under <code>.github/actions/tests/</code>, which <code>bats.yaml</code> runs on any change below <code>.github/actions/</code>.</p>
+<p>The dependency-resolution and deploy helpers in the same tree — <code>parse-deps</code>, <code>check-suggests</code>, <code>setup-r-rhel</code>, <code>install-deps</code> — are composite actions too, and callable the same way. So is <code>revdep-report</code>, which composes <code>revdep.yaml</code>’s comment on its informational downstreams from the outcome each leg records.</p>
+<p>Each action’s script is exercised by <code>bats</code> under <code>.github/actions/tests/</code>, which <code>bats.yaml</code> runs on any change below <code>.github/actions/</code>. So is the script that works out what the image holds, <code>.github/image/packages.sh</code>, and <code>bats.yaml</code> runs on a change below <code>.github/image/</code> too.</p>
 </div>
 <div class="section level2">
 <h2 id="versions">Versions<a class="anchor" aria-label="anchor" href="#versions"></a>
@@ -782,6 +782,12 @@
 <td>Directory of the package’s <code>package.json</code>, relative to the repository root, such as <code>.</code>. Setting it turns on the <code>typescript</code> job; the default (<code>''</code>) skips it. See <a href="#typescript-gates">TypeScript gates</a>.</td>
 </tr>
 <tr>
+<td><code>image</code></td>
+<td>boolean</td>
+<td><code>false</code></td>
+<td>Run the Ubuntu jobs in the image that <code>image.yaml</code> builds every day, rather than installing R, their tools and their system packages while they run. See <a href="#prebuilt-image">Prebuilt image</a>.</td>
+</tr>
+<tr>
 <td><code>skip-pkgdown</code></td>
 <td>boolean</td>
 <td><code>false</code></td>
@@ -1008,6 +1014,9 @@
 <strong>Superseded runs cancelled</strong> — a push to a pull request cancels the <code>ci</code>, <code>release</code> and <code>release-gate</code> runs still checking the commit it replaces, and pkgdown builds take turns so the newest lands last — see <a href="#superseded-runs">Superseded runs</a>
 </li>
 <li>
+<strong>Prebuilt image</strong> — with <code>image: true</code>, the Ubuntu jobs run in an image built every day, which holds R, their tools and the system and R packages of the repos it is built for, so that they call apt only for a system package it lacks — see <a href="#prebuilt-image">Prebuilt image</a>
+</li>
+<li>
 <strong>Pinned Quarto</strong> — jobs that install Quarto (any package holding a <code>.qmd</code>) pass an explicit version instead of the action’s <code>release</code> default, which resolves the version through an unretried <code>curl</code> to quarto.org and has twice killed a green run — see <a href="#quarto-pin">Quarto pin</a>
 </li>
 <li>
@@ -1022,7 +1031,7 @@
 <h3 id="quarto-pin">Quarto pin<a class="anchor" aria-label="anchor" href="#quarto-pin"></a>
 </h3>
 <p>Quarto reaches a job through <code>setup-r-dependencies</code>, which installs it for any package holding a <code>.qmd</code>. Left at its <code>release</code> default, that install resolves the version at job time by piping an unretried curl of <code>https://quarto.org/docs/download/_download.json</code> into <code>jq</code>; under <code>pipefail</code> any hiccup from quarto.org kills the step and takes an otherwise-green run with it. An explicit version skips the lookup and goes straight to the release asset, which the action fetches with <code>wget</code> (20 retries by default).</p>
-<p>The version lives in a <code>QUARTO_VERSION</code> workflow-level <code>env</code> in <code>ci.yaml</code>, <code>pkgdown.yaml</code>, <code>revdep.yaml</code> and <code>release-gate.yaml</code> — bump the four together. The <code>release-gate.yaml</code> pin is reached only by a repository whose README is a <code>.qmd</code>; every other package installs no Quarto there at all. This is the Quarto that builds every consumer’s vignettes, so treat a bump as a deliberate toolchain change rather than routine upkeep. Windows is exempt: quarto-actions installs through scoop there and never performs the lookup, so the <code>check</code> matrix leaves that leg on the default.</p>
+<p>The version lives in a <code>QUARTO_VERSION</code> workflow-level <code>env</code> in <code>ci.yaml</code>, <code>pkgdown.yaml</code>, <code>revdep.yaml</code> and <code>release-gate.yaml</code> — bump the four together. The <code>release-gate.yaml</code> pin is reached only by a repository whose README is a <code>.qmd</code>; every other package installs no Quarto there at all. The image that <code>image.yaml</code> builds takes its Quarto from the pin in <code>ci.yaml</code>, so it follows a bump at its next build. This is the Quarto that builds every consumer’s vignettes, so treat a bump as a deliberate toolchain change rather than routine upkeep. Windows is exempt: quarto-actions installs through scoop there and never performs the lookup, so the <code>check</code> matrix leaves that leg on the default.</p>
 </div>
 <div class="section level3">
 <h3 id="typescript-gates">TypeScript gates<a class="anchor" aria-label="anchor" href="#typescript-gates"></a>
@@ -1037,6 +1046,27 @@
 <p>R CMD check and CRAN run no Node, so a package that builds its modules commits what the build writes to <code>inst/</code>. The job fails when the build leaves <code>inst/</code> other than committed, and names the files it changed, added or removed. A package that writes its modules in JS has no build step and needs no <code>build</code> script.</p>
 <p>Like <code>lint</code>, the job runs on pull requests only. A caller that turns it on adds <code>ci / typescript</code> to its required checks; for every other caller it reports as skipped, which satisfies a required check.</p>
 <p>Node stays on the 24 LTS line, which the <code>ubuntu-latest</code> image caches, so <code>setup-node</code> neither resolves a version over the network nor downloads one, for the reason given under <a href="#quarto-pin">Quarto pin</a>. Bump it deliberately.</p>
+</div>
+<div class="section level3">
+<h3 id="prebuilt-image">Prebuilt image<a class="anchor" aria-label="anchor" href="#prebuilt-image"></a>
+</h3>
+<p>The Ubuntu jobs install R, their tools and their system packages with apt from an Ubuntu archive mirror while they run. From 14 to 19 November 2026, a job stalled on that mirror in 46 of the 238 pull request runs of blockr.core, blockr.dock and blockr.assistant. A stalled job spent 19.5 minutes on setup at the median, against 1.8 for the others (<a href="https://github.com/BristolMyersSquibb/blockr.ci/issues/101" class="external-link">#101</a>).</p>
+<p>A caller that sets <code>image</code> runs those jobs in an image instead. The <code>image.yaml</code> workflow builds it every day and pushes it to <code>ghcr.io/bristolmyerssquibb/blockr.ci</code>.</p>
+<div class="sourceCode" id="cb20"><pre class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb20-1"><a href="#cb20-1" tabindex="-1"></a><span class="fu">jobs</span><span class="kw">:</span></span>
+<span id="cb20-2"><a href="#cb20-2" tabindex="-1"></a><span class="at">  </span><span class="fu">ci</span><span class="kw">:</span></span>
+<span id="cb20-3"><a href="#cb20-3" tabindex="-1"></a><span class="at">    </span><span class="fu">uses</span><span class="kw">:</span><span class="at"> BristolMyersSquibb/blockr.ci/.github/workflows/ci.yaml@main</span></span>
+<span id="cb20-4"><a href="#cb20-4" tabindex="-1"></a><span class="at">    </span><span class="fu">with</span><span class="kw">:</span></span>
+<span id="cb20-5"><a href="#cb20-5" tabindex="-1"></a><span class="at">      </span><span class="fu">image</span><span class="kw">:</span><span class="at"> </span><span class="ch">true</span></span></code></pre></div>
+<p>The image holds R, Pandoc, Quarto at the <a href="#quarto-pin">pinned version</a>, Google Chrome, qpdf, ghostscript, devscripts, git and the GitHub CLI. It also holds the R packages of the repos it is built for, together with the packages that <code>ci.yaml</code> adds, and the system packages of all of these. The build works out both lists each time it runs. The repos are the public repos of the organisation whose <code>js-state</code> branch holds a DESCRIPTION, so a repo joins with that branch and leaves without it. Only public repos count, because the build installs the package of each repo into the image, and the image is public. The extra packages are the <code>any::</code> refs and the <code>needs:</code> values of <code>ci.yaml</code>, together with pkgdepends, roxygen2 and sessioninfo, which steps of blockr.ci install themselves. When the build finds no repo, it fails, and the image of the day before stays. There is one image per R version, tagged <code>release</code> and <code>oldrel-1</code>. The pull request jobs take the image of <code>r-version</code>, so <code>r-version</code> must be empty, <code>release</code> or <code>oldrel-1</code>. The <code>check</code> matrix runs its oldrel-1 leg in the image. Its macOS, Windows and R-devel legs run as before: a job container needs a Linux runner, and no image holds R-devel.</p>
+<p>In the image, a job skips <code>setup-r</code>, <code>setup-pandoc</code> and <code>setup-r-dependencies</code>, and the <code>install-deps</code> action takes their place:</p>
+<ol style="list-style-type: decimal">
+<li>It resolves the dependencies with pak, as <code>setup-r-dependencies</code> does.</li>
+<li>It asks dpkg which of their system packages the image lacks.</li>
+<li>It installs the R packages that the image lacks, and a branch that <code>Remotes</code> names when it moved since the build. Like <code>setup-r-dependencies</code>, it keeps the packages already installed, so a job uses the CRAN versions of the image, which are at most a day old.</li>
+</ol>
+<p>When no system package is missing, pak installs with its system requirements switched off, and the job never calls apt. Then pak no longer looks the system packages up, so its log lists them all as missing, below the line of <code>install-deps</code> that says the image holds them. Left on, pak would run <code>apt-get update</code>, and on CI it would reinstall every system package that the lockfile names, installed or not. When some are missing, the job warns and lets pak install those, and only those. So a repo that adds a dependency with a new system package keeps working, and its jobs install that package with apt until the image holds it.</p>
+<p>Before it pushes an image, <code>image.yaml</code> resolves the dependencies of each of those repos in that image, and fails when any of their system packages is missing. It keeps the six newest untagged builds, so a job can still be pointed at one of them by its digest.</p>
+<p>The package is created on the first push, possibly as private. An owner of the organisation then makes it public once, under the package’s settings, so that callers in other organisations pull it without credentials.</p>
 </div>
 </div>
 <div class="section level2">
@@ -1185,10 +1215,10 @@ Remotes:
 <h3 id="per-pr-revdep-refs">Per-PR revdep refs<a class="anchor" aria-label="anchor" href="#per-pr-revdep-refs"></a>
 </h3>
 <p>The deps block in a PR body controls which ref of each revdep gets checked out for the <strong>revdep job</strong> — nothing else. It is not a mechanism for overriding forward dependencies; those belong in <code>Remotes:</code> in <code>DESCRIPTION</code>.</p>
-<div class="sourceCode" id="cb23"><pre class="sourceCode markdown"><code class="sourceCode markdown"><span id="cb23-1"><a href="#cb23-1" tabindex="-1"></a><span class="in">```deps</span></span>
-<span id="cb23-2"><a href="#cb23-2" tabindex="-1"></a><span class="in">BristolMyersSquibb/blockr.dag#111</span></span>
-<span id="cb23-3"><a href="#cb23-3" tabindex="-1"></a><span class="in">BristolMyersSquibb/blockr.ai@my-feature-branch</span></span>
-<span id="cb23-4"><a href="#cb23-4" tabindex="-1"></a><span class="in">```</span></span></code></pre></div>
+<div class="sourceCode" id="cb24"><pre class="sourceCode markdown"><code class="sourceCode markdown"><span id="cb24-1"><a href="#cb24-1" tabindex="-1"></a><span class="in">```deps</span></span>
+<span id="cb24-2"><a href="#cb24-2" tabindex="-1"></a><span class="in">BristolMyersSquibb/blockr.dag#111</span></span>
+<span id="cb24-3"><a href="#cb24-3" tabindex="-1"></a><span class="in">BristolMyersSquibb/blockr.ai@my-feature-branch</span></span>
+<span id="cb24-4"><a href="#cb24-4" tabindex="-1"></a><span class="in">```</span></span></code></pre></div>
 <p>Each line is <code>owner/repo@branch</code> or <code>owner/repo#PR-number</code>, naming the downstream’s repository as <code>revdep-strict</code> or <code>revdep-info</code> lists it. The matching revdep job checks out that ref instead of the default branch, or instead of the branch that the list’s entry names.</p>
 <p>That job runs the code it checks out with <code>BLOCKR_PAT</code> in its environment, so an entry can only point it at code already in the downstream repository: after <code>@</code> one of its branches, after <code>#</code> one of its pull requests opened from a branch of that same repository. An entry naming another repository, a pull request from a fork, or a SHA, tag or <code>refs/…</code> path after <code>@</code> fails the job with the entry named. To check against a contributor’s fork, push the branch to the downstream repository and name it there.</p>
 <p><code>parse-deps</code> validates each entry against the package’s <code>DESCRIPTION</code>: if a deps-block entry’s package name appears in <code>Imports</code>/<code>Depends</code>/<code>LinkingTo</code>/<code>Suggests</code>/<code>Remotes</code>, parse-deps fails with a pointer to <code>Remotes:</code>. This catches the common mistake of trying to use the deps block to swap in a dev branch of a forward dep.</p>
@@ -1202,9 +1232,9 @@ Remotes:
 <li><p>Open your PR on <code>blockr.dock</code>. The configured <code>revdep-strict</code> input includes <code>BristolMyersSquibb/blockr.dag</code>, so the revdep job runs against <code>blockr.dag</code>’s default branch by default.</p></li>
 <li>
 <p>To pin it to a specific PR, add to the PR body:</p>
-<div class="sourceCode" id="cb24"><pre class="sourceCode markdown"><code class="sourceCode markdown"><span id="cb24-1"><a href="#cb24-1" tabindex="-1"></a><span class="in">```deps</span></span>
-<span id="cb24-2"><a href="#cb24-2" tabindex="-1"></a><span class="in">BristolMyersSquibb/blockr.dag#111</span></span>
-<span id="cb24-3"><a href="#cb24-3" tabindex="-1"></a><span class="in">```</span></span></code></pre></div>
+<div class="sourceCode" id="cb25"><pre class="sourceCode markdown"><code class="sourceCode markdown"><span id="cb25-1"><a href="#cb25-1" tabindex="-1"></a><span class="in">```deps</span></span>
+<span id="cb25-2"><a href="#cb25-2" tabindex="-1"></a><span class="in">BristolMyersSquibb/blockr.dag#111</span></span>
+<span id="cb25-3"><a href="#cb25-3" tabindex="-1"></a><span class="in">```</span></span></code></pre></div>
 </li>
 <li><p>When the PR is enqueued, the merge-queue revdep job reads the block and checks out <code>blockr.dag</code> PR #111 head instead of the default branch.</p></li>
 <li><p>To point at a different PR later, edit the block and re-enqueue.</p></li>
