@@ -679,6 +679,7 @@ outcome each leg records.
 Each action's script is exercised by `bats` under
 `.github/actions/tests/`, which `bats.yaml` runs on any change below
 `.github/actions/`.
+So is the script that works out what the image holds, `.github/image/packages.sh`, and `bats.yaml` runs on a change below `.github/image/` too.
 
 ## Versions
 
@@ -1089,7 +1090,12 @@ jobs:
 ```
 
 The image holds R, Pandoc, Quarto at the [pinned version](#quarto-pin), Google Chrome, qpdf, ghostscript, devscripts, git and the GitHub CLI.
-It also holds the R packages that the repos in `REPOS` of `image.yaml` need on their branches, together with the packages that `ci.yaml` adds, and the system packages of all of these.
+It also holds the R packages of the repos it is built for, together with the packages that `ci.yaml` adds, and the system packages of all of these.
+The build works out both lists each time it runs.
+The repos are the public repos of the organisation whose `js-state` branch holds a DESCRIPTION, so a repo joins with that branch and leaves without it.
+Only public repos count, because the build installs the package of each repo into the image, and the image is public.
+The extra packages are the `any::` refs and the `needs:` values of `ci.yaml`, together with pkgdepends, roxygen2 and sessioninfo, which steps of blockr.ci install themselves.
+When the build finds no repo, it fails, and the image of the day before stays.
 There is one image per R version, tagged `release` and `oldrel-1`.
 The pull request jobs take the image of `r-version`, so `r-version` must be empty, `release` or `oldrel-1`.
 The `check` matrix runs its oldrel-1 leg in the image.
@@ -1108,7 +1114,7 @@ Left on, pak would run `apt-get update`, and on CI it would reinstall every syst
 When some are missing, the job warns and lets pak install those, and only those.
 So a repo that adds a dependency with a new system package keeps working, and its jobs install that package with apt until the image holds it.
 
-Before it pushes an image, `image.yaml` resolves the dependencies of each repo in `REPOS` in that image, and fails when any of their system packages is missing.
+Before it pushes an image, `image.yaml` resolves the dependencies of each of those repos in that image, and fails when any of their system packages is missing.
 It keeps the six newest untagged builds, so a job can still be pointed at one of them by its digest.
 
 The package is created on the first push, possibly as private.

@@ -7,10 +7,12 @@ on:
     branches: [main]
     paths:
       - '.github/actions/**'
+      - '.github/image/**'
   pull_request:
     branches: [main]
     paths:
       - '.github/actions/**'
+      - '.github/image/**'
 
 jobs:
   bats:

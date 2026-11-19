@@ -4,8 +4,9 @@
 # Without it, each of those jobs installs R, its tools and its system
 # packages with apt from an Ubuntu archive mirror.  From 14 to 19
 # November 2026, a job stalled on the mirror in 46 of the 238 pull request
-# runs of the repos in REPOS, and spent 19.5 minutes on setup at the
-# median, against 1.8 (BristolMyersSquibb/blockr.ci#101).  The image moves
+# runs of blockr.core, blockr.dock and blockr.assistant, and spent 19.5
+# minutes on setup at the median, against 1.8
+# (BristolMyersSquibb/blockr.ci#101).  The image moves
 # those downloads into this build, which no pull request waits for.  It
 # holds the R packages as well, which a cache restores for a pull request
 # only from the refs that the pull request may read.
@@ -19,8 +20,15 @@
 # named in Remotes that moved since the build.
 # It calls apt only for a system package that the image lacks.
 #
-# Before an image is pushed, it resolves the dependencies of each repo in
-# REPOS and must hold all of their system packages.  A pull request that
+# The plan job works out what the image holds, every time it is built.
+# The repos are the public repos of ORG whose branch BRANCH holds a
+# DESCRIPTION, so a repo joins with its branch and leaves without it.
+# The extra packages and the Config/Needs fields are the ones that ci.yaml
+# installs and passes, together with FIXED_PACKAGES.
+# See .github/image/packages.sh.
+#
+# Before an image is pushed, it resolves the dependencies of each of those
+# repos and must hold all of their system packages.  A pull request that
 # changes the image builds and tests it without pushing it.
 #
 # The package is created on the first push, possibly as private.  An
@@ -59,26 +67,42 @@ concurrency:
 
 env:
   IMAGE: ghcr.io/bristolmyerssquibb/blockr.ci
-  # The repos the image is built for, each at the branch it holds the
-  # dependencies of.
-  REPOS: >-
-    BristolMyersSquibb/blockr.core@js-state
-    BristolMyersSquibb/blockr.dock@js-state
-    BristolMyersSquibb/blockr.assistant@js-state
-  # The packages that the jobs of ci.yaml add to those dependencies.
-  EXTRA_PACKAGES: >-
-    any::covr
-    any::lintr
-    any::pkgdepends
-    any::pkgdown
-    any::pkgload
-    any::rcmdcheck
-    any::roxygen2
-    any::sessioninfo
 
 jobs:
 
+  plan:
+
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 60
+
+    outputs:
+      repos: ${{ steps.packages.outputs.repos }}
+      packages: ${{ steps.packages.outputs.packages }}
+      needs: ${{ steps.packages.outputs.needs }}
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Find the repos and packages
+        id: packages
+        run: bash .github/image/packages.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ORG: BristolMyersSquibb
+          BRANCH: js-state
+          CI_YAML: .github/workflows/ci.yaml
+          # The packages that the steps of blockr.ci install themselves:
+          # parse-deps installs pkgdepends, the docs job roxygen2 at its
+          # pin, and install-deps sessioninfo.
+          FIXED_PACKAGES: >-
+            any::pkgdepends
+            any::roxygen2
+            any::sessioninfo
+
   build:
+
+    needs: plan
 
     runs-on: ubuntu-latest
 
@@ -133,7 +157,8 @@ jobs:
           build-args: |
             R_VERSION=${{ steps.r.outputs.version }}
             QUARTO_VERSION=${{ steps.quarto.outputs.version }}
-            PACKAGES=${{ env.REPOS }} ${{ env.EXTRA_PACKAGES }}
+            PACKAGES=${{ needs.plan.outputs.packages }}
+            NEEDS=${{ needs.plan.outputs.needs }}
           secrets: |
             GITHUB_PAT=${{ github.token }}
 
@@ -180,6 +205,7 @@ jobs:
           done
         env:
           R: ${{ matrix.r }}
+          REPOS: ${{ needs.plan.outputs.repos }}
           GITHUB_PAT: ${{ github.token }}
 
       - name: Log in to GHCR

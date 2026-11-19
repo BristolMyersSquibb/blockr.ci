@@ -12,11 +12,13 @@ FROM ubuntu:26.04
 LABEL org.opencontainers.image.source="https://github.com/BristolMyersSquibb/blockr.ci"
 LABEL org.opencontainers.image.description="R, tools and dependencies for the Ubuntu jobs of blockr.ci"
 
-# The exact R version, such as 4.6.2, the Quarto pin of ci.yaml, and the
-# pak refs to install, separated by spaces.
+# The exact R version, such as 4.6.2, the Quarto pin of ci.yaml, the pak
+# refs to install and the Config/Needs fields to install as well, both
+# separated by spaces.
 ARG R_VERSION
 ARG QUARTO_VERSION
 ARG PACKAGES
+ARG NEEDS
 
 # The variables that r-lib/actions/setup-r exports on a runner, so that a
 # job sees the same R settings in the image.
