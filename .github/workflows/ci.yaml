@@ -546,15 +546,36 @@ jobs:
           pct <- covr::percent_coverage(cov)
           cat(sprintf("Coverage: %.2f%%\n", pct))
 
-          # A refused upload doesn't error: covr::codecov() returns
-          # Codecov's response whatever its status, and only an accepted
-          # upload carries uploaded: TRUE.  Warn rather than fail, so a
-          # refusal on Codecov's side, such as a rate limit, can't block
-          # PRs through the required ci / coverage check.
-          res <- covr::codecov(coverage = cov)
-          print(res)
-          if (!(is.list(res) && isTRUE(res$uploaded))) {
-            cat("::warning title=Codecov upload failed::Codecov did not accept the upload; its response is printed above.\n")
+          # Warn rather than fail when Codecov refuses the upload, so that a
+          # refusal on its side can't block PRs through the required
+          # ci / coverage check (#67).
+          # Since covr 4.0.0, codecov() throws a covr_codecov_error on a
+          # refusal, warns and returns NULL on a rate limit or an outage, and
+          # returns a list holding the url of an accepted upload (#103).
+          # The covr 3 that a restored package cache can still hold returns
+          # the response whatever its status, and only an accepted upload
+          # carries uploaded: TRUE.
+          res <- tryCatch(
+            covr::codecov(coverage = cov),
+            covr_codecov_error = function(e) {
+              message(conditionMessage(e))
+              NULL
+            }
+          )
+          accepted <- if (is.list(res) && "uploaded" %in% names(res)) {
+            isTRUE(res$uploaded)
+          } else {
+            is.list(res)
+          }
+          # The reply of covr 4 also holds a signed upload location, so only
+          # its url is printed.
+          if (accepted && is.character(res$url)) {
+            cat("Coverage uploaded to Codecov:", res$url, "\n")
+          } else if (accepted) {
+            cat("Coverage uploaded to Codecov.\n")
+          } else {
+            if (!is.null(res)) print(res)
+            cat("::warning title=Codecov upload failed::Codecov did not accept the upload; its reply is printed above.\n")
           }
 
           threshold_env <- Sys.getenv("COVERAGE_THRESHOLD")
