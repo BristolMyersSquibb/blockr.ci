@@ -1,0 +1,72 @@
+name: Install dependencies in the image
+description: >
+  Installs the R dependencies of the package in the working directory
+  inside the image that image.yaml builds, in place of
+  setup-r-dependencies.  It resolves them with pak, asks dpkg which of
+  their system packages the image lacks, and lets pak call apt only for
+  those.  The inputs are the ones of setup-r-dependencies that ci.yaml
+  passes, with the same meaning.
+
+inputs:
+
+  dependencies:
+    description: >
+      Dependency types to install, as an R expression, such as '"all"'
+      or '"hard"'.
+    required: false
+    default: '"all"'
+
+  extra-packages:
+    description: >
+      Further pak refs to install, separated by whitespace or commas.
+    required: false
+    default: ''
+
+  needs:
+    description: >
+      Config/Needs fields whose packages to install as well, such as
+      check or website, separated by whitespace or commas.
+    required: false
+    default: ''
+
+  working-directory:
+    description: Directory that holds the package's DESCRIPTION.
+    required: false
+    default: '.'
+
+runs:
+  using: composite
+  steps:
+
+    - name: Resolve the dependencies
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        DEPENDENCIES: ${{ inputs.dependencies }}
+        EXTRA: ${{ inputs.extra-packages }}
+        NEEDS: ${{ inputs.needs }}
+        LOCKFILE: ${{ runner.temp }}/pkg.lock
+        SCRIPT_DIR: ${{ github.action_path }}
+      run: Rscript "$SCRIPT_DIR/resolve.R"
+
+    - name: Check the system packages
+      shell: bash
+      env:
+        LOCKFILE: ${{ runner.temp }}/pkg.lock
+        SCRIPT_DIR: ${{ github.action_path }}
+      run: bash "$SCRIPT_DIR/check-sysreqs.sh"
+
+    - name: Install the dependencies
+      shell: Rscript {0}
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        LOCKFILE: ${{ runner.temp }}/pkg.lock
+      run: |
+        Sys.setenv(PKGCACHE_HTTP_VERSION = "2")
+        pak::lockfile_install(Sys.getenv("LOCKFILE"))
+
+    - name: Session info
+      shell: Rscript {0}
+      run: |
+        options(width = 100)
+        sessioninfo::session_info(pkgs = "installed", include_base = TRUE)

@@ -86,8 +86,18 @@
 # a .qmd file, and is pinned to QUARTO_VERSION below rather than left at
 # the action's 'release' default — see the env: block for why.
 #
+# A caller that sets `image: true` runs the Ubuntu jobs in the image that
+# image.yaml builds every day.
+# The image holds R, the tools these jobs use, and the system and R
+# packages of the repos it is built for.
+# Those jobs then skip setup-r, setup-pandoc and setup-r-dependencies.
+# In their place, the install-deps action installs only what the image
+# lacks, and calls apt only for a system package that is missing.
+# The macOS and Windows legs and the R-devel leg run as before.
+# See image.yaml for why.
+#
 # Every job in every workflow here sets `timeout-minutes: 60`, with one
-# deliberate exception noted below; the other seven files carry a one-line
+# deliberate exception noted below; the other nine files carry a one-line
 # pointer back to this paragraph, so keep them in step (`grep -rn
 # timeout-minutes .github/workflows`).
 #
@@ -165,6 +175,21 @@ on:
           committed.  Default '' skips the job.
         type: string
         default: ''
+        required: false
+
+      image:
+        description: >
+          Run the Ubuntu jobs in the image that image.yaml builds, which
+          holds R, their tools, and the system and R packages of the repos
+          it is built for.
+          The PR-leg jobs take the image of r-version, and the oldrel-1 leg
+          of the check matrix the image of oldrel-1.
+          Images exist for release and oldrel-1 only, so r-version must be
+          '', release or oldrel-1.
+          The macOS, Windows and R-devel legs are unaffected.
+          Default false runs every job without the image.
+        type: boolean
+        default: false
         required: false
 
       skip-pkgdown:
@@ -266,6 +291,8 @@ jobs:
 
     runs-on: ubuntu-latest
 
+    container: ${{ inputs.image && format('ghcr.io/bristolmyerssquibb/blockr.ci:{0}', inputs.r-version || 'release') || '' }}
+
     timeout-minutes: 60
 
     env:
@@ -285,6 +312,7 @@ jobs:
       - uses: actions/checkout@v5
 
       - uses: r-lib/actions/setup-r@v2
+        if: ${{ !inputs.image }}
         with:
           r-version: ${{ inputs.r-version || 'release' }}
           use-public-rspm: true
@@ -299,11 +327,19 @@ jobs:
             local::.
 
       - uses: r-lib/actions/setup-r-dependencies@v2
+        if: ${{ !inputs.image }}
         with:
           dependencies: '"hard"'
           extra-packages: ${{ steps.deps.outputs.extra-packages }}
           needs: lint
           quarto-version: ${{ env.QUARTO_VERSION }}
+
+      - uses: $/.github/actions/install-deps
+        if: ${{ inputs.image }}
+        with:
+          dependencies: '"hard"'
+          extra-packages: ${{ steps.deps.outputs.extra-packages }}
+          needs: lint
 
       - name: Write lintr config
         if: ${{ hashFiles('.lintr') == '' }}
@@ -336,6 +372,8 @@ jobs:
 
     runs-on: ubuntu-latest
 
+    container: ${{ inputs.image && format('ghcr.io/bristolmyerssquibb/blockr.ci:{0}', inputs.r-version || 'release') || '' }}
+
     timeout-minutes: 60
 
     env:
@@ -346,8 +384,10 @@ jobs:
       - uses: actions/checkout@v5
 
       - uses: r-lib/actions/setup-pandoc@v2
+        if: ${{ !inputs.image }}
 
       - uses: r-lib/actions/setup-r@v2
+        if: ${{ !inputs.image }}
         with:
           r-version: ${{ inputs.r-version || 'release' }}
           use-public-rspm: true
@@ -362,10 +402,17 @@ jobs:
             local::.
 
       - uses: r-lib/actions/setup-r-dependencies@v2
+        if: ${{ !inputs.image }}
         with:
           extra-packages: ${{ steps.deps.outputs.extra-packages }}
           needs: check
           quarto-version: ${{ env.QUARTO_VERSION }}
+
+      - uses: $/.github/actions/install-deps
+        if: ${{ inputs.image }}
+        with:
+          extra-packages: ${{ steps.deps.outputs.extra-packages }}
+          needs: check
 
       - name: Remove mermaid config for CI
         run: Rscript -e 'unlink("vignettes/_metadata.yml")'
@@ -383,6 +430,8 @@ jobs:
 
     runs-on: ubuntu-latest
 
+    container: ${{ inputs.image && format('ghcr.io/bristolmyerssquibb/blockr.ci:{0}', inputs.r-version || 'release') || '' }}
+
     timeout-minutes: 60
 
     env:
@@ -392,8 +441,10 @@ jobs:
       - uses: actions/checkout@v5
 
       - uses: r-lib/actions/setup-pandoc@v2
+        if: ${{ !inputs.image }}
 
       - uses: r-lib/actions/setup-r@v2
+        if: ${{ !inputs.image }}
         with:
           r-version: ${{ inputs.r-version || 'release' }}
           use-public-rspm: true
@@ -409,10 +460,17 @@ jobs:
             local::.
 
       - uses: r-lib/actions/setup-r-dependencies@v2
+        if: ${{ !inputs.image }}
         with:
           extra-packages: ${{ steps.deps.outputs.extra-packages }}
           needs: website
           quarto-version: ${{ env.QUARTO_VERSION }}
+
+      - uses: $/.github/actions/install-deps
+        if: ${{ inputs.image }}
+        with:
+          extra-packages: ${{ steps.deps.outputs.extra-packages }}
+          needs: website
 
       - name: Remove mermaid config for CI
         run: Rscript -e 'unlink("vignettes/_metadata.yml")'
@@ -436,6 +494,8 @@ jobs:
 
     runs-on: ubuntu-latest
 
+    container: ${{ inputs.image && format('ghcr.io/bristolmyerssquibb/blockr.ci:{0}', inputs.r-version || 'release') || '' }}
+
     timeout-minutes: 60
 
     env:
@@ -446,6 +506,7 @@ jobs:
       - uses: actions/checkout@v5
 
       - uses: r-lib/actions/setup-r@v2
+        if: ${{ !inputs.image }}
         with:
           r-version: ${{ inputs.r-version || 'release' }}
           use-public-rspm: true
@@ -459,10 +520,17 @@ jobs:
             any::covr
 
       - uses: r-lib/actions/setup-r-dependencies@v2
+        if: ${{ !inputs.image }}
         with:
           extra-packages: ${{ steps.deps.outputs.extra-packages }}
           needs: coverage
           quarto-version: ${{ env.QUARTO_VERSION }}
+
+      - uses: $/.github/actions/install-deps
+        if: ${{ inputs.image }}
+        with:
+          extra-packages: ${{ steps.deps.outputs.extra-packages }}
+          needs: coverage
 
       - name: Compute, upload and gate coverage
         shell: Rscript {0}
@@ -478,15 +546,36 @@ jobs:
           pct <- covr::percent_coverage(cov)
           cat(sprintf("Coverage: %.2f%%\n", pct))
 
-          # A refused upload doesn't error: covr::codecov() returns
-          # Codecov's response whatever its status, and only an accepted
-          # upload carries uploaded: TRUE.  Warn rather than fail, so a
-          # refusal on Codecov's side, such as a rate limit, can't block
-          # PRs through the required ci / coverage check.
-          res <- covr::codecov(coverage = cov)
-          print(res)
-          if (!(is.list(res) && isTRUE(res$uploaded))) {
-            cat("::warning title=Codecov upload failed::Codecov did not accept the upload; its response is printed above.\n")
+          # Warn rather than fail when Codecov refuses the upload, so that a
+          # refusal on its side can't block PRs through the required
+          # ci / coverage check (#67).
+          # Since covr 4.0.0, codecov() throws a covr_codecov_error on a
+          # refusal, warns and returns NULL on a rate limit or an outage, and
+          # returns a list holding the url of an accepted upload (#103).
+          # The covr 3 that a restored package cache can still hold returns
+          # the response whatever its status, and only an accepted upload
+          # carries uploaded: TRUE.
+          res <- tryCatch(
+            covr::codecov(coverage = cov),
+            covr_codecov_error = function(e) {
+              message(conditionMessage(e))
+              NULL
+            }
+          )
+          accepted <- if (is.list(res) && "uploaded" %in% names(res)) {
+            isTRUE(res$uploaded)
+          } else {
+            is.list(res)
+          }
+          # The reply of covr 4 also holds a signed upload location, so only
+          # its url is printed.
+          if (accepted && is.character(res$url)) {
+            cat("Coverage uploaded to Codecov:", res$url, "\n")
+          } else if (accepted) {
+            cat("Coverage uploaded to Codecov.\n")
+          } else {
+            if (!is.null(res)) print(res)
+            cat("::warning title=Codecov upload failed::Codecov did not accept the upload; its reply is printed above.\n")
           }
 
           threshold_env <- Sys.getenv("COVERAGE_THRESHOLD")
@@ -528,6 +617,8 @@ jobs:
 
     runs-on: ubuntu-latest
 
+    container: ${{ inputs.image && format('ghcr.io/bristolmyerssquibb/blockr.ci:{0}', inputs.r-version || 'release') || '' }}
+
     timeout-minutes: 60
 
     env:
@@ -557,7 +648,7 @@ jobs:
         shell: bash
 
       - uses: r-lib/actions/setup-r@v2
-        if: steps.pin.outputs.run == 'true'
+        if: steps.pin.outputs.run == 'true' && !inputs.image
         with:
           r-version: ${{ inputs.r-version || 'release' }}
           use-public-rspm: true
@@ -572,7 +663,7 @@ jobs:
             local::.
 
       - uses: r-lib/actions/setup-r-dependencies@v2
-        if: steps.pin.outputs.run == 'true'
+        if: steps.pin.outputs.run == 'true' && !inputs.image
         with:
           dependencies: '"hard"'
           extra-packages: |
@@ -580,6 +671,15 @@ jobs:
             roxygen2@${{ steps.pin.outputs.version }}
           needs: roxygenize
           quarto-version: ${{ env.QUARTO_VERSION }}
+
+      - uses: $/.github/actions/install-deps
+        if: steps.pin.outputs.run == 'true' && inputs.image
+        with:
+          dependencies: '"hard"'
+          extra-packages: |
+            ${{ steps.deps.outputs.extra-packages }}
+            roxygen2@${{ steps.pin.outputs.version }}
+          needs: roxygenize
 
       - name: Regenerate documentation
         if: steps.pin.outputs.run == 'true'
@@ -620,6 +720,8 @@ jobs:
 
     runs-on: ubuntu-latest
 
+    container: ${{ inputs.image && format('ghcr.io/bristolmyerssquibb/blockr.ci:{0}', inputs.r-version || 'release') || '' }}
+
     timeout-minutes: 60
 
     env:
@@ -633,14 +735,21 @@ jobs:
       - uses: actions/checkout@v5
 
       - uses: r-lib/actions/setup-r@v2
+        if: ${{ !inputs.image }}
         with:
           r-version: ${{ inputs.r-version || 'release' }}
           use-public-rspm: true
 
       - uses: r-lib/actions/setup-r-dependencies@v2
+        if: ${{ !inputs.image }}
         with:
           dependencies: '"hard"'
           quarto-version: ${{ env.QUARTO_VERSION }}
+
+      - uses: $/.github/actions/install-deps
+        if: ${{ inputs.image }}
+        with:
+          dependencies: '"hard"'
 
       - uses: actions/setup-node@v7
         with:
@@ -708,6 +817,8 @@ jobs:
 
     runs-on: ${{ matrix.config.os }}
 
+    container: ${{ inputs.image && matrix.config.os == 'ubuntu-latest' && matrix.config.r != 'devel' && format('ghcr.io/bristolmyerssquibb/blockr.ci:{0}', matrix.config.r) || '' }}
+
     timeout-minutes: 60
 
     strategy:
@@ -726,13 +837,16 @@ jobs:
     env:
       GITHUB_PAT: ${{ secrets.BLOCKR_PAT || github.token }}
       R_KEEP_PKG_SOURCE: yes
+      IN_IMAGE: ${{ inputs.image && matrix.config.os == 'ubuntu-latest' && matrix.config.r != 'devel' }}
 
     steps:
       - uses: actions/checkout@v5
 
       - uses: r-lib/actions/setup-pandoc@v2
+        if: env.IN_IMAGE != 'true'
 
       - uses: r-lib/actions/setup-r@v2
+        if: env.IN_IMAGE != 'true'
         with:
           r-version: ${{ matrix.config.r }}
           http-user-agent: ${{ matrix.config.http-user-agent }}
@@ -748,12 +862,19 @@ jobs:
             local::.
 
       - uses: r-lib/actions/setup-r-dependencies@v2
+        if: env.IN_IMAGE != 'true'
         with:
           extra-packages: ${{ steps.deps.outputs.extra-packages }}
           needs: check
           # The only matrix carrying Windows, where the pin is skipped —
           # see the env: block.
           quarto-version: ${{ matrix.config.os == 'windows-latest' && 'release' || env.QUARTO_VERSION }}
+
+      - uses: $/.github/actions/install-deps
+        if: env.IN_IMAGE == 'true'
+        with:
+          extra-packages: ${{ steps.deps.outputs.extra-packages }}
+          needs: check
 
       - name: Remove mermaid config for CI
         run: Rscript -e 'unlink("vignettes/_metadata.yml")'

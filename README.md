@@ -671,7 +671,7 @@ merge queue, whose event names no pull request, it comments on the one
 the queue ref names.
 
 The dependency-resolution and deploy helpers in the same tree —
-`parse-deps`, `check-suggests`, `setup-r-rhel` — are composite actions
+`parse-deps`, `check-suggests`, `setup-r-rhel`, `install-deps` — are composite actions
 too, and callable the same way. So is `revdep-report`, which composes
 `revdep.yaml`'s comment on its informational downstreams from the
 outcome each leg records.
@@ -679,6 +679,7 @@ outcome each leg records.
 Each action's script is exercised by `bats` under
 `.github/actions/tests/`, which `bats.yaml` runs on any change below
 `.github/actions/`.
+So is the script that works out what the image holds, `.github/image/packages.sh`, and `bats.yaml` runs on a change below `.github/image/` too.
 
 ## Versions
 
@@ -926,6 +927,7 @@ release.
 | `r-version` | string | `''` | R version for the PR-leg jobs (lint, smoke, pkgdown-dev, coverage, docs, typescript). Default (`''`) runs them on `release`. Set it (e.g. `4.4.2`) for a deploy app pinned to one runtime, so its PR checks — notably the `smoke` R CMD check — exercise the deployment target. The merge-queue `check` matrix is unaffected. Pair with `connect-deploy.yaml`'s `r-version` to gate against the version Connect serves. |
 | `error-on` | string | `''` | R CMD check severity that fails the `smoke` and `check` jobs (passed to `check-r-package`'s `error-on`). Default (`''`) fails on any NOTE (`'"note"'`), holding the 0-errors/0-warnings/0-notes bar. A deploy app that declares unused `Imports` on purpose (so the Connect manifest ships them) sets `'"warning"'` to tolerate the resulting NOTE. |
 | `typescript-dir` | string | `''` | Directory of the package's `package.json`, relative to the repository root, such as `.`. Setting it turns on the `typescript` job; the default (`''`) skips it. See [TypeScript gates](#typescript-gates). |
+| `image` | boolean | `false` | Run the Ubuntu jobs in the image that `image.yaml` builds every day, rather than installing R, their tools and their system packages while they run. See [Prebuilt image](#prebuilt-image). |
 | `skip-pkgdown` | boolean | `false` | DEPRECATED — pkgdown moved to `pkgdown.yaml`. No-op. |
 | `revdep-packages` | newline-separated list | `''` | DEPRECATED — moved to `revdep.yaml`, where it is now `revdep-strict`. No-op. |
 
@@ -1002,6 +1004,7 @@ jobs:
 - **Mechanical release checks** — the checklist half of a release, gated on every push to a labelled release PR instead of ticked by hand: three-component version, no dev-version pins, no `Remotes`, `NEWS.md` shape, real vignette titles, a `\value` on every documented function, and a README current with its source. Reports spelling, URL and `--as-cran` findings alongside without gating on them — see [`release-gate.yaml`](#release-gateyaml--mechanical-release-checks-optional)
 - **pkgdown deploy** — site build + deploy to GitHub Pages on push to `main`, via the `gh-pages` branch or, with `deploy: actions`, straight from Actions
 - **Superseded runs cancelled** — a push to a pull request cancels the `ci`, `release` and `release-gate` runs still checking the commit it replaces, and pkgdown builds take turns so the newest lands last — see [Superseded runs](#superseded-runs)
+- **Prebuilt image** — with `image: true`, the Ubuntu jobs run in an image built every day, which holds R, their tools and the system and R packages of the repos it is built for, so that they call apt only for a system package it lacks — see [Prebuilt image](#prebuilt-image)
 - **Pinned Quarto** — jobs that install Quarto (any package holding a `.qmd`) pass an explicit version instead of the action's `release` default, which resolves the version through an unretried `curl` to quarto.org and has twice killed a green run — see [Quarto pin](#quarto-pin)
 - **Hard-dependency resolution on `lint` and `docs`** — neither job runs the suite or builds a site, so both skip the `Suggests` closure and the 125 MB Chromium that a `chromote` / `shinytest2` suggestion drags in — see [Suggests on the lint and docs jobs](#suggests-on-the-lint-and-docs-jobs)
 - **parse-deps** — pin a downstream revdep ref via a `` ```deps `` block in the PR body, read fresh when the merge queue runs revdep
@@ -1023,6 +1026,7 @@ The version lives in a `QUARTO_VERSION` workflow-level `env` in
 the four together. The `release-gate.yaml` pin is reached only by a
 repository whose README is a `.qmd`; every other package installs no
 Quarto there at all.
+The image that `image.yaml` builds takes its Quarto from the pin in `ci.yaml`, so it follows a bump at its next build.
 This is the Quarto that builds every consumer's vignettes, so treat a
 bump as a deliberate toolchain change rather than routine upkeep.
 Windows is exempt: quarto-actions installs through scoop there and
@@ -1067,6 +1071,54 @@ Node stays on the 24 LTS line, which the `ubuntu-latest` image caches,
 so `setup-node` neither resolves a version over the network nor
 downloads one, for the reason given under [Quarto pin](#quarto-pin).
 Bump it deliberately.
+
+### Prebuilt image
+
+The Ubuntu jobs install R, their tools and their system packages with apt from an Ubuntu archive mirror while they run.
+From 14 to 19 November 2026, a job stalled on that mirror in 46 of the 238 pull request runs of blockr.core, blockr.dock and blockr.assistant.
+A stalled job spent 19.5 minutes on setup at the median, against 1.8 for the others ([#101](https://github.com/BristolMyersSquibb/blockr.ci/issues/101)).
+
+A caller that sets `image` runs those jobs in an image instead.
+The `image.yaml` workflow builds it every day and pushes it to `ghcr.io/bristolmyerssquibb/blockr.ci`.
+
+```yaml
+jobs:
+  ci:
+    uses: BristolMyersSquibb/blockr.ci/.github/workflows/ci.yaml@main
+    with:
+      image: true
+```
+
+The image holds R, Pandoc, Quarto at the [pinned version](#quarto-pin), Google Chrome, qpdf, ghostscript, devscripts, git and the GitHub CLI.
+It also holds the R packages of the repos it is built for, together with the packages that `ci.yaml` adds, and the system packages of all of these.
+The build works out both lists each time it runs.
+The repos are the public repos of the organisation whose `js-state` branch holds a DESCRIPTION, so a repo joins with that branch and leaves without it.
+Only public repos count, because the build installs the package of each repo into the image, and the image is public.
+The extra packages are the `any::` refs and the `needs:` values of `ci.yaml`, together with pkgdepends, roxygen2 and sessioninfo, which steps of blockr.ci install themselves.
+When the build finds no repo, it fails, and the image of the day before stays.
+There is one image per R version, tagged `release` and `oldrel-1`.
+The pull request jobs take the image of `r-version`, so `r-version` must be empty, `release` or `oldrel-1`.
+The `check` matrix runs its oldrel-1 leg in the image.
+Its macOS, Windows and R-devel legs run as before: a job container needs a Linux runner, and no image holds R-devel.
+
+In the image, a job skips `setup-r`, `setup-pandoc` and `setup-r-dependencies`, and the `install-deps` action takes their place:
+
+1. It resolves the dependencies with pak, as `setup-r-dependencies` does.
+2. It asks dpkg which of their system packages the image lacks.
+3. It installs the R packages that the image lacks, and a branch that `Remotes` names when it moved since the build.
+   Like `setup-r-dependencies`, it keeps the packages already installed, so a job uses the CRAN versions of the image, which are at most a day old.
+
+When no system package is missing, pak installs with its system requirements switched off, and the job never calls apt.
+Then pak no longer looks the system packages up, so its log lists them all as missing, below the line of `install-deps` that says the image holds them.
+Left on, pak would run `apt-get update`, and on CI it would reinstall every system package that the lockfile names, installed or not.
+When some are missing, the job warns and lets pak install those, and only those.
+So a repo that adds a dependency with a new system package keeps working, and its jobs install that package with apt until the image holds it.
+
+Before it pushes an image, `image.yaml` resolves the dependencies of each of those repos in that image, and fails when any of their system packages is missing.
+It keeps the six newest untagged builds, so a job can still be pointed at one of them by its digest.
+
+The package is created on the first push, possibly as private.
+An owner of the organisation then makes it public once, under the package's settings, so that callers in other organisations pull it without credentials.
 
 ## Connect deployment setup
 
