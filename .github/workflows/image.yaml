@@ -1,0 +1,220 @@
+# Builds the image that the Ubuntu jobs of ci.yaml run in when a caller
+# sets `image: true`, and pushes it to ghcr.io/bristolmyerssquibb/blockr.ci.
+#
+# Without it, each of those jobs installs R, its tools and its system
+# packages with apt from an Ubuntu archive mirror.  From 14 to 19
+# November 2026, a job stalled on the mirror in 46 of the 238 pull request
+# runs of the repos in REPOS, and spent 19.5 minutes on setup at the
+# median, against 1.8 (BristolMyersSquibb/blockr.ci#101).  The image moves
+# those downloads into this build, which no pull request waits for.  It
+# holds the R packages as well, which a cache restores for a pull request
+# only from the refs that the pull request may read.
+#
+# There is one image per R version, release and oldrel-1, tagged with that
+# name, so a job always pulls the newest build.  The build runs every day,
+# so the R packages in an image are at most a day old.
+# Through the install-deps action, a job keeps them, as setup-r-dependencies
+# keeps the packages it finds installed.
+# The job installs with pak only what the image lacks, such as a branch
+# named in Remotes that moved since the build.
+# It calls apt only for a system package that the image lacks.
+#
+# Before an image is pushed, it resolves the dependencies of each repo in
+# REPOS and must hold all of their system packages.  A pull request that
+# changes the image builds and tests it without pushing it.
+#
+# The package is created on the first push, possibly as private.  An
+# owner of the organisation then makes it public once, under the
+# package's settings, so that callers in other organisations pull it
+# without credentials.
+#
+# Every job sets `timeout-minutes: 60` — see ci.yaml for why.
+
+on:
+  schedule:
+    - cron: '23 3 * * *'
+  workflow_dispatch:
+  push:
+    branches: main
+    paths:
+      - '.github/image/**'
+      - '.github/actions/install-deps/**'
+      - '.github/workflows/image.yaml'
+  pull_request:
+    paths:
+      - '.github/image/**'
+      - '.github/actions/install-deps/**'
+      - '.github/workflows/image.yaml'
+
+name: image
+
+permissions:
+  contents: read
+
+# A newer build of the same ref replaces one still running on a pull
+# request, and queues behind it everywhere else.
+concurrency:
+  group: blockr-ci-image-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  IMAGE: ghcr.io/bristolmyerssquibb/blockr.ci
+  # The repos the image is built for, each at the branch it holds the
+  # dependencies of.
+  REPOS: >-
+    BristolMyersSquibb/blockr.core@js-state
+    BristolMyersSquibb/blockr.dock@js-state
+    BristolMyersSquibb/blockr.assistant@js-state
+  # The packages that the jobs of ci.yaml add to those dependencies.
+  EXTRA_PACKAGES: >-
+    any::covr
+    any::lintr
+    any::pkgdepends
+    any::pkgdown
+    any::pkgload
+    any::rcmdcheck
+    any::roxygen2
+    any::sessioninfo
+
+jobs:
+
+  build:
+
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 60
+
+    strategy:
+      fail-fast: false
+      matrix:
+        r: [release, oldrel-1]
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Resolve the R version
+        id: r
+        run: |
+          case "$R" in
+            oldrel-1) query=oldrel/1 ;;
+            *) query="$R" ;;
+          esac
+          version=$(curl -fsS --retry 5 --retry-all-errors \
+            "https://api.r-hub.io/rversions/resolve/$query/linux-ubuntu-26.04" | jq -r .version)
+          echo "R $R is $version."
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+        env:
+          R: ${{ matrix.r }}
+
+      # The one Quarto pin that this image follows sits in ci.yaml.
+      - name: Read the Quarto pin
+        id: quarto
+        run: |
+          version=$(sed -nE "s/^  QUARTO_VERSION: '([^']+)'.*/\1/p" .github/workflows/ci.yaml)
+          if [ -z "$version" ]; then
+            echo "::error::Found no QUARTO_VERSION in ci.yaml."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build the image
+        uses: docker/build-push-action@v6
+        with:
+          context: .github/image
+          load: true
+          provenance: false
+          tags: ${{ env.IMAGE }}:${{ matrix.r }}
+          build-args: |
+            R_VERSION=${{ steps.r.outputs.version }}
+            QUARTO_VERSION=${{ steps.quarto.outputs.version }}
+            PACKAGES=${{ env.REPOS }} ${{ env.EXTRA_PACKAGES }}
+          secrets: |
+            GITHUB_PAT=${{ github.token }}
+
+      - name: Show the tools
+        run: |
+          docker run --rm "$IMAGE:$R" bash -c '
+            R --version | head -n 1
+            quarto --version
+            pandoc --version | head -n 1
+            google-chrome --version
+            git --version
+            gh --version | head -n 1'
+        env:
+          R: ${{ matrix.r }}
+
+      # Each repo resolves the dependencies of its smoke job, as
+      # install-deps does, and the image must hold all their system
+      # packages.  The install then shows how much a job adds on top.
+      - name: Test the image on each repo
+        run: |
+          for ref in $REPOS; do
+            repo=${ref%@*}
+            branch=${ref#*@}
+            dir="$RUNNER_TEMP/src/${repo#*/}"
+            echo "::group::$repo@$branch"
+            git clone --quiet --depth 1 --branch "$branch" "https://github.com/$repo" "$dir"
+            docker run --rm \
+              -e GITHUB_PAT \
+              -e DEPENDENCIES='"all"' \
+              -e EXTRA='any::rcmdcheck' \
+              -e NEEDS=check \
+              -e LOCKFILE=/tmp/pkg.lock \
+              -e GITHUB_ENV=/tmp/github_env \
+              -v "$PWD/.github/actions/install-deps:/action:ro" \
+              -v "$dir:/src" -w /src \
+              "$IMAGE:$R" bash -c '
+                set -euo pipefail
+                Rscript /action/resolve.R
+                bash /action/check-sysreqs.sh
+                grep -qx PKG_SYSREQS=false /tmp/github_env
+                export PKG_SYSREQS=false
+                Rscript -e "pak::lockfile_install(Sys.getenv(\"LOCKFILE\"))"'
+            echo "::endgroup::"
+          done
+        env:
+          R: ${{ matrix.r }}
+          GITHUB_PAT: ${{ github.token }}
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Push the image
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        run: docker push "$IMAGE:$R"
+        env:
+          R: ${{ matrix.r }}
+
+  # Each push moves a tag, and leaves the build it replaces untagged.  The
+  # newest untagged builds stay, so that a job can still be pointed at the
+  # digest of one, and the older ones go.
+  prune:
+
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 60
+
+    permissions:
+      packages: write
+
+    steps:
+      - uses: actions/delete-package-versions@v5
+        with:
+          package-name: blockr.ci
+          package-type: container
+          min-versions-to-keep: 6
+          delete-only-untagged-versions: 'true'
