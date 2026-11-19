@@ -37,7 +37,8 @@ fi
 missing=$(comm -23 <(printf '%s\n' "$needed") <(printf '%s\n' "$installed"))
 
 if [ -z "$missing" ]; then
-  echo "The image holds all $(printf '%s\n' "$needed" | wc -l) system packages that these dependencies need."
+  echo "The image holds all $(printf '%s\n' "$needed" | wc -l) system packages that these dependencies need, so pak installs with its system requirements switched off."
+  echo "Then pak no longer looks them up, and lists them all as missing."
   echo "PKG_SYSREQS=false" >> "$GITHUB_ENV"
 else
   echo "::warning title=System packages missing from the image::This job installs them with apt: $(printf '%s\n' "$missing" | paste -sd ' ' -)"

@@ -1103,6 +1103,7 @@ In the image, a job skips `setup-r`, `setup-pandoc` and `setup-r-dependencies`, 
    Like `setup-r-dependencies`, it keeps the packages already installed, so a job uses the CRAN versions of the image, which are at most a day old.
 
 When no system package is missing, pak installs with its system requirements switched off, and the job never calls apt.
+Then pak no longer looks the system packages up, so its log lists them all as missing, below the line of `install-deps` that says the image holds them.
 Left on, pak would run `apt-get update`, and on CI it would reinstall every system package that the lockfile names, installed or not.
 When some are missing, the job warns and lets pak install those, and only those.
 So a repo that adds a dependency with a new system package keeps working, and its jobs install that package with apt until the image holds it.
