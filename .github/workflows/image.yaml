@@ -22,6 +22,18 @@
 # named in Remotes that moved since the build.
 # It calls apt only for a system package that the image lacks.
 #
+# The image holds none of the packages of the organisation, not even one
+# that another of them depends on, as blockr.dock depends on blockr.core.
+# A copy in the image would be as old as the build, and every job would
+# hold it, whether the job's package needs it or not.
+# The package blockr.core runs the plugins of every installed package.
+# So a stale copy of blockr.dock in the image failed a vignette of
+# blockr.core.
+# The failed vignette got BristolMyersSquibb/blockr.core#785 ejected from
+# the merge queue (BristolMyersSquibb/blockr.ci#116).
+# A job installs the packages of the organisation that its own package
+# needs, and holds no others.
+#
 # P3M has no binaries for R-devel on Ubuntu 26.04, so the image of devel
 # builds every R package from source.
 # On 20 November 2026, its build job took 20 minutes, against 6 for each
@@ -37,6 +49,10 @@
 # The extra packages and the Config/Needs fields are the ones that the
 # workflows with a job in the image install and pass, together with
 # FIXED_PACKAGES.
+# The packages of ORG are the ones named after its public repos.
+# The build installs them with the rest, and with them what they depend
+# on.
+# Then it removes these packages again.
 # See .github/image/packages.sh.
 #
 # Before an image is pushed, it resolves the dependencies of each of those
@@ -92,6 +108,7 @@ jobs:
       repos: ${{ steps.packages.outputs.repos }}
       packages: ${{ steps.packages.outputs.packages }}
       needs: ${{ steps.packages.outputs.needs }}
+      org-packages: ${{ steps.packages.outputs.org-packages }}
 
     steps:
       - uses: actions/checkout@v5
@@ -178,6 +195,7 @@ jobs:
             QUARTO_VERSION=${{ steps.quarto.outputs.version }}
             PACKAGES=${{ needs.plan.outputs.packages }}
             NEEDS=${{ needs.plan.outputs.needs }}
+            ORG_PACKAGES=${{ needs.plan.outputs.org-packages }}
           secrets: |
             GITHUB_PAT=${{ github.token }}
 

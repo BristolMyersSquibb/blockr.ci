@@ -5,7 +5,8 @@
 # The image workflow builds it every day, once per R version, and pushes it
 # to ghcr.io/bristolmyerssquibb/blockr.ci.
 # It holds what those jobs would otherwise fetch while they run: R, the
-# tools, and the system and R packages of the repos it is built for.
+# tools, and the system and R packages that the repos it is built for
+# depend on.
 
 FROM ubuntu:26.04
 
@@ -13,14 +14,16 @@ LABEL org.opencontainers.image.source="https://github.com/BristolMyersSquibb/blo
 LABEL org.opencontainers.image.description="R, tools and dependencies for the Ubuntu jobs of blockr.ci"
 
 # The R version as Posit names its build of R, the Quarto pin of ci.yaml,
-# the pak refs to install and the Config/Needs fields to install as well.
+# the pak refs to install, the Config/Needs fields to install as well and
+# the packages of the organisation to remove again.
 # Posit names a build of R by its exact version, such as 4.6.2, and its
 # daily build of R-devel "devel".
-# The refs and the fields are each separated by spaces.
+# The refs, the fields and the packages are each separated by spaces.
 ARG R_VERSION
 ARG QUARTO_VERSION
 ARG PACKAGES
 ARG NEEDS
+ARG ORG_PACKAGES
 
 # The variables that r-lib/actions/setup-r exports on a runner, so that a
 # job sees the same R settings in the image.
@@ -104,7 +107,8 @@ RUN printf '%s\n' \
 # that it bundles.
 ENV R_PKG_CACHE_DIR=/var/cache
 
-# The R packages that PACKAGES resolves to, with their system packages.
+# The R packages that PACKAGES resolves to, with their system packages,
+# but none of the packages that ORG_PACKAGES names.
 # The token only raises the GitHub rate limit, and stays out of the image.
 # The refresh of the rules gets the minute that pak gives it on CI.
 # Of the cache, only the rules stay.

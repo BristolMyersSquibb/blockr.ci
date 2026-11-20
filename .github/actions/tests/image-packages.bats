@@ -148,6 +148,19 @@ write_page() {
   assert_line "repos=acme/alpha@js-state"
 }
 
+@test "names the packages of the org after all its public repos" {
+  write_page acme/alpha yes yes false \
+    acme/beta no no false \
+    acme/gamma yes no false \
+    acme/delta yes yes true
+
+  run bash "$SCRIPT"
+  assert_success
+
+  run cat "$GITHUB_OUTPUT"
+  assert_line "org-packages=alpha beta delta gamma"
+}
+
 @test "asks for public repos only" {
   write_page acme/alpha yes yes false
 
@@ -167,6 +180,7 @@ write_page() {
 
   run cat "$GITHUB_OUTPUT"
   assert_line "repos=acme/alpha@js-state acme/omega@js-state"
+  assert_line "org-packages=alpha omega"
 }
 
 @test "no repo found: fails, so that the image of the day before stays" {

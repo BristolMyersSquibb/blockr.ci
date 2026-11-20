@@ -3,10 +3,19 @@
 #
 # The repos are the public repos of ORG whose branch BRANCH holds a
 # DESCRIPTION at its root, as one GraphQL query lists them.  Only public
-# ones count, because the build installs the package of each repo into the
-# image, and the image is public.  Archived repos run no CI, so they are
+# ones count, because the image is public, and it holds what the package
+# of each repo depends on.  Archived repos run no CI, so they are
 # left out as well.  Finding none is an error, so that a failed query
 # leaves the image of the day before in place.
+#
+# A package counts as one of ORG when a public repo of ORG has the same
+# name.
+# A package of ORG can reach the image as a dependency of another one,
+# from CRAN or from a branch other than BRANCH.
+# So every public repo counts here, archived or not, and with BRANCH or
+# without.
+# The build installs these packages with the rest and then removes them,
+# so that the image holds none of them.
 #
 # The extra packages and the needs come from the workflows in WORKFLOW_DIR
 # that run a job in IMAGE, the ones with a `container:` line that names it.
@@ -19,7 +28,8 @@
 #
 # Env vars: ORG, BRANCH, WORKFLOW_DIR, IMAGE, FIXED_PACKAGES, GITHUB_OUTPUT
 # Outputs, each separated by spaces: repos, as owner/repo@branch,
-# packages, the pak refs to install, and needs.
+# packages, the pak refs to install, needs, and org-packages, the names
+# of the public repos of ORG.
 
 set -euo pipefail
 export LC_ALL=C
@@ -40,16 +50,21 @@ query($org: String!, $ref: String!, $endCursor: String) {
   }
 }'
 
-repos=$(gh api graphql --paginate -F org="$ORG" -F ref="refs/heads/$BRANCH" -f query="$query" |
-  jq -r --arg branch "$BRANCH" '.data.organization.repositories.nodes[] |
+reply=$(gh api graphql --paginate -F org="$ORG" -F ref="refs/heads/$BRANCH" -f query="$query")
+
+repos=$(jq -r --arg branch "$BRANCH" '.data.organization.repositories.nodes[] |
     select((.isArchived | not) and .ref.target.file != null) |
-    "\(.nameWithOwner)@\($branch)"' |
+    "\(.nameWithOwner)@\($branch)"' <<< "$reply" |
   sort -u)
 
 if [ -z "$repos" ]; then
   echo "::error::Found no public repo of $ORG whose branch $BRANCH holds a DESCRIPTION."
   exit 1
 fi
+
+org_packages=$(jq -r '.data.organization.repositories.nodes[].nameWithOwner |
+    sub("^[^/]*/"; "")' <<< "$reply" |
+  sort -u)
 
 mapfile -t workflows < <(grep -lE "^[[:space:]]*container:.*${IMAGE//./\\.}" "$WORKFLOW_DIR"/*.yaml || true)
 
@@ -82,13 +97,15 @@ packages=$(printf '%s\n' $repos $extra $FIXED_PACKAGES | sed '/^$/d' | awk '!see
 
 join() { printf '%s\n' "$@" | sed '/^$/d' | paste -sd ' ' -; }
 
-echo "The image holds these repos: $(join $repos)"
+echo "The image is built for these repos: $(join $repos)"
 echo "It takes its extra packages from these workflows: $(join "${workflows[@]##*/}")"
 echo "It adds these packages: $(join $extra $FIXED_PACKAGES)"
 echo "And installs these Config/Needs fields: $(join $needs)"
+echo "It holds no package named after one of these repos of $ORG: $(join $org_packages)"
 
 {
   echo "repos=$(join $repos)"
   echo "packages=$(join $packages)"
   echo "needs=$(join $needs)"
+  echo "org-packages=$(join $org_packages)"
 } >> "$GITHUB_OUTPUT"
