@@ -1084,13 +1084,14 @@ The `coverage` job uploads the R coverage under the flag `r`, and both uploads n
 So Codecov merges them into one report, and shows the coverage of each language beside the total.
 As for the `coverage` job, a refusal or an outage at Codecov leaves the job green.
 
-With Vitest, a package adds `@vitest/coverage-v8` to its `devDependencies`, at the version of `vitest`, and turns coverage on in `vitest.config.ts`:
+With Vitest, a package adds `@vitest/coverage-istanbul` to its `devDependencies`, at the version of `vitest`, and turns coverage on in `vitest.config.ts`:
 
 ```ts
 export default defineConfig({
   test: {
     coverage: {
       enabled: true,
+      provider: "istanbul",
       reporter: ["text", "lcov"],
       include: ["srcts/**/*.{ts,tsx}"],
     },
@@ -1098,6 +1099,9 @@ export default defineConfig({
 });
 ```
 
+Istanbul adds its counters only to the files that `include` names.
+Vitest's default provider, V8, counts all the code that runs in the test process.
+In blockr.core, the slowest build test runs TypeScript's compiler, and under V8 it took 51.5 s of its 60 s timeout, against 5.2 s without coverage.
 The `lcov` reporter writes `coverage/lcov.info`, which Vitest's default reporters do not.
 By default, Vitest reports only the files that the tests import, so `include` names all the sources.
 A file that no test imports then counts as uncovered.
