@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
-# The image that the Ubuntu jobs of ci.yaml and the legs of revdep.yaml
-# run in, for a caller that sets `image: true`.
+# The image that the Ubuntu jobs of the workflows here run in, for a caller
+# that sets `image: true`.
 # The image workflow builds it every day, once per R version, and pushes it
 # to ghcr.io/bristolmyerssquibb/blockr.ci.
 # It holds what those jobs would otherwise fetch while they run: R, the
@@ -35,10 +35,11 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # The checkout needs git, and R CMD check --as-cran needs qpdf,
 # ghostscript and the checkbashisms of devscripts.
 # The install-deps action reads its lockfile with jq.
+# The deploy step of pkgdown.yaml copies the site with rsync.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       ca-certificates curl devscripts file ghostscript git gnupg jq \
-      qpdf tzdata unzip xz-utils zip \
+      qpdf rsync tzdata unzip xz-utils zip \
  && rm -rf /var/lib/apt/lists/*
 
 # A job runs as root, while the user of the runner owns the checkout.

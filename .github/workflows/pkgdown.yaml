@@ -35,6 +35,14 @@
 # across organisations — the inherited values silently arrive blank in
 # the called job.
 #
+# A caller that sets `image: true` runs the pkgdown job in the image that
+# image.yaml builds every day, the one tagged release.
+# The job then skips setup-pandoc, setup-r and setup-r-dependencies.
+# In their place, the install-deps action installs only what the image
+# lacks, and calls apt only for a system package that is missing.
+# The deploy job installs nothing, so it runs as before.
+# See image.yaml for why.
+#
 # Every job sets `timeout-minutes: 60` — see ci.yaml for why.
 
 on:
@@ -54,6 +62,19 @@ on:
           "GitHub Actions".
         type: string
         default: branch
+        required: false
+
+      image:
+        description: >
+          Run the pkgdown job in the image that image.yaml builds, which
+          holds R, its tools, and the system and R packages of the repos
+          it is built for.
+          The job takes the image of release, the R version it also runs
+          on without the image.
+          The deploy job is unaffected.
+          Default false runs every job without the image.
+        type: boolean
+        default: false
         required: false
 
     secrets:
@@ -89,6 +110,8 @@ jobs:
 
     runs-on: ubuntu-latest
 
+    container: ${{ inputs.image && 'ghcr.io/bristolmyerssquibb/blockr.ci:release' || '' }}
+
     timeout-minutes: 60
 
     # One group for the whole repository, since every run publishes the
@@ -120,8 +143,10 @@ jobs:
       - uses: actions/checkout@v5
 
       - uses: r-lib/actions/setup-pandoc@v2
+        if: ${{ !inputs.image }}
 
       - uses: r-lib/actions/setup-r@v2
+        if: ${{ !inputs.image }}
         with:
           use-public-rspm: true
 
@@ -134,10 +159,17 @@ jobs:
             local::.
 
       - uses: r-lib/actions/setup-r-dependencies@v2
+        if: ${{ !inputs.image }}
         with:
           extra-packages: ${{ steps.deps.outputs.extra-packages }}
           needs: website
           quarto-version: ${{ env.QUARTO_VERSION }}
+
+      - uses: $/.github/actions/install-deps
+        if: ${{ inputs.image }}
+        with:
+          extra-packages: ${{ steps.deps.outputs.extra-packages }}
+          needs: website
 
       - name: Remove mermaid config for CI
         run: Rscript -e 'unlink("vignettes/_metadata.yml")'

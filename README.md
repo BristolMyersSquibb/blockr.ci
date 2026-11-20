@@ -946,12 +946,14 @@ release.
 |---|---|---|---|
 | `release-platforms` | newline-separated list | `''` | R-hub platforms to check in, named as R-hub names them — `clang-asan`, `valgrind`, `rchk`, `nosuggests`, `m1-san`, … Commas work too. Container and virtual-machine platforms both resolve; an unknown name fails the matrix. Empty skips the matrix and reports success. See [Choosing the platform list](#choosing-the-platform-list). |
 | `recheck-which` | string | `''` | Depth of the CRAN-style reverse dependency check run via `r-devel/recheck`: `strong` (Depends, Imports, LinkingTo) or `most` (those plus Suggests). Empty disables it. When set, the check still runs only if the package actually has CRAN dependents. Never gates — see [Reverse dependencies before a CRAN submission](#reverse-dependencies-before-a-cran-submission). |
+| `image` | boolean | `false` | Run the `revdeps` job, which counts the reverse dependencies on CRAN, in the image that `image.yaml` builds every day, the one tagged `release`. The flavour checks and `recheck` are unaffected. See [Prebuilt image](#prebuilt-image). |
 
 ### `pkgdown.yaml`
 
 | Input | Type | Default | Purpose |
 |---|---|---|---|
 | `deploy` | string | `branch` | How the built site reaches GitHub Pages. With `branch`, the job pushes `docs/` to the `gh-pages` branch, and the caller grants `contents: write`. With `actions`, a second job publishes `docs/` with `actions/deploy-pages`; the caller grants `contents: read`, `pages: write` and `id-token: write`, and the Pages source must be "GitHub Actions". See [`pkgdown.yaml`](#pkgdownyaml--site-deploy-on-merge-to-main). |
+| `image` | boolean | `false` | Run the `pkgdown` job in the image that `image.yaml` builds every day, the one tagged `release`, rather than installing R, its tools and its system packages while it runs. The `deploy` job is unaffected. See [Prebuilt image](#prebuilt-image). |
 
 ### `release-gate.yaml`
 
@@ -1005,7 +1007,7 @@ jobs:
 - **Mechanical release checks** — the checklist half of a release, gated on every push to a labelled release PR instead of ticked by hand: three-component version, no dev-version pins, no `Remotes`, `NEWS.md` shape, real vignette titles, a `\value` on every documented function, and a README current with its source. Reports spelling, URL and `--as-cran` findings alongside without gating on them — see [`release-gate.yaml`](#release-gateyaml--mechanical-release-checks-optional)
 - **pkgdown deploy** — site build + deploy to GitHub Pages on push to `main`, via the `gh-pages` branch or, with `deploy: actions`, straight from Actions
 - **Superseded runs cancelled** — a push to a pull request cancels the `ci`, `release` and `release-gate` runs still checking the commit it replaces, and pkgdown builds take turns so the newest lands last — see [Superseded runs](#superseded-runs)
-- **Prebuilt image** — with `image: true`, the Ubuntu jobs of `ci.yaml` and the legs of `revdep.yaml` run in an image built every day, which holds R, their tools and the system and R packages of the repos it is built for, so that they call apt only for a system package it lacks — see [Prebuilt image](#prebuilt-image)
+- **Prebuilt image** — with `image: true`, the Ubuntu jobs of `ci.yaml`, the legs of `revdep.yaml`, the site build of `pkgdown.yaml` and the `revdeps` job of `release.yaml` run in an image built every day, which holds R, their tools and the system and R packages of the repos it is built for, so that they call apt only for a system package it lacks — see [Prebuilt image](#prebuilt-image)
 - **Pinned Quarto** — jobs that install Quarto (any package holding a `.qmd`) pass an explicit version instead of the action's `release` default, which resolves the version through an unretried `curl` to quarto.org and has twice killed a green run — see [Quarto pin](#quarto-pin)
 - **Hard-dependency resolution on `lint` and `docs`** — neither job runs the suite or builds a site, so both skip the `Suggests` closure and the 125 MB Chromium that a `chromote` / `shinytest2` suggestion drags in — see [Suggests on the lint and docs jobs](#suggests-on-the-lint-and-docs-jobs)
 - **parse-deps** — pin a downstream revdep ref via a `` ```deps `` block in the PR body, read fresh when the merge queue runs revdep
@@ -1090,7 +1092,7 @@ jobs:
       image: true
 ```
 
-The image holds R, Pandoc, Quarto at the [pinned version](#quarto-pin), Google Chrome, qpdf, ghostscript, devscripts, git and the GitHub CLI.
+The image holds R, Pandoc, Quarto at the [pinned version](#quarto-pin), Google Chrome, qpdf, ghostscript, devscripts, git, rsync and the GitHub CLI.
 It also holds the R packages of the repos it is built for, together with the packages that `ci.yaml` adds, and the system packages of all of these.
 The build works out both lists each time it runs.
 The repos are the public repos of the organisation whose `js-state` branch holds a DESCRIPTION, so a repo joins with that branch and leaves without it.
@@ -1118,6 +1120,13 @@ The other jobs of the workflow, `matrix`, `revdep-all` and `report`, install no 
     secrets:
       BLOCKR_PAT: ${{ secrets.BLOCKR_PAT }}
 ```
+
+The `pkgdown.yaml` and `release.yaml` workflows take the input too.
+In `pkgdown.yaml`, it runs the `pkgdown` job in the image tagged `release`.
+That job builds the site, and in the `branch` mode it pushes the site as well.
+In `release.yaml`, it runs the `revdeps` job in that image.
+That job counts the reverse dependencies on CRAN.
+Their other jobs install no R, or run on platforms of their own, so they run as before.
 
 In the image, a job skips `setup-r`, `setup-pandoc` and `setup-r-dependencies`, and the `install-deps` action takes their place:
 

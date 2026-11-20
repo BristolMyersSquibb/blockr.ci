@@ -1,5 +1,5 @@
-# Builds the image that the Ubuntu jobs of ci.yaml and the legs of
-# revdep.yaml run in when a caller sets `image: true`, and pushes it to
+# Builds the image that the Ubuntu jobs of the workflows here run in when a
+# caller sets `image: true`, and pushes it to
 # ghcr.io/bristolmyerssquibb/blockr.ci.
 #
 # Without it, each of those jobs installs R, its tools and its system
@@ -172,6 +172,7 @@ jobs:
             google-chrome --version
             git --version
             gh --version | head -n 1
+            rsync --version | head -n 1
             echo "Rules for system requirements at $(cat "$R_PKG_CACHE_DIR/R/pkgcache/sysreqs/HEAD")"'
         env:
           R: ${{ matrix.r }}

@@ -5,8 +5,8 @@ description: >
   setup-r-dependencies.  It resolves them with pak, asks dpkg which of
   their system packages the image lacks, and lets pak call apt only for
   those.
-  The inputs are the ones of setup-r-dependencies that ci.yaml and
-  revdep.yaml pass, with the same meaning.
+  The inputs are the ones of setup-r-dependencies that the workflows here
+  pass, with the same meaning.
 
 inputs:
 

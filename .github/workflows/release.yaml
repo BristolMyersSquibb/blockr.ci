@@ -135,6 +135,13 @@
 # the vignette build on every flavour that does not already pass
 # --no-build-vignettes.  That is why no QUARTO_VERSION appears here.
 #
+# A caller that sets `image: true` runs the revdeps job in the image that
+# image.yaml builds every day, the one tagged release.
+# That job counts the package's reverse dependencies on CRAN with R alone,
+# and in the image it skips setup-r.
+# The flavour checks and recheck run on platforms of their own, so they
+# run as before.
+#
 # Every job here sets `timeout-minutes` — see ci.yaml for the reasoning.
 # The check jobs are the fleet's one deviation from the shared hour:
 # valgrind runs a test suite tens of times slower than native, and rchk
@@ -168,6 +175,17 @@ on:
           where nothing on CRAN depends on the package yet.
         type: string
         default: ''
+        required: false
+
+      image:
+        description: >
+          Run the revdeps job, which counts the reverse dependencies on
+          CRAN, in the image that image.yaml builds, the one tagged
+          release.
+          The flavour checks and recheck are unaffected.
+          Default false runs every job without the image.
+        type: boolean
+        default: false
         required: false
 
     secrets:
@@ -423,6 +441,8 @@ jobs:
 
     runs-on: ubuntu-latest
 
+    container: ${{ inputs.image && 'ghcr.io/bristolmyerssquibb/blockr.ci:release' || '' }}
+
     timeout-minutes: 60
 
     outputs:
@@ -432,6 +452,7 @@ jobs:
       - uses: actions/checkout@v5
 
       - uses: r-lib/actions/setup-r@v2
+        if: ${{ !inputs.image }}
 
       # Asks CRAN directly rather than the runner's configured mirror:
       # the question is what CRAN currently ships, and a snapshotting
