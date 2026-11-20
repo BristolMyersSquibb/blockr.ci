@@ -300,7 +300,7 @@
 <span id="cb9-18"><a href="#cb9-18" tabindex="-1"></a><span class="at">    </span><span class="fu">secrets</span><span class="kw">:</span></span>
 <span id="cb9-19"><a href="#cb9-19" tabindex="-1"></a><span class="at">      </span><span class="fu">BLOCKR_PAT</span><span class="kw">:</span><span class="at"> ${{ secrets.BLOCKR_PAT }}</span></span></code></pre></div>
 <p>Required-status-checks row: <code>release-gate / release-gate-all</code>. The caller’s <code>if:</code> is the one <code>release.yaml</code> uses, and no wider, for the reason given under <a href="#releaseyaml--cran-pre-submission-checks-optional"><code>release.yaml</code></a>.</p>
-<p>There are no inputs. Everything is derived from the repository, and <code>BLOCKR_PAT</code> falls back to <code>GITHUB_TOKEN</code>, so the workflow is callable from a repository outside the fleet that holds no secrets at all — <code>nbenn/typedjson</code> does not use <code>ci.yaml</code> and is the package most in need of this gate.</p>
+<p>The one input, <code>image</code>, is optional and off by default, so a caller sets nothing. Everything checked is derived from the repository, and <code>BLOCKR_PAT</code> falls back to <code>GITHUB_TOKEN</code>. So the workflow is callable from a repository outside the fleet that holds no secrets at all — <code>nbenn/typedjson</code> does not use <code>ci.yaml</code> and is the package most in need of this gate.</p>
 <p>The <code>pull-requests: write</code> grant is what lets the report job write its comment. Without it the job warns and carries on, since the same detail is already in each job’s step summary; on a pull request from a fork the token is read-only whatever the caller declares, and the same fallback applies.</p>
 <div class="section level4">
 <h4 id="hard-gates">Hard gates<a class="anchor" aria-label="anchor" href="#hard-gates"></a>
@@ -834,6 +834,12 @@
 <td>Downstream packages checked the same way, in the same form, without gating the merge, once <code>revdep-all</code> has reported and four at a time at most. Their outcome goes to the pull request as one comment. See <a href="#informational-downstreams">Informational downstreams</a>.</td>
 </tr>
 <tr>
+<td><code>image</code></td>
+<td>boolean</td>
+<td><code>false</code></td>
+<td>Run the legs of both tiers in the image that <code>image.yaml</code> builds every day, the one tagged <code>release</code>, rather than installing R, their tools and their system packages while they run. See <a href="#prebuilt-image">Prebuilt image</a>.</td>
+</tr>
+<tr>
 <td><code>revdep-packages</code></td>
 <td>newline-separated list</td>
 <td><code>''</code></td>
@@ -872,6 +878,12 @@
 <td><code>''</code></td>
 <td>Depth of the CRAN-style reverse dependency check run via <code>r-devel/recheck</code>: <code>strong</code> (Depends, Imports, LinkingTo) or <code>most</code> (those plus Suggests). Empty disables it. When set, the check still runs only if the package actually has CRAN dependents. Never gates — see <a href="#reverse-dependencies-before-a-cran-submission">Reverse dependencies before a CRAN submission</a>.</td>
 </tr>
+<tr>
+<td><code>image</code></td>
+<td>boolean</td>
+<td><code>false</code></td>
+<td>Run the <code>revdeps</code> job, which counts the reverse dependencies on CRAN, in the image that <code>image.yaml</code> builds every day, the one tagged <code>release</code>. The flavour checks and <code>recheck</code> are unaffected. See <a href="#prebuilt-image">Prebuilt image</a>.</td>
+</tr>
 </tbody>
 </table>
 </div>
@@ -892,19 +904,47 @@
 <th>Default</th>
 <th>Purpose</th>
 </tr></thead>
-<tbody><tr>
+<tbody>
+<tr>
 <td><code>deploy</code></td>
 <td>string</td>
 <td><code>branch</code></td>
 <td>How the built site reaches GitHub Pages. With <code>branch</code>, the job pushes <code>docs/</code> to the <code>gh-pages</code> branch, and the caller grants <code>contents: write</code>. With <code>actions</code>, a second job publishes <code>docs/</code> with <code>actions/deploy-pages</code>; the caller grants <code>contents: read</code>, <code>pages: write</code> and <code>id-token: write</code>, and the Pages source must be “GitHub Actions”. See <a href="#pkgdownyaml--site-deploy-on-merge-to-main"><code>pkgdown.yaml</code></a>.</td>
-</tr></tbody>
+</tr>
+<tr>
+<td><code>image</code></td>
+<td>boolean</td>
+<td><code>false</code></td>
+<td>Run the <code>pkgdown</code> job in the image that <code>image.yaml</code> builds every day, the one tagged <code>release</code>, rather than installing R, its tools and its system packages while it runs. The <code>deploy</code> job is unaffected. See <a href="#prebuilt-image">Prebuilt image</a>.</td>
+</tr>
+</tbody>
 </table>
 </div>
 <div class="section level3">
 <h3 id="release-gateyaml">
 <code>release-gate.yaml</code><a class="anchor" aria-label="anchor" href="#release-gateyaml"></a>
 </h3>
-<p>No inputs. The checks are derived from the repository, which is what keeps the workflow callable from outside the fleet.</p>
+<table class="table">
+<colgroup>
+<col width="25%">
+<col width="25%">
+<col width="25%">
+<col width="25%">
+</colgroup>
+<thead><tr>
+<th>Input</th>
+<th>Type</th>
+<th>Default</th>
+<th>Purpose</th>
+</tr></thead>
+<tbody><tr>
+<td><code>image</code></td>
+<td>boolean</td>
+<td><code>false</code></td>
+<td>Run the <code>gate</code>, <code>docs</code> and <code>soft</code> jobs in the image that <code>image.yaml</code> builds every day, the one tagged <code>release</code>, rather than installing R, their tools and their system packages while they run. See <a href="#prebuilt-image">Prebuilt image</a>.</td>
+</tr></tbody>
+</table>
+<p>The checks are derived from the repository, so a caller needs to set nothing. That keeps the workflow callable from outside the fleet.</p>
 </div>
 <div class="section level3">
 <h3 id="connect-deployyaml">
@@ -1015,7 +1055,7 @@
 <strong>Superseded runs cancelled</strong> — a push to a pull request cancels the <code>ci</code>, <code>release</code> and <code>release-gate</code> runs still checking the commit it replaces, and pkgdown builds take turns so the newest lands last — see <a href="#superseded-runs">Superseded runs</a>
 </li>
 <li>
-<strong>Prebuilt image</strong> — with <code>image: true</code>, the Ubuntu jobs run in an image built every day, which holds R, their tools and the system and R packages of the repos it is built for, so that they call apt only for a system package it lacks — see <a href="#prebuilt-image">Prebuilt image</a>
+<strong>Prebuilt image</strong> — with <code>image: true</code>, the Ubuntu jobs of <code>ci.yaml</code>, the legs of <code>revdep.yaml</code>, the site build of <code>pkgdown.yaml</code>, the checks of <code>release-gate.yaml</code> and the <code>revdeps</code> job of <code>release.yaml</code> run in an image built every day, which holds R, their tools and the system and R packages of the repos it is built for, so that they call apt only for a system package it lacks — see <a href="#prebuilt-image">Prebuilt image</a>
 </li>
 <li>
 <strong>Pinned Quarto</strong> — jobs that install Quarto (any package holding a <code>.qmd</code>) pass an explicit version instead of the action’s <code>release</code> default, which resolves the version through an unretried <code>curl</code> to quarto.org and has twice killed a green run — see <a href="#quarto-pin">Quarto pin</a>
@@ -1059,8 +1099,19 @@
 <span id="cb20-3"><a href="#cb20-3" tabindex="-1"></a><span class="at">    </span><span class="fu">uses</span><span class="kw">:</span><span class="at"> BristolMyersSquibb/blockr.ci/.github/workflows/ci.yaml@main</span></span>
 <span id="cb20-4"><a href="#cb20-4" tabindex="-1"></a><span class="at">    </span><span class="fu">with</span><span class="kw">:</span></span>
 <span id="cb20-5"><a href="#cb20-5" tabindex="-1"></a><span class="at">      </span><span class="fu">image</span><span class="kw">:</span><span class="at"> </span><span class="ch">true</span></span></code></pre></div>
-<p>The image holds R, Pandoc, Quarto at the <a href="#quarto-pin">pinned version</a>, Google Chrome, qpdf, ghostscript, devscripts, git and the GitHub CLI. It also holds the R packages of the repos it is built for, together with the packages that <code>ci.yaml</code> adds, and the system packages of all of these. The build works out both lists each time it runs. The repos are the public repos of the organisation whose <code>js-state</code> branch holds a DESCRIPTION, so a repo joins with that branch and leaves without it. Only public repos count, because the build installs the package of each repo into the image, and the image is public. The extra packages are the <code>any::</code> refs and the <code>needs:</code> values of <code>ci.yaml</code>, together with pkgdepends, roxygen2 and sessioninfo, which steps of blockr.ci install themselves. When the build finds no repo, it fails, and the image of the day before stays. There is one image per R version, tagged <code>release</code>, <code>oldrel-1</code> and <code>devel</code>. The pull request jobs take the image of <code>r-version</code>, so <code>r-version</code> must be empty, <code>release</code>, <code>oldrel-1</code> or <code>devel</code>. The <code>check</code> matrix runs its oldrel-1 and R-devel legs in the images of those versions. Its macOS and Windows legs run as before, because a job container needs a Linux runner.</p>
+<p>The image holds R, Pandoc, Quarto at the <a href="#quarto-pin">pinned version</a>, Google Chrome, qpdf, ghostscript, devscripts, git, rsync and the GitHub CLI. It also holds the R packages of the repos it is built for, together with the packages that the workflows with a job in the image add, and the system packages of all of these. The build works out both lists each time it runs. The repos are the public repos of the organisation whose <code>js-state</code> branch holds a DESCRIPTION, so a repo joins with that branch and leaves without it. Only public repos count, because the build installs the package of each repo into the image, and the image is public. The extra packages are the <code>any::</code> refs and the <code>needs:</code> values of those workflows, together with pkgdepends, roxygen2 and sessioninfo, which steps of blockr.ci install themselves. A workflow counts when one of its <code>container:</code> lines names the image, so a workflow that takes the input joins the list without an edit. When the build finds no repo, or no such workflow, it fails, and the image of the day before stays. There is one image per R version, tagged <code>release</code>, <code>oldrel-1</code> and <code>devel</code>. The pull request jobs take the image of <code>r-version</code>, so <code>r-version</code> must be empty, <code>release</code>, <code>oldrel-1</code> or <code>devel</code>. The <code>check</code> matrix runs its oldrel-1 and R-devel legs in the images of those versions. Its macOS and Windows legs run as before, because a job container needs a Linux runner.</p>
 <p>P3M has no binaries for R-devel on Ubuntu 26.04, so the image of <code>devel</code> builds every R package from source. On 20 November 2026, its build job took 20 minutes, against 6 for each of the other two. No pull request waits for that build. In that image, the R-devel leg builds only what the image lacks. So the leg runs at the merge queue again, as it did before <a href="https://github.com/BristolMyersSquibb/blockr.ci/issues/95" class="external-link">#95</a>. The leg then checks against R-devel as of the build, which is at most a day old (<a href="https://github.com/BristolMyersSquibb/blockr.ci/issues/106" class="external-link">#106</a>).</p>
+<p>The <code>revdep.yaml</code> workflow takes the same input. With it, the legs of both tiers run in the image tagged <code>release</code>, the R version they also run on without the image. Besides the steps that the next paragraph names, a leg in the image skips its two Quarto steps, since the image holds Quarto at the pinned version. The other jobs of the workflow, <code>matrix</code>, <code>revdep-all</code> and <code>report</code>, install no R, so they run as before.</p>
+<div class="sourceCode" id="cb21"><pre class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb21-1"><a href="#cb21-1" tabindex="-1"></a><span class="at">  </span><span class="fu">revdep</span><span class="kw">:</span></span>
+<span id="cb21-2"><a href="#cb21-2" tabindex="-1"></a><span class="at">    </span><span class="fu">if</span><span class="kw">:</span><span class="at"> github.event_name == 'merge_group'</span></span>
+<span id="cb21-3"><a href="#cb21-3" tabindex="-1"></a><span class="at">    </span><span class="fu">uses</span><span class="kw">:</span><span class="at"> BristolMyersSquibb/blockr.ci/.github/workflows/revdep.yaml@main</span></span>
+<span id="cb21-4"><a href="#cb21-4" tabindex="-1"></a><span class="at">    </span><span class="fu">with</span><span class="kw">:</span></span>
+<span id="cb21-5"><a href="#cb21-5" tabindex="-1"></a><span class="fu">      revdep-strict</span><span class="kw">: </span><span class="ch">|</span></span>
+<span id="cb21-6"><a href="#cb21-6" tabindex="-1"></a>        BristolMyersSquibb/blockr.dock@js-state</span>
+<span id="cb21-7"><a href="#cb21-7" tabindex="-1"></a><span class="at">      </span><span class="fu">image</span><span class="kw">:</span><span class="at"> </span><span class="ch">true</span></span>
+<span id="cb21-8"><a href="#cb21-8" tabindex="-1"></a><span class="at">    </span><span class="fu">secrets</span><span class="kw">:</span></span>
+<span id="cb21-9"><a href="#cb21-9" tabindex="-1"></a><span class="at">      </span><span class="fu">BLOCKR_PAT</span><span class="kw">:</span><span class="at"> ${{ secrets.BLOCKR_PAT }}</span></span></code></pre></div>
+<p>The <code>pkgdown.yaml</code>, <code>release-gate.yaml</code> and <code>release.yaml</code> workflows take the input too. In <code>pkgdown.yaml</code>, it runs the <code>pkgdown</code> job in the image tagged <code>release</code>. That job builds the site, and in the <code>branch</code> mode it pushes the site as well. In <code>release-gate.yaml</code>, it runs the <code>gate</code>, <code>docs</code> and <code>soft</code> jobs in that image. In <code>release.yaml</code>, it runs the <code>revdeps</code> job in that image. That job counts the reverse dependencies on CRAN. Their other jobs install no R, or run on platforms of their own, so they run as before.</p>
 <p>In the image, a job skips <code>setup-r</code>, <code>setup-pandoc</code> and <code>setup-r-dependencies</code>, and the <code>install-deps</code> action takes their place:</p>
 <ol style="list-style-type: decimal">
 <li>It resolves the dependencies with pak, as <code>setup-r-dependencies</code> does.</li>
@@ -1068,6 +1119,7 @@
 <li>It installs the R packages that the image lacks, and a branch that <code>Remotes</code> names when it moved since the build. Like <code>setup-r-dependencies</code>, it keeps the packages already installed, so a job uses the CRAN versions of the image, which are at most a day old.</li>
 </ol>
 <p>When no system package is missing, pak installs with its system requirements switched off, and the job never calls apt. Then pak no longer looks the system packages up, so its log lists them all as missing, below the line of <code>install-deps</code> that says the image holds them. Left on, pak would run <code>apt-get update</code>, and on CI it would reinstall every system package that the lockfile names, installed or not. When some are missing, the job warns and lets pak install those, and only those. So a repo that adds a dependency with a new system package keeps working, and its jobs install that package with apt until the image holds it.</p>
+<p>The image also keeps the rules with which pak maps the system requirements of R packages to system packages, as the build fetched them. It sets <code>R_PKG_CACHE_DIR</code>, so that pak finds the rules in a job, which runs with a <code>HOME</code> of its own. Within a day of the build, pak uses them without a refresh. When a refresh fails, pak falls back to them rather than to the older copy that it bundles, which can name a system package that the image lacks. The build fails when pak kept no rules.</p>
 <p>Before it pushes an image, <code>image.yaml</code> resolves the dependencies of each of those repos in that image, and fails when any of their system packages is missing. It keeps the six newest untagged builds, so a job can still be pointed at one of them by its digest.</p>
 <p>The package is created on the first push, possibly as private. An owner of the organisation then makes it public once, under the package’s settings, so that callers in other organisations pull it without credentials.</p>
 </div>
@@ -1218,10 +1270,10 @@ Remotes:
 <h3 id="per-pr-revdep-refs">Per-PR revdep refs<a class="anchor" aria-label="anchor" href="#per-pr-revdep-refs"></a>
 </h3>
 <p>The deps block in a PR body controls which ref of each revdep gets checked out for the <strong>revdep job</strong> — nothing else. It is not a mechanism for overriding forward dependencies; those belong in <code>Remotes:</code> in <code>DESCRIPTION</code>.</p>
-<div class="sourceCode" id="cb24"><pre class="sourceCode markdown"><code class="sourceCode markdown"><span id="cb24-1"><a href="#cb24-1" tabindex="-1"></a><span class="in">```deps</span></span>
-<span id="cb24-2"><a href="#cb24-2" tabindex="-1"></a><span class="in">BristolMyersSquibb/blockr.dag#111</span></span>
-<span id="cb24-3"><a href="#cb24-3" tabindex="-1"></a><span class="in">BristolMyersSquibb/blockr.ai@my-feature-branch</span></span>
-<span id="cb24-4"><a href="#cb24-4" tabindex="-1"></a><span class="in">```</span></span></code></pre></div>
+<div class="sourceCode" id="cb25"><pre class="sourceCode markdown"><code class="sourceCode markdown"><span id="cb25-1"><a href="#cb25-1" tabindex="-1"></a><span class="in">```deps</span></span>
+<span id="cb25-2"><a href="#cb25-2" tabindex="-1"></a><span class="in">BristolMyersSquibb/blockr.dag#111</span></span>
+<span id="cb25-3"><a href="#cb25-3" tabindex="-1"></a><span class="in">BristolMyersSquibb/blockr.ai@my-feature-branch</span></span>
+<span id="cb25-4"><a href="#cb25-4" tabindex="-1"></a><span class="in">```</span></span></code></pre></div>
 <p>Each line is <code>owner/repo@branch</code> or <code>owner/repo#PR-number</code>, naming the downstream’s repository as <code>revdep-strict</code> or <code>revdep-info</code> lists it. The matching revdep job checks out that ref instead of the default branch, or instead of the branch that the list’s entry names.</p>
 <p>That job runs the code it checks out with <code>BLOCKR_PAT</code> in its environment, so an entry can only point it at code already in the downstream repository: after <code>@</code> one of its branches, after <code>#</code> one of its pull requests opened from a branch of that same repository. An entry naming another repository, a pull request from a fork, or a SHA, tag or <code>refs/…</code> path after <code>@</code> fails the job with the entry named. To check against a contributor’s fork, push the branch to the downstream repository and name it there.</p>
 <p><code>parse-deps</code> validates each entry against the package’s <code>DESCRIPTION</code>: if a deps-block entry’s package name appears in <code>Imports</code>/<code>Depends</code>/<code>LinkingTo</code>/<code>Suggests</code>/<code>Remotes</code>, parse-deps fails with a pointer to <code>Remotes:</code>. This catches the common mistake of trying to use the deps block to swap in a dev branch of a forward dep.</p>
@@ -1235,9 +1287,9 @@ Remotes:
 <li><p>Open your PR on <code>blockr.dock</code>. The configured <code>revdep-strict</code> input includes <code>BristolMyersSquibb/blockr.dag</code>, so the revdep job runs against <code>blockr.dag</code>’s default branch by default.</p></li>
 <li>
 <p>To pin it to a specific PR, add to the PR body:</p>
-<div class="sourceCode" id="cb25"><pre class="sourceCode markdown"><code class="sourceCode markdown"><span id="cb25-1"><a href="#cb25-1" tabindex="-1"></a><span class="in">```deps</span></span>
-<span id="cb25-2"><a href="#cb25-2" tabindex="-1"></a><span class="in">BristolMyersSquibb/blockr.dag#111</span></span>
-<span id="cb25-3"><a href="#cb25-3" tabindex="-1"></a><span class="in">```</span></span></code></pre></div>
+<div class="sourceCode" id="cb26"><pre class="sourceCode markdown"><code class="sourceCode markdown"><span id="cb26-1"><a href="#cb26-1" tabindex="-1"></a><span class="in">```deps</span></span>
+<span id="cb26-2"><a href="#cb26-2" tabindex="-1"></a><span class="in">BristolMyersSquibb/blockr.dag#111</span></span>
+<span id="cb26-3"><a href="#cb26-3" tabindex="-1"></a><span class="in">```</span></span></code></pre></div>
 </li>
 <li><p>When the PR is enqueued, the merge-queue revdep job reads the block and checks out <code>blockr.dag</code> PR #111 head instead of the default branch.</p></li>
 <li><p>To point at a different PR later, edit the block and re-enqueue.</p></li>
