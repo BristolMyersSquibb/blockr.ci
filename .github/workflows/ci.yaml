@@ -93,7 +93,9 @@
 # Those jobs then skip setup-r, setup-pandoc and setup-r-dependencies.
 # In their place, the install-deps action installs only what the image
 # lacks, and calls apt only for a system package that is missing.
-# The macOS and Windows legs and the R-devel leg run as before.
+# The R-devel leg runs in the image as well.
+# It then runs at the merge queue too, as the check job explains.
+# The macOS and Windows legs run as before.
 # See image.yaml for why.
 #
 # Every job in every workflow here sets `timeout-minutes: 60`, with one
@@ -182,11 +184,14 @@ on:
           Run the Ubuntu jobs in the image that image.yaml builds, which
           holds R, their tools, and the system and R packages of the repos
           it is built for.
-          The PR-leg jobs take the image of r-version, and the oldrel-1 leg
-          of the check matrix the image of oldrel-1.
-          Images exist for release and oldrel-1 only, so r-version must be
-          '', release or oldrel-1.
-          The macOS, Windows and R-devel legs are unaffected.
+          The PR-leg jobs take the image of r-version, and the oldrel-1 and
+          R-devel legs of the check matrix the images of oldrel-1 and
+          devel.
+          Images exist for release, oldrel-1 and devel only, so r-version
+          must be '', release, oldrel-1 or devel.
+          With the input on, the R-devel leg runs at the merge queue as
+          well, and not only on a release pull request.
+          The macOS and Windows legs are unaffected.
           Default false runs every job without the image.
         type: boolean
         default: false
@@ -805,19 +810,26 @@ jobs:
     # red-main gap the queue exists to close.
     #
     # The R-devel leg is the one exception.
-    # It runs on a release pull request only, never at the queue.
+    # Without the image, it runs on a release pull request only, never at
+    # the queue.
     # The leg builds its dependencies from source, so in blockr.core's
     # queue it took 15–22 minutes, against 3–7 for the other legs.
     # In 187 queue runs, it found nothing the other legs missed (#95).
     # An R-devel failure can therefore reach main.
     # It then shows up at the next release.
+    #
+    # With the image, the leg runs in the image of devel.
+    # That image holds the dependencies of the leg, built from source.
+    # The leg builds only what the image lacks, so it runs wherever the
+    # other legs run, as it did before #95.
+    # An R-devel failure then shows up at the merge that causes it (#106).
     if: >-
       github.event_name != 'pull_request' ||
       contains(github.event.pull_request.labels.*.name, 'release')
 
     runs-on: ${{ matrix.config.os }}
 
-    container: ${{ inputs.image && matrix.config.os == 'ubuntu-latest' && matrix.config.r != 'devel' && format('ghcr.io/bristolmyerssquibb/blockr.ci:{0}', matrix.config.r) || '' }}
+    container: ${{ inputs.image && matrix.config.os == 'ubuntu-latest' && format('ghcr.io/bristolmyerssquibb/blockr.ci:{0}', matrix.config.r) || '' }}
 
     timeout-minutes: 60
 
@@ -828,16 +840,17 @@ jobs:
           - {os: macos-latest,   r: 'release'}
           - {os: windows-latest, r: 'release'}
           - {os: ubuntu-latest,  r: 'oldrel-1'}
-        # R-devel joins on a release pull request only — see above.
+        # R-devel joins with the image, or on a release pull request — see
+        # above.
         include: >-
-          ${{ fromJSON(contains(github.event.pull_request.labels.*.name, 'release')
+          ${{ fromJSON((inputs.image || contains(github.event.pull_request.labels.*.name, 'release'))
           && '[{"config": {"os": "ubuntu-latest", "r": "devel", "http-user-agent": "release"}}]'
           || '[]') }}
 
     env:
       GITHUB_PAT: ${{ secrets.BLOCKR_PAT || github.token }}
       R_KEEP_PKG_SOURCE: yes
-      IN_IMAGE: ${{ inputs.image && matrix.config.os == 'ubuntu-latest' && matrix.config.r != 'devel' }}
+      IN_IMAGE: ${{ inputs.image && matrix.config.os == 'ubuntu-latest' }}
 
     steps:
       - uses: actions/checkout@v5
