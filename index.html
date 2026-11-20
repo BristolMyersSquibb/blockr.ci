@@ -635,7 +635,7 @@
 <code>ci / check</code> (devel)</td>
 <td>skipped</td>
 <td><strong>runs</strong></td>
-<td>skipped</td>
+<td>runs with <code>image</code>, skipped without</td>
 </tr>
 <tr>
 <td>
@@ -678,7 +678,8 @@
 </table>
 <p>The label is read straight from the event payload — <code>contains(github.event.pull_request.labels.*.name, 'release')</code> — so the whole mechanism is one condition per job, with no detection step anywhere.</p>
 <p>The queue keeps running the full pipeline for a release pull request, same as any other. Skipping the <code>check</code> matrix there would save a run, but the queue tests the would-be merge commit rather than the pull request head, and dropping it would reopen exactly the red-<code>main</code> gap described below. Our <code>revdep</code> likewise keeps running at the queue: it gates the merge, while <code>recheck</code> answers the different question the submission asks — see <a href="#reverse-dependencies-before-a-cran-submission">Reverse dependencies before a CRAN submission</a>. A release pull request is rare enough that paying for the queue leg twice over is the cheaper mistake.</p>
-<p>The R-devel leg of <code>ci / check</code> is the one exception. It runs on a release pull request only, never at the queue. The leg builds its dependencies from source, so in blockr.core’s queue it took 15–22 minutes, against 3–7 for the other legs, and every queue entry waited for it. In 187 queue runs, it found nothing that the other legs missed (<a href="https://github.com/BristolMyersSquibb/blockr.ci/issues/95" class="external-link">#95</a>). An R-devel failure can therefore reach <code>main</code>. It then shows up at the next release.</p>
+<p>The R-devel leg of <code>ci / check</code> is the one exception. Without <code>image</code>, it runs on a release pull request only, never at the queue. The leg builds its dependencies from source, so in blockr.core’s queue it took 15–22 minutes, against 3–7 for the other legs, and every queue entry waited for it. In 187 queue runs, it found nothing that the other legs missed (<a href="https://github.com/BristolMyersSquibb/blockr.ci/issues/95" class="external-link">#95</a>). An R-devel failure can therefore reach <code>main</code>. It then shows up at the next release.</p>
+<p>With <code>image</code>, the leg runs in an image that holds its dependencies, built from source once a day. The leg then builds only what the image lacks. So it runs at the queue again, and an R-devel failure shows up at the merge that causes it. See <a href="#prebuilt-image">Prebuilt image</a>.</p>
 </div>
 <div class="section level3">
 <h3 id="merge-queue">Merge queue<a class="anchor" aria-label="anchor" href="#merge-queue"></a>
@@ -785,7 +786,7 @@
 <td><code>image</code></td>
 <td>boolean</td>
 <td><code>false</code></td>
-<td>Run the Ubuntu jobs in the image that <code>image.yaml</code> builds every day, rather than installing R, their tools and their system packages while they run. See <a href="#prebuilt-image">Prebuilt image</a>.</td>
+<td>Run the Ubuntu jobs in the image that <code>image.yaml</code> builds every day, rather than installing R, their tools and their system packages while they run. With it, the R-devel leg of the <code>check</code> matrix runs at the merge queue as well. See <a href="#prebuilt-image">Prebuilt image</a>.</td>
 </tr>
 <tr>
 <td><code>skip-pkgdown</code></td>
@@ -997,7 +998,7 @@
 <strong>TypeScript gates</strong> — the package’s <code>typecheck</code>, <code>lint</code>, <code>test</code> and <code>build</code> scripts, and a check that the build leaves <code>inst/</code> as committed — PR gate, off unless <code>typescript-dir</code> is set — see <a href="#typescript-gates">TypeScript gates</a>
 </li>
 <li>
-<strong>Full check</strong> — 3-platform matrix (macOS, Windows, Ubuntu oldrel) — merge-queue gate, plus Ubuntu devel on every push to a labelled release PR — see <a href="#release-mode">Release mode</a>
+<strong>Full check</strong> — 3-platform matrix (macOS, Windows, Ubuntu oldrel) — merge-queue gate, plus Ubuntu devel on every push to a labelled release PR, and at the queue too with <code>image</code> — see <a href="#release-mode">Release mode</a>
 </li>
 <li>
 <strong>Reverse-dependency checks</strong> against configurable downstream packages — merge-queue gate, plus an informational tier that reports to the pull request without gating — see <a href="#informational-downstreams">Informational downstreams</a>
@@ -1058,7 +1059,8 @@
 <span id="cb20-3"><a href="#cb20-3" tabindex="-1"></a><span class="at">    </span><span class="fu">uses</span><span class="kw">:</span><span class="at"> BristolMyersSquibb/blockr.ci/.github/workflows/ci.yaml@main</span></span>
 <span id="cb20-4"><a href="#cb20-4" tabindex="-1"></a><span class="at">    </span><span class="fu">with</span><span class="kw">:</span></span>
 <span id="cb20-5"><a href="#cb20-5" tabindex="-1"></a><span class="at">      </span><span class="fu">image</span><span class="kw">:</span><span class="at"> </span><span class="ch">true</span></span></code></pre></div>
-<p>The image holds R, Pandoc, Quarto at the <a href="#quarto-pin">pinned version</a>, Google Chrome, qpdf, ghostscript, devscripts, git and the GitHub CLI. It also holds the R packages of the repos it is built for, together with the packages that <code>ci.yaml</code> adds, and the system packages of all of these. The build works out both lists each time it runs. The repos are the public repos of the organisation whose <code>js-state</code> branch holds a DESCRIPTION, so a repo joins with that branch and leaves without it. Only public repos count, because the build installs the package of each repo into the image, and the image is public. The extra packages are the <code>any::</code> refs and the <code>needs:</code> values of <code>ci.yaml</code>, together with pkgdepends, roxygen2 and sessioninfo, which steps of blockr.ci install themselves. When the build finds no repo, it fails, and the image of the day before stays. There is one image per R version, tagged <code>release</code> and <code>oldrel-1</code>. The pull request jobs take the image of <code>r-version</code>, so <code>r-version</code> must be empty, <code>release</code> or <code>oldrel-1</code>. The <code>check</code> matrix runs its oldrel-1 leg in the image. Its macOS, Windows and R-devel legs run as before: a job container needs a Linux runner, and no image holds R-devel.</p>
+<p>The image holds R, Pandoc, Quarto at the <a href="#quarto-pin">pinned version</a>, Google Chrome, qpdf, ghostscript, devscripts, git and the GitHub CLI. It also holds the R packages of the repos it is built for, together with the packages that <code>ci.yaml</code> adds, and the system packages of all of these. The build works out both lists each time it runs. The repos are the public repos of the organisation whose <code>js-state</code> branch holds a DESCRIPTION, so a repo joins with that branch and leaves without it. Only public repos count, because the build installs the package of each repo into the image, and the image is public. The extra packages are the <code>any::</code> refs and the <code>needs:</code> values of <code>ci.yaml</code>, together with pkgdepends, roxygen2 and sessioninfo, which steps of blockr.ci install themselves. When the build finds no repo, it fails, and the image of the day before stays. There is one image per R version, tagged <code>release</code>, <code>oldrel-1</code> and <code>devel</code>. The pull request jobs take the image of <code>r-version</code>, so <code>r-version</code> must be empty, <code>release</code>, <code>oldrel-1</code> or <code>devel</code>. The <code>check</code> matrix runs its oldrel-1 and R-devel legs in the images of those versions. Its macOS and Windows legs run as before, because a job container needs a Linux runner.</p>
+<p>P3M has no binaries for R-devel on Ubuntu 26.04, so the image of <code>devel</code> builds every R package from source. On 20 November 2026, its build job took 20 minutes, against 6 for each of the other two. No pull request waits for that build. In that image, the R-devel leg builds only what the image lacks. So the leg runs at the merge queue again, as it did before <a href="https://github.com/BristolMyersSquibb/blockr.ci/issues/95" class="external-link">#95</a>. The leg then checks against R-devel as of the build, which is at most a day old (<a href="https://github.com/BristolMyersSquibb/blockr.ci/issues/106" class="external-link">#106</a>).</p>
 <p>In the image, a job skips <code>setup-r</code>, <code>setup-pandoc</code> and <code>setup-r-dependencies</code>, and the <code>install-deps</code> action takes their place:</p>
 <ol style="list-style-type: decimal">
 <li>It resolves the dependencies with pak, as <code>setup-r-dependencies</code> does.</li>
