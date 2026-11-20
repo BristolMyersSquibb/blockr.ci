@@ -1067,6 +1067,12 @@ that directory. The scripts are the package's own, so the job assumes
 their names and nothing of the tools behind them. Each runs once
 `npm ci` has succeeded, so one run reports every gate that fails.
 
+The job runs `npm ci` with `--ignore-scripts`, so no install script runs, neither one of a dependency nor one of the package itself.
+An install script runs code that its package ships, and the job needs none.
+The flag also skips a script that the package approves in the `allowScripts` field of its `package.json`.
+A package that needs the install script of a dependency runs it from one of its own scripts, with `npm rebuild <dependency>`.
+Pre- and post-scripts of the scripts that the job runs, such as `pretest`, still run.
+
 Only the steps that install the R dependencies get the token in `BLOCKR_PAT`.
 The steps that run npm and the package's scripts run code from every package in the lockfile, so they run without it.
 

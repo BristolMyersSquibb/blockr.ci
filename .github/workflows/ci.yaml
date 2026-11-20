@@ -779,9 +779,18 @@ jobs:
           cache: npm
           cache-dependency-path: ${{ inputs.typescript-dir }}/package-lock.json
 
+      # With --ignore-scripts, npm ci runs no install script, neither one of
+      # a dependency nor one of the package itself.
+      # An install script runs code that its package ships, and the job
+      # needs none.
+      # The flag sits on npm ci alone.
+      # Set for the job through npm_config_ignore_scripts, it would also skip
+      # the pre- and post-scripts of npm run and npm test.
+      # A caller that builds against blockr.core's types installs them from
+      # such a script, with blockr.core::install_js_types().
       - name: Install npm dependencies
         id: install
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Type-check
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
