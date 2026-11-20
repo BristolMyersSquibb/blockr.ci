@@ -1085,6 +1085,53 @@ so `setup-node` neither resolves a version over the network nor
 downloads one, for the reason given under [Quarto pin](#quarto-pin).
 Bump it deliberately.
 
+#### Recommended npm settings
+
+The job installs the versions that the lockfile pins, with `npm ci`.
+The lockfile itself comes from `npm install` on the machines of developers and agents.
+No workflow here sees those installs.
+A caller guards them with files in its own repository.
+Its `.npmrc` turns on two settings:
+
+```ini
+min-release-age=7
+strict-allow-scripts=true
+```
+
+The `allowScripts` field of its `package.json` lists each dependency whose install script may run, here esbuild:
+
+```json
+{
+  "allowScripts": {
+    "esbuild@0.28.2": true
+  }
+}
+```
+
+With `min-release-age=7`, `npm install` picks only versions published more than 7 days ago.
+A compromised release then cannot enter the lockfile during those 7 days.
+The job's `npm ci` does not apply the setting: it installs the lockfile as it is.
+
+With `strict-allow-scripts=true`, an install fails when a dependency has an install script that `allowScripts` does not cover.
+The install fails before any script runs.
+Without that setting, npm 11 runs such a script with a warning, and npm 12 skips it with a warning.
+
+The command `npm install-scripts approve <pkg>` adds the entry for the installed version of a package, as in `esbuild@0.28.2` above.
+A strict install fails before it installs anything, so after such a failure the command finds nothing to approve.
+To add a dependency with an install script, or to upgrade one:
+
+1. Install it without running install scripts: `npm install --ignore-scripts esbuild@0.28.2`.
+2. Read its install script, then approve it: `npm install-scripts approve esbuild`.
+3. Run the approved script: `npm rebuild esbuild`.
+
+The job's `npm ci` applies `allowScripts` and `strict-allow-scripts` too.
+With both in place, its `Install npm dependencies` step fails when the lockfile holds a dependency with an install script that `allowScripts` does not cover.
+An upgrade of esbuild that nobody approved is such a case, since its entry names the old version.
+
+The settings and `npm install-scripts` need npm 11.18.0 or later, which Node 24.20.0 and later ship.
+Node 22 ships npm 10, which ignores both settings and `allowScripts` without a warning.
+R CMD check reports the hidden `.npmrc` in a NOTE, so add `^\.npmrc$` to `.Rbuildignore`.
+
 ### Prebuilt image
 
 The Ubuntu jobs install R, their tools and their system packages with apt from an Ubuntu archive mirror while they run.
