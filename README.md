@@ -412,11 +412,9 @@ caller's `if:` is the one `release.yaml` uses, and no wider, for the
 reason given under
 [`release.yaml`](#releaseyaml--cran-pre-submission-checks-optional).
 
-There are no inputs. Everything is derived from the repository, and
-`BLOCKR_PAT` falls back to `GITHUB_TOKEN`, so the workflow is callable
-from a repository outside the fleet that holds no secrets at all —
-`nbenn/typedjson` does not use `ci.yaml` and is the package most in need
-of this gate.
+The one input, `image`, is optional and off by default, so a caller sets nothing.
+Everything checked is derived from the repository, and `BLOCKR_PAT` falls back to `GITHUB_TOKEN`.
+So the workflow is callable from a repository outside the fleet that holds no secrets at all — `nbenn/typedjson` does not use `ci.yaml` and is the package most in need of this gate.
 
 The `pull-requests: write` grant is what lets the report job write its
 comment. Without it the job warns and carries on, since the same detail
@@ -957,8 +955,12 @@ release.
 
 ### `release-gate.yaml`
 
-No inputs. The checks are derived from the repository, which is what
-keeps the workflow callable from outside the fleet.
+| Input | Type | Default | Purpose |
+|---|---|---|---|
+| `image` | boolean | `false` | Run the `gate`, `docs` and `soft` jobs in the image that `image.yaml` builds every day, the one tagged `release`, rather than installing R, their tools and their system packages while they run. See [Prebuilt image](#prebuilt-image). |
+
+The checks are derived from the repository, so a caller needs to set nothing.
+That keeps the workflow callable from outside the fleet.
 
 ### `connect-deploy.yaml`
 
@@ -1007,7 +1009,7 @@ jobs:
 - **Mechanical release checks** — the checklist half of a release, gated on every push to a labelled release PR instead of ticked by hand: three-component version, no dev-version pins, no `Remotes`, `NEWS.md` shape, real vignette titles, a `\value` on every documented function, and a README current with its source. Reports spelling, URL and `--as-cran` findings alongside without gating on them — see [`release-gate.yaml`](#release-gateyaml--mechanical-release-checks-optional)
 - **pkgdown deploy** — site build + deploy to GitHub Pages on push to `main`, via the `gh-pages` branch or, with `deploy: actions`, straight from Actions
 - **Superseded runs cancelled** — a push to a pull request cancels the `ci`, `release` and `release-gate` runs still checking the commit it replaces, and pkgdown builds take turns so the newest lands last — see [Superseded runs](#superseded-runs)
-- **Prebuilt image** — with `image: true`, the Ubuntu jobs of `ci.yaml`, the legs of `revdep.yaml`, the site build of `pkgdown.yaml` and the `revdeps` job of `release.yaml` run in an image built every day, which holds R, their tools and the system and R packages of the repos it is built for, so that they call apt only for a system package it lacks — see [Prebuilt image](#prebuilt-image)
+- **Prebuilt image** — with `image: true`, the Ubuntu jobs of `ci.yaml`, the legs of `revdep.yaml`, the site build of `pkgdown.yaml`, the checks of `release-gate.yaml` and the `revdeps` job of `release.yaml` run in an image built every day, which holds R, their tools and the system and R packages of the repos it is built for, so that they call apt only for a system package it lacks — see [Prebuilt image](#prebuilt-image)
 - **Pinned Quarto** — jobs that install Quarto (any package holding a `.qmd`) pass an explicit version instead of the action's `release` default, which resolves the version through an unretried `curl` to quarto.org and has twice killed a green run — see [Quarto pin](#quarto-pin)
 - **Hard-dependency resolution on `lint` and `docs`** — neither job runs the suite or builds a site, so both skip the `Suggests` closure and the 125 MB Chromium that a `chromote` / `shinytest2` suggestion drags in — see [Suggests on the lint and docs jobs](#suggests-on-the-lint-and-docs-jobs)
 - **parse-deps** — pin a downstream revdep ref via a `` ```deps `` block in the PR body, read fresh when the merge queue runs revdep
@@ -1121,9 +1123,10 @@ The other jobs of the workflow, `matrix`, `revdep-all` and `report`, install no 
       BLOCKR_PAT: ${{ secrets.BLOCKR_PAT }}
 ```
 
-The `pkgdown.yaml` and `release.yaml` workflows take the input too.
+The `pkgdown.yaml`, `release-gate.yaml` and `release.yaml` workflows take the input too.
 In `pkgdown.yaml`, it runs the `pkgdown` job in the image tagged `release`.
 That job builds the site, and in the `branch` mode it pushes the site as well.
+In `release-gate.yaml`, it runs the `gate`, `docs` and `soft` jobs in that image.
 In `release.yaml`, it runs the `revdeps` job in that image.
 That job counts the reverse dependencies on CRAN.
 Their other jobs install no R, or run on platforms of their own, so they run as before.
