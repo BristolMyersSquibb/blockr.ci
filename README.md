@@ -1107,7 +1107,8 @@ The `check` matrix runs its oldrel-1 and R-devel legs in the images of those ver
 Its macOS and Windows legs run as before, because a job container needs a Linux runner.
 
 P3M has no binaries for R-devel on Ubuntu 26.04, so the image of `devel` builds every R package from source.
-Its build therefore takes much longer than the other two, but no pull request waits for it.
+On 20 November 2026, its build job took 20 minutes, against 6 for each of the other two.
+No pull request waits for that build.
 In that image, the R-devel leg builds only what the image lacks.
 So the leg runs at the merge queue again, as it did before [#95](https://github.com/BristolMyersSquibb/blockr.ci/issues/95).
 The leg then checks against R-devel as of the build, which is at most a day old ([#106](https://github.com/BristolMyersSquibb/blockr.ci/issues/106)).

@@ -23,8 +23,9 @@
 #
 # P3M has no binaries for R-devel on Ubuntu 26.04, so the image of devel
 # builds every R package from source.
-# Its build therefore takes much longer than the other two, but no pull
-# request waits for it.
+# On 20 November 2026, its build job took 20 minutes, against 6 for each
+# of the other two.
+# No pull request waits for that build.
 # A job in that image builds only what the image lacks.
 # So with the image, the R-devel leg of ci.yaml runs at the merge queue
 # again (BristolMyersSquibb/blockr.ci#106).
