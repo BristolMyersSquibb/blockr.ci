@@ -1008,6 +1008,7 @@ jobs:
 - **Coverage** via `covr::package_coverage()` + codecov, optional threshold — PR gate
 - **Docs freshness** — regenerate `man/` + `NAMESPACE` with the roxygen2 version pinned in `DESCRIPTION` (`Config/roxygen2/version`, or legacy `RoxygenNote`) and fail on drift — PR gate
 - **TypeScript gates** — the package's `typecheck`, `lint`, `test` and `build` scripts, and a check that the build leaves `inst/` as committed — PR gate, off unless `typescript-dir` is set — see [TypeScript gates](#typescript-gates)
+- **Daily lockfile audit** — `npm audit` of the lockfile of each caller that sets `typescript-dir`, every day, failing on an advisory of high or critical severity — see [Daily lockfile audit](#daily-lockfile-audit)
 - **Full check** — 3-platform matrix (macOS, Windows, Ubuntu oldrel) — merge-queue gate, plus Ubuntu devel on every push to a labelled release PR, and at the queue too with `image` — see [Release mode](#release-mode)
 - **Reverse-dependency checks** against configurable downstream packages — merge-queue gate, plus an informational tier that reports to the pull request without gating — see [Informational downstreams](#informational-downstreams)
 - **CRAN pre-submission checks** — AddressSanitizer, UndefinedBehaviorSanitizer, valgrind, `rchk` and the Suggests-free build in the R-hub containers, plus a CRAN-style reverse dependency check, on every push to a labelled release PR — see [Release mode](#release-mode)
@@ -1084,6 +1085,23 @@ Node stays on the 24 LTS line, which the `ubuntu-latest` image caches,
 so `setup-node` neither resolves a version over the network nor
 downloads one, for the reason given under [Quarto pin](#quarto-pin).
 Bump it deliberately.
+
+#### Daily lockfile audit
+
+The `audit.yaml` workflow audits the lockfile of each caller every day, with `npm audit --package-lock-only --audit-level=high`.
+The audit checks the versions in the lockfile against the advisories that the npm registry serves, and installs nothing.
+An advisory can be published after a version entered a lockfile, and a check that runs with each pull request sees it only at the next one.
+Dependabot alerts read only the default branch, and the callers hold their lockfiles on `js-state`.
+
+The callers are the public repositories of the organisation whose workflows on `js-state` or `main` set `typescript-dir`.
+So a repository joins the audit when it turns the job on, without an edit to this repository.
+The lockfile of a caller is the `package-lock.json` in its `typescript-dir`.
+The level is `high`, because `critical` would let through the compromised debug 4.4.2, which [its advisory](https://github.com/advisories/GHSA-4x49-vf9v-38px) rates high.
+
+An advisory of high or critical severity fails the run.
+The job summary lists it with the repository, the branch, the package and its version.
+A lockfile that the workflow cannot download or audit fails the run too, and so does finding no caller at all.
+GitHub sends the notification of a failed scheduled run to whoever last changed the workflow's schedule ([docs](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule)).
 
 ### Prebuilt image
 

@@ -7,11 +7,13 @@ on:
     branches: [main]
     paths:
       - '.github/actions/**'
+      - '.github/audit/**'
       - '.github/image/**'
   pull_request:
     branches: [main]
     paths:
       - '.github/actions/**'
+      - '.github/audit/**'
       - '.github/image/**'
 
 jobs:
