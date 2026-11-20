@@ -1057,6 +1057,9 @@ that directory. The scripts are the package's own, so the job assumes
 their names and nothing of the tools behind them. Each runs once
 `npm ci` has succeeded, so one run reports every gate that fails.
 
+Only the steps that install the R dependencies get the token in `BLOCKR_PAT`.
+The steps that run npm and the package's scripts run code from every package in the lockfile, so they run without it.
+
 R CMD check and CRAN run no Node, so a package that builds its modules
 commits what the build writes to `inst/`. The job fails when the build
 leaves `inst/` other than committed, and names the files it changed,

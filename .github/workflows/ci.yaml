@@ -713,6 +713,12 @@ jobs:
   # Each script runs once npm ci has succeeded, so one run reports every
   # gate that fails.  Node is pinned to the 24 LTS line, which the runner
   # image caches, so setup-node downloads nothing; bump it deliberately.
+  #
+  # Only the steps that install the R dependencies get GITHUB_PAT.
+  # With it, pak resolves and downloads the dependencies hosted on GitHub.
+  # The later steps run npm and the package's scripts,
+  # and through them the code of every package in the lockfile.
+  # If the job set the token for every step, any of that code could read it.
 
   typescript:
 
@@ -723,9 +729,6 @@ jobs:
     container: ${{ inputs.image && format('ghcr.io/bristolmyerssquibb/blockr.ci:{0}', inputs.r-version || 'release') || '' }}
 
     timeout-minutes: 60
-
-    env:
-      GITHUB_PAT: ${{ secrets.BLOCKR_PAT || github.token }}
 
     defaults:
       run:
@@ -742,12 +745,16 @@ jobs:
 
       - uses: r-lib/actions/setup-r-dependencies@v2
         if: ${{ !inputs.image }}
+        env:
+          GITHUB_PAT: ${{ secrets.BLOCKR_PAT || github.token }}
         with:
           dependencies: '"hard"'
           quarto-version: ${{ env.QUARTO_VERSION }}
 
       - uses: $/.github/actions/install-deps
         if: ${{ inputs.image }}
+        env:
+          GITHUB_PAT: ${{ secrets.BLOCKR_PAT || github.token }}
         with:
           dependencies: '"hard"'
 
