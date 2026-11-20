@@ -4,8 +4,9 @@ description: >
   inside the image that image.yaml builds, in place of
   setup-r-dependencies.  It resolves them with pak, asks dpkg which of
   their system packages the image lacks, and lets pak call apt only for
-  those.  The inputs are the ones of setup-r-dependencies that ci.yaml
-  passes, with the same meaning.
+  those.
+  The inputs are the ones of setup-r-dependencies that the workflows here
+  pass, with the same meaning.
 
 inputs:
 

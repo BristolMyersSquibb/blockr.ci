@@ -40,6 +40,18 @@
 # informational outcome to the pull request as one comment once the last
 # of those legs finishes, which can be after the merge.
 #
+# A caller that sets `image: true` runs the legs of both tiers in the
+# image that image.yaml builds every day, the one tagged release.
+# The image holds R, the tools the legs use, and the system and R
+# packages of the repos it is built for.
+# The legs then skip setup-r, setup-pandoc, the Quarto steps and
+# setup-r-dependencies.
+# In their place, the install-deps action installs only what the image
+# lacks, and calls apt only for a system package that is missing.
+# The matrix, revdep-all and report jobs install no R, so they run as
+# before.
+# See image.yaml for why.
+#
 # Every job sets `timeout-minutes: 60` — see ci.yaml for why.  An hour
 # clears the observed revdep runtime (5-7 min per downstream package) by
 # a wide margin.
@@ -91,6 +103,19 @@ on:
           `revdep-test-upstream` is set.
         type: string
         default: ''
+        required: false
+
+      image:
+        description: >
+          Run the legs of both tiers in the image that image.yaml builds,
+          which holds R, their tools, and the system and R packages of the
+          repos it is built for.
+          The legs take the image of release, the R version they also run
+          on without the image.
+          The matrix, revdep-all and report jobs are unaffected.
+          Default false runs every job without the image.
+        type: boolean
+        default: false
         required: false
 
       revdep-packages:
@@ -246,8 +271,8 @@ jobs:
 
   # ── Reverse-dependency checks ────────────────────────────────────────
   #
-  # The strict tier.  Its env and steps carry YAML anchors, which
-  # `revdep-info` below repeats as aliases, so both tiers check a
+  # The strict tier.  Its container, env and steps carry YAML anchors,
+  # which `revdep-info` below repeats as aliases, so both tiers check a
   # downstream with the same steps rather than with two copies kept in
   # step by hand.
 
@@ -258,6 +283,8 @@ jobs:
     if: needs.matrix.outputs.has-strict == 'true'
 
     runs-on: ubuntu-latest
+
+    container: &revdep-container ${{ inputs.image && 'ghcr.io/bristolmyerssquibb/blockr.ci:release' || '' }}
 
     timeout-minutes: 60
 
@@ -279,6 +306,7 @@ jobs:
           persist-credentials: false
 
       - uses: r-lib/actions/setup-r@v2
+        if: ${{ !inputs.image }}
         with:
           use-public-rspm: true
 
@@ -307,14 +335,20 @@ jobs:
           persist-credentials: false
 
       - uses: r-lib/actions/setup-pandoc@v2
+        if: ${{ !inputs.image }}
 
       # Retried once: this is the only Quarto install the workflows own
       # outright (ci.yaml's are nested inside setup-r-dependencies and
       # can't be wrapped from here), and it gates the merge queue, where
       # a failure ejects the PR rather than just reddening a check.  A
       # `uses:` step can't be retried in place, hence the second copy.
+      # The image holds Quarto at the pin of ci.yaml, so a leg in the image
+      # skips the first copy.
+      # The second then skips as well, since it runs only when the first
+      # fails.
       - uses: quarto-dev/quarto-actions/setup@v2
         id: quarto
+        if: ${{ !inputs.image }}
         continue-on-error: true
         with:
           version: ${{ env.QUARTO_VERSION }}
@@ -342,11 +376,24 @@ jobs:
       # like; those of pkg come along, and revdep's tests should pass with or
       # without them. (`NA` here doesn't have the desired effect: pkgdepends
       # treats it as "soft" applied to both direct and indirect.)
+      #
+      # The `local::` ref is relative to revdep, the working directory in
+      # which both actions below resolve and install.
+      # In the image, the job runs in a container that mounts the workspace
+      # at /__w.
+      # There, github.workspace can still give the path on the runner,
+      # /home/runner/work/..., and the container holds nothing at that path.
+      # The runner rewrites the path only at the start of an env var's
+      # value, and the ref follows other refs in extra-packages.
+      #
+      # In the image, install-deps takes the place of setup-r-dependencies,
+      # with the same refs, working directory and dependency types.
       - uses: r-lib/actions/setup-r-dependencies@v2
+        if: ${{ !inputs.image }}
         with:
           extra-packages: |
             ${{ steps.deps.outputs.extra-packages }}
-            local::${{ github.workspace }}/pkg
+            local::../pkg
           working-directory: revdep
           dependencies: 'c("all", "hard")'
           quarto-version: ${{ env.QUARTO_VERSION }}
@@ -354,6 +401,15 @@ jobs:
           # pak's resolver doesn't remove packages it no longer pulls in, so
           # those caches would carry leftovers.
           cache-version: 2
+
+      - uses: $/.github/actions/install-deps
+        if: ${{ inputs.image }}
+        with:
+          extra-packages: |
+            ${{ steps.deps.outputs.extra-packages }}
+            local::../pkg
+          working-directory: revdep
+          dependencies: 'c("all", "hard")'
 
       - uses: r-lib/actions/check-r-package@v2
         with:
@@ -483,6 +539,8 @@ jobs:
       needs.matrix.outputs.has-info == 'true'
 
     runs-on: ubuntu-latest
+
+    container: *revdep-container
 
     timeout-minutes: 60
 

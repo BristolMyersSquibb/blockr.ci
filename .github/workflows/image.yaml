@@ -1,5 +1,6 @@
-# Builds the image that the Ubuntu jobs of ci.yaml run in when a caller
-# sets `image: true`, and pushes it to ghcr.io/bristolmyerssquibb/blockr.ci.
+# Builds the image that the Ubuntu jobs of the workflows here run in when a
+# caller sets `image: true`, and pushes it to
+# ghcr.io/bristolmyerssquibb/blockr.ci.
 #
 # Without it, each of those jobs installs R, its tools and its system
 # packages with apt from an Ubuntu archive mirror.  From 14 to 19
@@ -33,8 +34,9 @@
 # The plan job works out what the image holds, every time it is built.
 # The repos are the public repos of ORG whose branch BRANCH holds a
 # DESCRIPTION, so a repo joins with its branch and leaves without it.
-# The extra packages and the Config/Needs fields are the ones that ci.yaml
-# installs and passes, together with FIXED_PACKAGES.
+# The extra packages and the Config/Needs fields are the ones that the
+# workflows with a job in the image install and pass, together with
+# FIXED_PACKAGES.
 # See .github/image/packages.sh.
 #
 # Before an image is pushed, it resolves the dependencies of each of those
@@ -101,7 +103,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           ORG: BristolMyersSquibb
           BRANCH: js-state
-          CI_YAML: .github/workflows/ci.yaml
+          WORKFLOW_DIR: .github/workflows
           # The packages that the steps of blockr.ci install themselves:
           # parse-deps installs pkgdepends, the docs job roxygen2 at its
           # pin, and install-deps sessioninfo.
@@ -187,13 +189,17 @@ jobs:
             pandoc --version | head -n 1
             google-chrome --version
             git --version
-            gh --version | head -n 1'
+            gh --version | head -n 1
+            rsync --version | head -n 1
+            echo "Rules for system requirements at $(cat "$R_PKG_CACHE_DIR/R/pkgcache/sysreqs/HEAD")"'
         env:
           R: ${{ matrix.r }}
 
       # Each repo resolves the dependencies of its smoke job, as
       # install-deps does, and the image must hold all their system
       # packages.  The install then shows how much a job adds on top.
+      # The clone belongs to the user of the runner, while git in the image
+      # runs as root, as in a job, so git must accept the clone as safe.
       - name: Test the image on each repo
         run: |
           for ref in $REPOS; do
@@ -213,6 +219,7 @@ jobs:
               -v "$dir:/src" -w /src \
               "$IMAGE:$R" bash -c '
                 set -euo pipefail
+                git status --porcelain > /dev/null
                 Rscript /action/resolve.R
                 bash /action/check-sysreqs.sh
                 grep -qx PKG_SYSREQS=false /tmp/github_env

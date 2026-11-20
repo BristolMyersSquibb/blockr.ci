@@ -412,11 +412,9 @@ caller's `if:` is the one `release.yaml` uses, and no wider, for the
 reason given under
 [`release.yaml`](#releaseyaml--cran-pre-submission-checks-optional).
 
-There are no inputs. Everything is derived from the repository, and
-`BLOCKR_PAT` falls back to `GITHUB_TOKEN`, so the workflow is callable
-from a repository outside the fleet that holds no secrets at all —
-`nbenn/typedjson` does not use `ci.yaml` and is the package most in need
-of this gate.
+The one input, `image`, is optional and off by default, so a caller sets nothing.
+Everything checked is derived from the repository, and `BLOCKR_PAT` falls back to `GITHUB_TOKEN`.
+So the workflow is callable from a repository outside the fleet that holds no secrets at all — `nbenn/typedjson` does not use `ci.yaml` and is the package most in need of this gate.
 
 The `pull-requests: write` grant is what lets the report job write its
 comment. Without it the job warns and carries on, since the same detail
@@ -942,6 +940,7 @@ release.
 |---|---|---|---|
 | `revdep-strict` | newline-separated list | `''` | Downstream packages to reverse-dep check, each as `owner/repo`, or as `owner/repo@branch` to check that branch. See [A branch of a downstream](#a-branch-of-a-downstream). A failing leg fails `revdep-all`, so these gate the merge. |
 | `revdep-info` | newline-separated list | `''` | Downstream packages checked the same way, in the same form, without gating the merge, once `revdep-all` has reported and four at a time at most. Their outcome goes to the pull request as one comment. See [Informational downstreams](#informational-downstreams). |
+| `image` | boolean | `false` | Run the legs of both tiers in the image that `image.yaml` builds every day, the one tagged `release`, rather than installing R, their tools and their system packages while they run. See [Prebuilt image](#prebuilt-image). |
 | `revdep-packages` | newline-separated list | `''` | DEPRECATED — renamed `revdep-strict`. Still added to it, with a warning, until a later release removes it. |
 
 ### `release.yaml`
@@ -950,17 +949,23 @@ release.
 |---|---|---|---|
 | `release-platforms` | newline-separated list | `''` | R-hub platforms to check in, named as R-hub names them — `clang-asan`, `valgrind`, `rchk`, `nosuggests`, `m1-san`, … Commas work too. Container and virtual-machine platforms both resolve; an unknown name fails the matrix. Empty skips the matrix and reports success. See [Choosing the platform list](#choosing-the-platform-list). |
 | `recheck-which` | string | `''` | Depth of the CRAN-style reverse dependency check run via `r-devel/recheck`: `strong` (Depends, Imports, LinkingTo) or `most` (those plus Suggests). Empty disables it. When set, the check still runs only if the package actually has CRAN dependents. Never gates — see [Reverse dependencies before a CRAN submission](#reverse-dependencies-before-a-cran-submission). |
+| `image` | boolean | `false` | Run the `revdeps` job, which counts the reverse dependencies on CRAN, in the image that `image.yaml` builds every day, the one tagged `release`. The flavour checks and `recheck` are unaffected. See [Prebuilt image](#prebuilt-image). |
 
 ### `pkgdown.yaml`
 
 | Input | Type | Default | Purpose |
 |---|---|---|---|
 | `deploy` | string | `branch` | How the built site reaches GitHub Pages. With `branch`, the job pushes `docs/` to the `gh-pages` branch, and the caller grants `contents: write`. With `actions`, a second job publishes `docs/` with `actions/deploy-pages`; the caller grants `contents: read`, `pages: write` and `id-token: write`, and the Pages source must be "GitHub Actions". See [`pkgdown.yaml`](#pkgdownyaml--site-deploy-on-merge-to-main). |
+| `image` | boolean | `false` | Run the `pkgdown` job in the image that `image.yaml` builds every day, the one tagged `release`, rather than installing R, its tools and its system packages while it runs. The `deploy` job is unaffected. See [Prebuilt image](#prebuilt-image). |
 
 ### `release-gate.yaml`
 
-No inputs. The checks are derived from the repository, which is what
-keeps the workflow callable from outside the fleet.
+| Input | Type | Default | Purpose |
+|---|---|---|---|
+| `image` | boolean | `false` | Run the `gate`, `docs` and `soft` jobs in the image that `image.yaml` builds every day, the one tagged `release`, rather than installing R, their tools and their system packages while they run. See [Prebuilt image](#prebuilt-image). |
+
+The checks are derived from the repository, so a caller needs to set nothing.
+That keeps the workflow callable from outside the fleet.
 
 ### `connect-deploy.yaml`
 
@@ -1009,7 +1014,7 @@ jobs:
 - **Mechanical release checks** — the checklist half of a release, gated on every push to a labelled release PR instead of ticked by hand: three-component version, no dev-version pins, no `Remotes`, `NEWS.md` shape, real vignette titles, a `\value` on every documented function, and a README current with its source. Reports spelling, URL and `--as-cran` findings alongside without gating on them — see [`release-gate.yaml`](#release-gateyaml--mechanical-release-checks-optional)
 - **pkgdown deploy** — site build + deploy to GitHub Pages on push to `main`, via the `gh-pages` branch or, with `deploy: actions`, straight from Actions
 - **Superseded runs cancelled** — a push to a pull request cancels the `ci`, `release` and `release-gate` runs still checking the commit it replaces, and pkgdown builds take turns so the newest lands last — see [Superseded runs](#superseded-runs)
-- **Prebuilt image** — with `image: true`, the Ubuntu jobs run in an image built every day, which holds R, their tools and the system and R packages of the repos it is built for, so that they call apt only for a system package it lacks — see [Prebuilt image](#prebuilt-image)
+- **Prebuilt image** — with `image: true`, the Ubuntu jobs of `ci.yaml`, the legs of `revdep.yaml`, the site build of `pkgdown.yaml`, the checks of `release-gate.yaml` and the `revdeps` job of `release.yaml` run in an image built every day, which holds R, their tools and the system and R packages of the repos it is built for, so that they call apt only for a system package it lacks — see [Prebuilt image](#prebuilt-image)
 - **Pinned Quarto** — jobs that install Quarto (any package holding a `.qmd`) pass an explicit version instead of the action's `release` default, which resolves the version through an unretried `curl` to quarto.org and has twice killed a green run — see [Quarto pin](#quarto-pin)
 - **Hard-dependency resolution on `lint` and `docs`** — neither job runs the suite or builds a site, so both skip the `Suggests` closure and the 125 MB Chromium that a `chromote` / `shinytest2` suggestion drags in — see [Suggests on the lint and docs jobs](#suggests-on-the-lint-and-docs-jobs)
 - **parse-deps** — pin a downstream revdep ref via a `` ```deps `` block in the PR body, read fresh when the merge queue runs revdep
@@ -1097,13 +1102,14 @@ jobs:
       image: true
 ```
 
-The image holds R, Pandoc, Quarto at the [pinned version](#quarto-pin), Google Chrome, qpdf, ghostscript, devscripts, git and the GitHub CLI.
-It also holds the R packages of the repos it is built for, together with the packages that `ci.yaml` adds, and the system packages of all of these.
+The image holds R, Pandoc, Quarto at the [pinned version](#quarto-pin), Google Chrome, qpdf, ghostscript, devscripts, git, rsync and the GitHub CLI.
+It also holds the R packages of the repos it is built for, together with the packages that the workflows with a job in the image add, and the system packages of all of these.
 The build works out both lists each time it runs.
 The repos are the public repos of the organisation whose `js-state` branch holds a DESCRIPTION, so a repo joins with that branch and leaves without it.
 Only public repos count, because the build installs the package of each repo into the image, and the image is public.
-The extra packages are the `any::` refs and the `needs:` values of `ci.yaml`, together with pkgdepends, roxygen2 and sessioninfo, which steps of blockr.ci install themselves.
-When the build finds no repo, it fails, and the image of the day before stays.
+The extra packages are the `any::` refs and the `needs:` values of those workflows, together with pkgdepends, roxygen2 and sessioninfo, which steps of blockr.ci install themselves.
+A workflow counts when one of its `container:` lines names the image, so a workflow that takes the input joins the list without an edit.
+When the build finds no repo, or no such workflow, it fails, and the image of the day before stays.
 There is one image per R version, tagged `release`, `oldrel-1` and `devel`.
 The pull request jobs take the image of `r-version`, so `r-version` must be empty, `release`, `oldrel-1` or `devel`.
 The `check` matrix runs its oldrel-1 and R-devel legs in the images of those versions.
@@ -1115,6 +1121,31 @@ No pull request waits for that build.
 In that image, the R-devel leg builds only what the image lacks.
 So the leg runs at the merge queue again, as it did before [#95](https://github.com/BristolMyersSquibb/blockr.ci/issues/95).
 The leg then checks against R-devel as of the build, which is at most a day old ([#106](https://github.com/BristolMyersSquibb/blockr.ci/issues/106)).
+
+The `revdep.yaml` workflow takes the same input.
+With it, the legs of both tiers run in the image tagged `release`, the R version they also run on without the image.
+Besides the steps that the next paragraph names, a leg in the image skips its two Quarto steps, since the image holds Quarto at the pinned version.
+The other jobs of the workflow, `matrix`, `revdep-all` and `report`, install no R, so they run as before.
+
+```yaml
+  revdep:
+    if: github.event_name == 'merge_group'
+    uses: BristolMyersSquibb/blockr.ci/.github/workflows/revdep.yaml@main
+    with:
+      revdep-strict: |
+        BristolMyersSquibb/blockr.dock@js-state
+      image: true
+    secrets:
+      BLOCKR_PAT: ${{ secrets.BLOCKR_PAT }}
+```
+
+The `pkgdown.yaml`, `release-gate.yaml` and `release.yaml` workflows take the input too.
+In `pkgdown.yaml`, it runs the `pkgdown` job in the image tagged `release`.
+That job builds the site, and in the `branch` mode it pushes the site as well.
+In `release-gate.yaml`, it runs the `gate`, `docs` and `soft` jobs in that image.
+In `release.yaml`, it runs the `revdeps` job in that image.
+That job counts the reverse dependencies on CRAN.
+Their other jobs install no R, or run on platforms of their own, so they run as before.
 
 In the image, a job skips `setup-r`, `setup-pandoc` and `setup-r-dependencies`, and the `install-deps` action takes their place:
 
@@ -1128,6 +1159,12 @@ Then pak no longer looks the system packages up, so its log lists them all as mi
 Left on, pak would run `apt-get update`, and on CI it would reinstall every system package that the lockfile names, installed or not.
 When some are missing, the job warns and lets pak install those, and only those.
 So a repo that adds a dependency with a new system package keeps working, and its jobs install that package with apt until the image holds it.
+
+The image also keeps the rules with which pak maps the system requirements of R packages to system packages, as the build fetched them.
+It sets `R_PKG_CACHE_DIR`, so that pak finds the rules in a job, which runs with a `HOME` of its own.
+Within a day of the build, pak uses them without a refresh.
+When a refresh fails, pak falls back to them rather than to the older copy that it bundles, which can name a system package that the image lacks.
+The build fails when pak kept no rules.
 
 Before it pushes an image, `image.yaml` resolves the dependencies of each of those repos in that image, and fails when any of their system packages is missing.
 It keeps the six newest untagged builds, so a job can still be pointed at one of them by its digest.

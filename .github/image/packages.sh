@@ -8,12 +8,16 @@
 # left out as well.  Finding none is an error, so that a failed query
 # leaves the image of the day before in place.
 #
-# The extra packages are the any:: refs that CI_YAML installs, together
-# with FIXED_PACKAGES, which the steps of blockr.ci install themselves.
-# The needs are the values that CI_YAML passes as `needs:` to
+# The extra packages and the needs come from the workflows in WORKFLOW_DIR
+# that run a job in IMAGE, the ones with a `container:` line that names it.
+# The extra packages are the any:: refs that those workflows install,
+# together with FIXED_PACKAGES, which the steps of blockr.ci install
+# themselves.
+# The needs are the values that those workflows pass as `needs:` to
 # setup-r-dependencies or install-deps.
+# Finding no such workflow is an error too.
 #
-# Env vars: ORG, BRANCH, CI_YAML, FIXED_PACKAGES, GITHUB_OUTPUT
+# Env vars: ORG, BRANCH, WORKFLOW_DIR, IMAGE, FIXED_PACKAGES, GITHUB_OUTPUT
 # Outputs, each separated by spaces: repos, as owner/repo@branch,
 # packages, the pak refs to install, and needs.
 
@@ -47,12 +51,21 @@ if [ -z "$repos" ]; then
   exit 1
 fi
 
-extra=$(grep -oE 'any::[A-Za-z0-9.]+' "$CI_YAML" | sort -u)
+mapfile -t workflows < <(grep -lE "^[[:space:]]*container:.*${IMAGE//./\\.}" "$WORKFLOW_DIR"/*.yaml || true)
+
+if [ "${#workflows[@]}" -eq 0 ]; then
+  echo "::error::Found no workflow in $WORKFLOW_DIR that runs a job in $IMAGE."
+  exit 1
+fi
+
+extra=$(grep -ohE 'any::[A-Za-z0-9.]+' "${workflows[@]}" | sort -u)
 
 # A needs: line counts only inside a step that uses setup-r-dependencies
 # or install-deps, and not as the needs: of a job.  A step runs from its
 # "- " line to the next line that is indented no deeper.
+# Each workflow starts outside any step.
 needs=$(awk '
+  FNR == 1 { in_step = 0; step_indent = 0 }
   NF == 0 { next }
   { match($0, /^ */); indent = RLENGTH }
   /^[[:space:]]*- / {
@@ -63,13 +76,14 @@ needs=$(awk '
   indent <= step_indent { in_step = 0 }
   /^[[:space:]]+uses:.*(setup-r-dependencies|install-deps)/ { in_step = 1 }
   in_step && /^[[:space:]]+needs:[[:space:]]*[A-Za-z]/ { print $2 }
-' "$CI_YAML" | sort -u)
+' "${workflows[@]}" | sort -u)
 
 packages=$(printf '%s\n' $repos $extra $FIXED_PACKAGES | sed '/^$/d' | awk '!seen[$0]++')
 
 join() { printf '%s\n' "$@" | sed '/^$/d' | paste -sd ' ' -; }
 
 echo "The image holds these repos: $(join $repos)"
+echo "It takes its extra packages from these workflows: $(join "${workflows[@]##*/}")"
 echo "It adds these packages: $(join $extra $FIXED_PACKAGES)"
 echo "And installs these Config/Needs fields: $(join $needs)"
 

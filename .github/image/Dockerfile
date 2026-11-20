@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
-# The image that the Ubuntu jobs of ci.yaml run in, for a caller that sets
-# `image: true`.
+# The image that the Ubuntu jobs of the workflows here run in, for a caller
+# that sets `image: true`.
 # The image workflow builds it every day, once per R version, and pushes it
 # to ghcr.io/bristolmyerssquibb/blockr.ci.
 # It holds what those jobs would otherwise fetch while they run: R, the
@@ -37,11 +37,18 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # The checkout needs git, and R CMD check --as-cran needs qpdf,
 # ghostscript and the checkbashisms of devscripts.
 # The install-deps action reads its lockfile with jq.
+# The deploy step of pkgdown.yaml copies the site with rsync.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       ca-certificates curl devscripts file ghostscript git gnupg jq \
-      qpdf tzdata unzip xz-utils zip \
+      qpdf rsync tzdata unzip xz-utils zip \
  && rm -rf /var/lib/apt/lists/*
+
+# A job runs as root, while the user of the runner owns the checkout.
+# Then git refuses the repository, unless its directory counts as safe.
+# The checkout action marks it safe only for the duration of its own step,
+# so the image marks every directory safe, for every user.
+RUN git config --system --add safe.directory '*'
 
 # The GitHub CLI, with which parse-deps reads the pull request body.
 RUN curl -fsSL -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
@@ -87,9 +94,22 @@ RUN printf '%s\n' \
       >> "/opt/R/${R_VERSION}/lib/R/etc/Rprofile.site" \
  && Rscript -e 'install.packages("pak", repos = sprintf("https://r-lib.github.io/p/pak/stable/%s/%s/%s", .Platform$pkgType, R.Version()$os, R.Version()$arch))'
 
+# The cache of pak sits under R_PKG_CACHE_DIR rather than under HOME,
+# because a job sets HOME to /github/home.
+# In it, pak keeps the rules that map the system requirements of R packages
+# to system packages.
+# So a job finds the rules of the build, and within a day of the build, pak
+# uses them without a refresh.
+# When a refresh fails, pak falls back to them rather than to the older copy
+# that it bundles.
+ENV R_PKG_CACHE_DIR=/var/cache
+
 # The R packages that PACKAGES resolves to, with their system packages.
 # The token only raises the GitHub rate limit, and stays out of the image.
+# The refresh of the rules gets the minute that pak gives it on CI.
+# Of the cache, only the rules stay.
 COPY install.R /tmp/install.R
 RUN --mount=type=secret,id=GITHUB_PAT,env=GITHUB_PAT \
-    PKG_SYSREQS=true Rscript /tmp/install.R \
+    PKG_SYSREQS=true PKG_SYSREQS_DB_UPDATE_TIMEOUT=60s Rscript /tmp/install.R \
+ && find "$R_PKG_CACHE_DIR/R/pkgcache" -mindepth 1 -maxdepth 1 ! -name sysreqs -exec rm -rf {} + \
  && rm -rf /tmp/install.R /var/lib/apt/lists/* /root/.cache/R

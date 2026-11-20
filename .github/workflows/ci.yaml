@@ -595,10 +595,17 @@ jobs:
             ))
           }
 
+      # The step reads the temp directory from the shell's RUNNER_TEMP, as
+      # the step above does in R.
+      # In the image, the job runs in a container.
+      # There, the runner.temp expression can give the path on the runner,
+      # and the container mounts that directory at /__w/_temp.
+      # The upload below can keep the expression, because the runner
+      # rewrites a path at the start of an action's input.
       - name: Show testthat output
         if: always()
         run: |
-          find ${{ runner.temp }}/package -name 'testthat.Rout*' -exec cat '{}' \; || true
+          find "$RUNNER_TEMP/package" -name 'testthat.Rout*' -exec cat '{}' \; || true
         shell: bash
 
       - name: Upload test results
@@ -691,10 +698,13 @@ jobs:
         run: roxygen2::roxygenise()
         shell: Rscript {0}
 
+      # The status goes into a variable first, so that a failing git fails
+      # the step rather than reading as a clean tree.
       - name: Fail on stale man/ or NAMESPACE
         if: steps.pin.outputs.run == 'true'
         run: |
-          if [ -z "$(git status --porcelain)" ]; then
+          status=$(git status --porcelain)
+          if [ -z "$status" ]; then
             echo "Generated documentation is up to date."
             exit 0
           fi
@@ -790,11 +800,13 @@ jobs:
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: npm run build --if-present
 
+      # The status goes into a variable first, as in the docs job.
       - name: Fail on stale inst/
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         working-directory: ${{ github.workspace }}
         run: |
-          if [ -z "$(git status --porcelain -- inst)" ]; then
+          status=$(git status --porcelain -- inst)
+          if [ -z "$status" ]; then
             echo "Nothing in inst/ changed."
             exit 0
           fi
