@@ -12,9 +12,11 @@ FROM ubuntu:26.04
 LABEL org.opencontainers.image.source="https://github.com/BristolMyersSquibb/blockr.ci"
 LABEL org.opencontainers.image.description="R, tools and dependencies for the Ubuntu jobs of blockr.ci"
 
-# The exact R version, such as 4.6.2, the Quarto pin of ci.yaml, the pak
-# refs to install and the Config/Needs fields to install as well, both
-# separated by spaces.
+# The R version as Posit names its build of R, the Quarto pin of ci.yaml,
+# the pak refs to install and the Config/Needs fields to install as well.
+# Posit names a build of R by its exact version, such as 4.6.2, and its
+# daily build of R-devel "devel".
+# The refs and the fields are each separated by spaces.
 ARG R_VERSION
 ARG QUARTO_VERSION
 ARG PACKAGES
@@ -75,6 +77,8 @@ RUN curl -fsSL -o /tmp/r.deb \
 
 # The repositories and the user agent that setup-r writes to its R profile.
 # P3M serves binaries only to an agent that names the R version.
+# It has none for R-devel on Ubuntu 26.04, so the image of devel builds its
+# R packages from source.
 RUN printf '%s\n' \
       'options(' \
       '  repos = c(RSPM = Sys.getenv("RSPM"), CRAN = "https://cran.rstudio.com"),' \
