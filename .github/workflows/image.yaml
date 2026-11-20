@@ -171,7 +171,8 @@ jobs:
             pandoc --version | head -n 1
             google-chrome --version
             git --version
-            gh --version | head -n 1'
+            gh --version | head -n 1
+            echo "Rules for system requirements at $(cat "$R_PKG_CACHE_DIR/R/pkgcache/sysreqs/HEAD")"'
         env:
           R: ${{ matrix.r }}
 

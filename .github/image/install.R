@@ -28,3 +28,11 @@ pak::pkg_install(
 )
 
 pak::cache_clean()
+
+# A job uses the rules for system requirements that pak fetched here, so
+# the build fails without them.
+rules <- file.path(Sys.getenv("R_PKG_CACHE_DIR"), "R", "pkgcache", "sysreqs")
+
+if (!file.exists(file.path(rules, "HEAD"))) {
+  stop("pak kept no rules for system requirements in ", rules, ".")
+}

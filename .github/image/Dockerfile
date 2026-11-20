@@ -83,9 +83,22 @@ RUN printf '%s\n' \
       >> "/opt/R/${R_VERSION}/lib/R/etc/Rprofile.site" \
  && Rscript -e 'install.packages("pak", repos = sprintf("https://r-lib.github.io/p/pak/stable/%s/%s/%s", .Platform$pkgType, R.Version()$os, R.Version()$arch))'
 
+# The cache of pak sits under R_PKG_CACHE_DIR rather than under HOME,
+# because a job sets HOME to /github/home.
+# In it, pak keeps the rules that map the system requirements of R packages
+# to system packages.
+# So a job finds the rules of the build, and within a day of the build, pak
+# uses them without a refresh.
+# When a refresh fails, pak falls back to them rather than to the older copy
+# that it bundles.
+ENV R_PKG_CACHE_DIR=/var/cache
+
 # The R packages that PACKAGES resolves to, with their system packages.
 # The token only raises the GitHub rate limit, and stays out of the image.
+# The refresh of the rules gets the minute that pak gives it on CI.
+# Of the cache, only the rules stay.
 COPY install.R /tmp/install.R
 RUN --mount=type=secret,id=GITHUB_PAT,env=GITHUB_PAT \
-    PKG_SYSREQS=true Rscript /tmp/install.R \
+    PKG_SYSREQS=true PKG_SYSREQS_DB_UPDATE_TIMEOUT=60s Rscript /tmp/install.R \
+ && find "$R_PKG_CACHE_DIR/R/pkgcache" -mindepth 1 -maxdepth 1 ! -name sysreqs -exec rm -rf {} + \
  && rm -rf /tmp/install.R /var/lib/apt/lists/* /root/.cache/R

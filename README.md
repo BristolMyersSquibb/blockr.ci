@@ -1132,6 +1132,12 @@ Left on, pak would run `apt-get update`, and on CI it would reinstall every syst
 When some are missing, the job warns and lets pak install those, and only those.
 So a repo that adds a dependency with a new system package keeps working, and its jobs install that package with apt until the image holds it.
 
+The image also keeps the rules with which pak maps the system requirements of R packages to system packages, as the build fetched them.
+It sets `R_PKG_CACHE_DIR`, so that pak finds the rules in a job, which runs with a `HOME` of its own.
+Within a day of the build, pak uses them without a refresh.
+When a refresh fails, pak falls back to them rather than to the older copy that it bundles, which can name a system package that the image lacks.
+The build fails when pak kept no rules.
+
 Before it pushes an image, `image.yaml` resolves the dependencies of each of those repos in that image, and fails when any of their system packages is missing.
 It keeps the six newest untagged builds, so a job can still be pointed at one of them by its digest.
 
