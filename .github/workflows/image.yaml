@@ -179,6 +179,8 @@ jobs:
       # Each repo resolves the dependencies of its smoke job, as
       # install-deps does, and the image must hold all their system
       # packages.  The install then shows how much a job adds on top.
+      # The clone belongs to the user of the runner, while git in the image
+      # runs as root, as in a job, so git must accept the clone as safe.
       - name: Test the image on each repo
         run: |
           for ref in $REPOS; do
@@ -198,6 +200,7 @@ jobs:
               -v "$dir:/src" -w /src \
               "$IMAGE:$R" bash -c '
                 set -euo pipefail
+                git status --porcelain > /dev/null
                 Rscript /action/resolve.R
                 bash /action/check-sysreqs.sh
                 grep -qx PKG_SYSREQS=false /tmp/github_env

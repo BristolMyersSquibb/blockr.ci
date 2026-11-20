@@ -41,6 +41,12 @@ RUN apt-get update \
       qpdf tzdata unzip xz-utils zip \
  && rm -rf /var/lib/apt/lists/*
 
+# A job runs as root, while the user of the runner owns the checkout.
+# Then git refuses the repository, unless its directory counts as safe.
+# The checkout action marks it safe only for the duration of its own step,
+# so the image marks every directory safe, for every user.
+RUN git config --system --add safe.directory '*'
+
 # The GitHub CLI, with which parse-deps reads the pull request body.
 RUN curl -fsSL -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
       https://cli.github.com/packages/githubcli-archive-keyring.gpg \
