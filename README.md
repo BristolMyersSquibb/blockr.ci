@@ -1103,8 +1103,8 @@ The `check` matrix runs its oldrel-1 leg in the image.
 Its macOS, Windows and R-devel legs run as before: a job container needs a Linux runner, and no image holds R-devel.
 
 The `revdep.yaml` workflow takes the same input.
-With it, the legs of both tiers run in the image tagged `release`, the R version they run on without it.
-In the image, a leg also skips its two Quarto steps, since the image holds Quarto at the pinned version.
+With it, the legs of both tiers run in the image tagged `release`, the R version they also run on without the image.
+Besides the steps that the next paragraph names, a leg in the image skips its two Quarto steps, since the image holds Quarto at the pinned version.
 The other jobs of the workflow, `matrix`, `revdep-all` and `report`, install no R, so they run as before.
 
 ```yaml

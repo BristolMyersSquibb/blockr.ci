@@ -110,8 +110,8 @@ on:
           Run the legs of both tiers in the image that image.yaml builds,
           which holds R, their tools, and the system and R packages of the
           repos it is built for.
-          The legs take the image of release, the R version they run on
-          without it.
+          The legs take the image of release, the R version they also run
+          on without the image.
           The matrix, revdep-all and report jobs are unaffected.
           Default false runs every job without the image.
         type: boolean
