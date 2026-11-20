@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
-# The image that the Ubuntu jobs of ci.yaml run in, for a caller that sets
-# `image: true`.
+# The image that the Ubuntu jobs of ci.yaml and the legs of revdep.yaml
+# run in, for a caller that sets `image: true`.
 # The image workflow builds it every day, once per R version, and pushes it
 # to ghcr.io/bristolmyerssquibb/blockr.ci.
 # It holds what those jobs would otherwise fetch while they run: R, the

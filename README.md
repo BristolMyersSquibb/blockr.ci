@@ -937,6 +937,7 @@ release.
 |---|---|---|---|
 | `revdep-strict` | newline-separated list | `''` | Downstream packages to reverse-dep check, each as `owner/repo`, or as `owner/repo@branch` to check that branch. See [A branch of a downstream](#a-branch-of-a-downstream). A failing leg fails `revdep-all`, so these gate the merge. |
 | `revdep-info` | newline-separated list | `''` | Downstream packages checked the same way, in the same form, without gating the merge, once `revdep-all` has reported and four at a time at most. Their outcome goes to the pull request as one comment. See [Informational downstreams](#informational-downstreams). |
+| `image` | boolean | `false` | Run the legs of both tiers in the image that `image.yaml` builds every day, the one tagged `release`, rather than installing R, their tools and their system packages while they run. See [Prebuilt image](#prebuilt-image). |
 | `revdep-packages` | newline-separated list | `''` | DEPRECATED — renamed `revdep-strict`. Still added to it, with a warning, until a later release removes it. |
 
 ### `release.yaml`
@@ -1004,7 +1005,7 @@ jobs:
 - **Mechanical release checks** — the checklist half of a release, gated on every push to a labelled release PR instead of ticked by hand: three-component version, no dev-version pins, no `Remotes`, `NEWS.md` shape, real vignette titles, a `\value` on every documented function, and a README current with its source. Reports spelling, URL and `--as-cran` findings alongside without gating on them — see [`release-gate.yaml`](#release-gateyaml--mechanical-release-checks-optional)
 - **pkgdown deploy** — site build + deploy to GitHub Pages on push to `main`, via the `gh-pages` branch or, with `deploy: actions`, straight from Actions
 - **Superseded runs cancelled** — a push to a pull request cancels the `ci`, `release` and `release-gate` runs still checking the commit it replaces, and pkgdown builds take turns so the newest lands last — see [Superseded runs](#superseded-runs)
-- **Prebuilt image** — with `image: true`, the Ubuntu jobs run in an image built every day, which holds R, their tools and the system and R packages of the repos it is built for, so that they call apt only for a system package it lacks — see [Prebuilt image](#prebuilt-image)
+- **Prebuilt image** — with `image: true`, the Ubuntu jobs of `ci.yaml` and the legs of `revdep.yaml` run in an image built every day, which holds R, their tools and the system and R packages of the repos it is built for, so that they call apt only for a system package it lacks — see [Prebuilt image](#prebuilt-image)
 - **Pinned Quarto** — jobs that install Quarto (any package holding a `.qmd`) pass an explicit version instead of the action's `release` default, which resolves the version through an unretried `curl` to quarto.org and has twice killed a green run — see [Quarto pin](#quarto-pin)
 - **Hard-dependency resolution on `lint` and `docs`** — neither job runs the suite or builds a site, so both skip the `Suggests` closure and the 125 MB Chromium that a `chromote` / `shinytest2` suggestion drags in — see [Suggests on the lint and docs jobs](#suggests-on-the-lint-and-docs-jobs)
 - **parse-deps** — pin a downstream revdep ref via a `` ```deps `` block in the PR body, read fresh when the merge queue runs revdep
@@ -1100,6 +1101,23 @@ There is one image per R version, tagged `release` and `oldrel-1`.
 The pull request jobs take the image of `r-version`, so `r-version` must be empty, `release` or `oldrel-1`.
 The `check` matrix runs its oldrel-1 leg in the image.
 Its macOS, Windows and R-devel legs run as before: a job container needs a Linux runner, and no image holds R-devel.
+
+The `revdep.yaml` workflow takes the same input.
+With it, the legs of both tiers run in the image tagged `release`, the R version they run on without it.
+In the image, a leg also skips its two Quarto steps, since the image holds Quarto at the pinned version.
+The other jobs of the workflow, `matrix`, `revdep-all` and `report`, install no R, so they run as before.
+
+```yaml
+  revdep:
+    if: github.event_name == 'merge_group'
+    uses: BristolMyersSquibb/blockr.ci/.github/workflows/revdep.yaml@main
+    with:
+      revdep-strict: |
+        BristolMyersSquibb/blockr.dock@js-state
+      image: true
+    secrets:
+      BLOCKR_PAT: ${{ secrets.BLOCKR_PAT }}
+```
 
 In the image, a job skips `setup-r`, `setup-pandoc` and `setup-r-dependencies`, and the `install-deps` action takes their place:
 

@@ -1,5 +1,6 @@
-# Builds the image that the Ubuntu jobs of ci.yaml run in when a caller
-# sets `image: true`, and pushes it to ghcr.io/bristolmyerssquibb/blockr.ci.
+# Builds the image that the Ubuntu jobs of ci.yaml and the legs of
+# revdep.yaml run in when a caller sets `image: true`, and pushes it to
+# ghcr.io/bristolmyerssquibb/blockr.ci.
 #
 # Without it, each of those jobs installs R, its tools and its system
 # packages with apt from an Ubuntu archive mirror.  From 14 to 19
