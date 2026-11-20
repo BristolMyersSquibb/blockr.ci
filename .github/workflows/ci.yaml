@@ -590,10 +590,17 @@ jobs:
             ))
           }
 
+      # The step reads the temp directory from the shell's RUNNER_TEMP, as
+      # the step above does in R.
+      # In the image, the job runs in a container.
+      # There, the runner.temp expression can give the path on the runner,
+      # and the container mounts that directory at /__w/_temp.
+      # The upload below can keep the expression, because the runner
+      # rewrites a path at the start of an action's input.
       - name: Show testthat output
         if: always()
         run: |
-          find ${{ runner.temp }}/package -name 'testthat.Rout*' -exec cat '{}' \; || true
+          find "$RUNNER_TEMP/package" -name 'testthat.Rout*' -exec cat '{}' \; || true
         shell: bash
 
       - name: Upload test results
