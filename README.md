@@ -1095,12 +1095,13 @@ jobs:
 ```
 
 The image holds R, Pandoc, Quarto at the [pinned version](#quarto-pin), Google Chrome, qpdf, ghostscript, devscripts, git, rsync and the GitHub CLI.
-It also holds the R packages of the repos it is built for, together with the packages that `ci.yaml` adds, and the system packages of all of these.
+It also holds the R packages of the repos it is built for, together with the packages that the workflows with a job in the image add, and the system packages of all of these.
 The build works out both lists each time it runs.
 The repos are the public repos of the organisation whose `js-state` branch holds a DESCRIPTION, so a repo joins with that branch and leaves without it.
 Only public repos count, because the build installs the package of each repo into the image, and the image is public.
-The extra packages are the `any::` refs and the `needs:` values of `ci.yaml`, together with pkgdepends, roxygen2 and sessioninfo, which steps of blockr.ci install themselves.
-When the build finds no repo, it fails, and the image of the day before stays.
+The extra packages are the `any::` refs and the `needs:` values of those workflows, together with pkgdepends, roxygen2 and sessioninfo, which steps of blockr.ci install themselves.
+A workflow counts when one of its `container:` lines names the image, so a workflow that takes the input joins the list without an edit.
+When the build finds no repo, or no such workflow, it fails, and the image of the day before stays.
 There is one image per R version, tagged `release` and `oldrel-1`.
 The pull request jobs take the image of `r-version`, so `r-version` must be empty, `release` or `oldrel-1`.
 The `check` matrix runs its oldrel-1 leg in the image.

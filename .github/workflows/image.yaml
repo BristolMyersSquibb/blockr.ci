@@ -24,8 +24,9 @@
 # The plan job works out what the image holds, every time it is built.
 # The repos are the public repos of ORG whose branch BRANCH holds a
 # DESCRIPTION, so a repo joins with its branch and leaves without it.
-# The extra packages and the Config/Needs fields are the ones that ci.yaml
-# installs and passes, together with FIXED_PACKAGES.
+# The extra packages and the Config/Needs fields are the ones that the
+# workflows with a job in the image install and pass, together with
+# FIXED_PACKAGES.
 # See .github/image/packages.sh.
 #
 # Before an image is pushed, it resolves the dependencies of each of those
@@ -92,7 +93,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           ORG: BristolMyersSquibb
           BRANCH: js-state
-          CI_YAML: .github/workflows/ci.yaml
+          WORKFLOW_DIR: .github/workflows
           # The packages that the steps of blockr.ci install themselves:
           # parse-deps installs pkgdepends, the docs job roxygen2 at its
           # pin, and install-deps sessioninfo.

@@ -1,8 +1,9 @@
 # Installs what the image holds for the repos it is built for: the
 # packages in PACKAGES, which names each repo at its branch and the
-# packages that ci.yaml adds, with every dependency the jobs install.
-# That is Suggests too, and the Config/Needs fields in NEEDS, which
-# ci.yaml passes.
+# packages that the workflows with a job in the image add, with every
+# dependency the jobs install.
+# That is Suggests too, and the Config/Needs fields in NEEDS, which those
+# workflows pass.
 # The pak call installs the system packages they need with apt as well.
 
 split_refs <- function(x) {

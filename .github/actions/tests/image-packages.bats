@@ -9,7 +9,8 @@ setup() {
 
   export ORG=acme
   export BRANCH=js-state
-  export CI_YAML="$BATS_TEST_TMPDIR/ci.yaml"
+  export WORKFLOW_DIR="$BATS_TEST_TMPDIR/workflows"
+  export IMAGE=ghcr.io/acme/ci.image
   export FIXED_PACKAGES="any::pkgdepends any::sessioninfo"
   export GITHUB_OUTPUT="$BATS_TEST_TMPDIR/github_output"
   export GH_STUB_JSON="$BATS_TEST_TMPDIR/graphql.json"
@@ -28,9 +29,12 @@ STUB
   PATH="$BATS_TEST_TMPDIR/bin:$PATH"
   export PATH
 
-  cat > "$CI_YAML" <<'YAML'
+  mkdir -p "$WORKFLOW_DIR"
+
+  cat > "$WORKFLOW_DIR/ci.yaml" <<'YAML'
 jobs:
   lint:
+    container: ${{ inputs.image && format('ghcr.io/acme/ci.image:{0}', 'release') || '' }}
     steps:
       - uses: actions/checkout@v5
 
@@ -59,6 +63,53 @@ jobs:
           extra-packages: any::rcmdcheck
   report:
     needs: deploy
+YAML
+
+  # A second workflow with a job in the image.
+  cat > "$WORKFLOW_DIR/gate.yaml" <<'YAML'
+jobs:
+  docs:
+    container: ${{ inputs.image && 'ghcr.io/acme/ci.image:release' || '' }}
+    steps:
+      - uses: $/.github/actions/parse-deps
+        with:
+          base-packages: |
+            any::devtools
+      - uses: $/.github/actions/install-deps
+        with:
+          needs: coverage
+YAML
+
+  # Workflows without a job in the image: one in a container of its own,
+  # one on the runner, and one that names the image outside container:.
+  cat > "$WORKFLOW_DIR/connect.yaml" <<'YAML'
+jobs:
+  deploy:
+    container:
+      image: rockylinux:8
+    steps:
+      - uses: $/.github/actions/install-deps
+        with:
+          extra-packages: any::rsconnect
+          needs: deploy
+YAML
+
+  cat > "$WORKFLOW_DIR/runner.yaml" <<'YAML'
+jobs:
+  build:
+    steps:
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          extra-packages: any::runneronly
+YAML
+
+  cat > "$WORKFLOW_DIR/image.yaml" <<'YAML'
+env:
+  IMAGE: ghcr.io/acme/ci.image
+jobs:
+  build:
+    steps:
+      - run: docker run -e EXTRA='any::imageonly' "$IMAGE"
 YAML
 }
 
@@ -129,14 +180,27 @@ write_page() {
   assert_output ""
 }
 
-@test "installs the repos, the any:: refs of ci.yaml and the fixed packages" {
+@test "installs the repos, the any:: refs of the workflows in the image and the fixed packages" {
+  write_page acme/alpha yes yes false
+
+  run bash "$SCRIPT"
+  assert_success
+  assert_output --partial "these workflows: ci.yaml gate.yaml"
+
+  run cat "$GITHUB_OUTPUT"
+  assert_line "packages=acme/alpha@js-state any::devtools any::lintr any::rcmdcheck any::pkgdepends any::sessioninfo"
+}
+
+@test "leaves out the workflows without a job in the image" {
   write_page acme/alpha yes yes false
 
   run bash "$SCRIPT"
   assert_success
 
   run cat "$GITHUB_OUTPUT"
-  assert_line "packages=acme/alpha@js-state any::lintr any::rcmdcheck any::pkgdepends any::sessioninfo"
+  refute_output --partial "rsconnect"
+  refute_output --partial "runneronly"
+  refute_output --partial "imageonly"
 }
 
 @test "takes needs from the install steps, not from the jobs" {
@@ -146,7 +210,30 @@ write_page() {
   assert_success
 
   run cat "$GITHUB_OUTPUT"
-  assert_line "needs=check lint website"
+  assert_line "needs=check coverage lint website"
   refute_output --partial "build"
   refute_output --partial "deploy"
+}
+
+@test "no workflow with a job in the image: fails" {
+  write_page acme/alpha yes yes false
+  rm "$WORKFLOW_DIR/ci.yaml" "$WORKFLOW_DIR/gate.yaml"
+
+  run bash "$SCRIPT"
+  assert_failure
+  assert_output --partial "::error::Found no workflow"
+
+  run cat "$GITHUB_OUTPUT"
+  assert_output ""
+}
+
+@test "a dot in the image name matches only a dot" {
+  write_page acme/alpha yes yes false
+  sed -i 's/ci\.image/ci-image/' "$WORKFLOW_DIR/gate.yaml"
+
+  run bash "$SCRIPT"
+  assert_success
+
+  run cat "$GITHUB_OUTPUT"
+  refute_output --partial "devtools"
 }
