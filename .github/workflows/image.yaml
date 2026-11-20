@@ -11,14 +11,24 @@
 # holds the R packages as well, which a cache restores for a pull request
 # only from the refs that the pull request may read.
 #
-# There is one image per R version, release and oldrel-1, tagged with that
-# name, so a job always pulls the newest build.  The build runs every day,
-# so the R packages in an image are at most a day old.
+# There is one image per R version, release, oldrel-1 and devel, tagged
+# with that name, so a job always pulls the newest build.
+# The build runs every day, so the R packages in an image are at most a
+# day old.
 # Through the install-deps action, a job keeps them, as setup-r-dependencies
 # keeps the packages it finds installed.
 # The job installs with pak only what the image lacks, such as a branch
 # named in Remotes that moved since the build.
 # It calls apt only for a system package that the image lacks.
+#
+# P3M has no binaries for R-devel on Ubuntu 26.04, so the image of devel
+# builds every R package from source.
+# On 20 November 2026, its build job took 20 minutes, against 6 for each
+# of the other two.
+# No pull request waits for that build.
+# A job in that image builds only what the image lacks.
+# So with the image, the R-devel leg of ci.yaml runs at the merge queue
+# again (BristolMyersSquibb/blockr.ci#106).
 #
 # The plan job works out what the image holds, every time it is built.
 # The repos are the public repos of ORG whose branch BRANCH holds a
@@ -111,7 +121,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        r: [release, oldrel-1]
+        r: [release, oldrel-1, devel]
 
     permissions:
       contents: read
@@ -130,6 +140,13 @@ jobs:
           version=$(curl -fsS --retry 5 --retry-all-errors \
             "https://api.r-hub.io/rversions/resolve/$query/linux-ubuntu-26.04" | jq -r .version)
           echo "R $R is $version."
+          # Posit names each build of R after its version, as in
+          # r-4.6.2_1_amd64.deb.
+          # It names its daily build of R-devel "devel" instead, as in
+          # r-devel_1_amd64.deb.
+          if [ "$R" = devel ]; then
+            version=devel
+          fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
         env:
           R: ${{ matrix.r }}

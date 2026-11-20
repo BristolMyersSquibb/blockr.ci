@@ -763,7 +763,7 @@ on the pull-request ref, on every push:
 |---|---|---|---|
 | `lint`, `smoke`, `pkgdown-dev`, `coverage`, `docs`, `typescript` | runs | runs | skipped |
 | `ci / check` (macOS, Windows, oldrel) | skipped | **runs** | runs |
-| `ci / check` (devel) | skipped | **runs** | skipped |
+| `ci / check` (devel) | skipped | **runs** | runs with `image`, skipped without |
 | `release` (R-hub flavours) | skipped | **runs** | skipped |
 | `release-gate` (mechanical checks) | skipped | **runs** | skipped |
 | `release-gate / soft` (URLs, `--as-cran` notes) | skipped | **runs**, reports without gating | skipped |
@@ -787,11 +787,16 @@ pull request is rare enough that paying for the queue leg twice over is
 the cheaper mistake.
 
 The R-devel leg of `ci / check` is the one exception.
-It runs on a release pull request only, never at the queue.
+Without `image`, it runs on a release pull request only, never at the queue.
 The leg builds its dependencies from source, so in blockr.core's queue it took 15–22 minutes, against 3–7 for the other legs, and every queue entry waited for it.
 In 187 queue runs, it found nothing that the other legs missed ([#95](https://github.com/BristolMyersSquibb/blockr.ci/issues/95)).
 An R-devel failure can therefore reach `main`.
 It then shows up at the next release.
+
+With `image`, the leg runs in an image that holds its dependencies, built from source once a day.
+The leg then builds only what the image lacks.
+So it runs at the queue again, and an R-devel failure shows up at the merge that causes it.
+See [Prebuilt image](#prebuilt-image).
 
 ### Merge queue
 
@@ -927,7 +932,7 @@ release.
 | `r-version` | string | `''` | R version for the PR-leg jobs (lint, smoke, pkgdown-dev, coverage, docs, typescript). Default (`''`) runs them on `release`. Set it (e.g. `4.4.2`) for a deploy app pinned to one runtime, so its PR checks — notably the `smoke` R CMD check — exercise the deployment target. The merge-queue `check` matrix is unaffected. Pair with `connect-deploy.yaml`'s `r-version` to gate against the version Connect serves. |
 | `error-on` | string | `''` | R CMD check severity that fails the `smoke` and `check` jobs (passed to `check-r-package`'s `error-on`). Default (`''`) fails on any NOTE (`'"note"'`), holding the 0-errors/0-warnings/0-notes bar. A deploy app that declares unused `Imports` on purpose (so the Connect manifest ships them) sets `'"warning"'` to tolerate the resulting NOTE. |
 | `typescript-dir` | string | `''` | Directory of the package's `package.json`, relative to the repository root, such as `.`. Setting it turns on the `typescript` job; the default (`''`) skips it. See [TypeScript gates](#typescript-gates). |
-| `image` | boolean | `false` | Run the Ubuntu jobs in the image that `image.yaml` builds every day, rather than installing R, their tools and their system packages while they run. See [Prebuilt image](#prebuilt-image). |
+| `image` | boolean | `false` | Run the Ubuntu jobs in the image that `image.yaml` builds every day, rather than installing R, their tools and their system packages while they run. With it, the R-devel leg of the `check` matrix runs at the merge queue as well. See [Prebuilt image](#prebuilt-image). |
 | `skip-pkgdown` | boolean | `false` | DEPRECATED — pkgdown moved to `pkgdown.yaml`. No-op. |
 | `revdep-packages` | newline-separated list | `''` | DEPRECATED — moved to `revdep.yaml`, where it is now `revdep-strict`. No-op. |
 
@@ -998,7 +1003,7 @@ jobs:
 - **Coverage** via `covr::package_coverage()` + codecov, optional threshold — PR gate
 - **Docs freshness** — regenerate `man/` + `NAMESPACE` with the roxygen2 version pinned in `DESCRIPTION` (`Config/roxygen2/version`, or legacy `RoxygenNote`) and fail on drift — PR gate
 - **TypeScript gates** — the package's `typecheck`, `lint`, `test` and `build` scripts, and a check that the build leaves `inst/` as committed — PR gate, off unless `typescript-dir` is set — see [TypeScript gates](#typescript-gates)
-- **Full check** — 3-platform matrix (macOS, Windows, Ubuntu oldrel) — merge-queue gate, plus Ubuntu devel on every push to a labelled release PR — see [Release mode](#release-mode)
+- **Full check** — 3-platform matrix (macOS, Windows, Ubuntu oldrel) — merge-queue gate, plus Ubuntu devel on every push to a labelled release PR, and at the queue too with `image` — see [Release mode](#release-mode)
 - **Reverse-dependency checks** against configurable downstream packages — merge-queue gate, plus an informational tier that reports to the pull request without gating — see [Informational downstreams](#informational-downstreams)
 - **CRAN pre-submission checks** — AddressSanitizer, UndefinedBehaviorSanitizer, valgrind, `rchk` and the Suggests-free build in the R-hub containers, plus a CRAN-style reverse dependency check, on every push to a labelled release PR — see [Release mode](#release-mode)
 - **Mechanical release checks** — the checklist half of a release, gated on every push to a labelled release PR instead of ticked by hand: three-component version, no dev-version pins, no `Remotes`, `NEWS.md` shape, real vignette titles, a `\value` on every documented function, and a README current with its source. Reports spelling, URL and `--as-cran` findings alongside without gating on them — see [`release-gate.yaml`](#release-gateyaml--mechanical-release-checks-optional)
@@ -1099,10 +1104,17 @@ The repos are the public repos of the organisation whose `js-state` branch holds
 Only public repos count, because the build installs the package of each repo into the image, and the image is public.
 The extra packages are the `any::` refs and the `needs:` values of `ci.yaml`, together with pkgdepends, roxygen2 and sessioninfo, which steps of blockr.ci install themselves.
 When the build finds no repo, it fails, and the image of the day before stays.
-There is one image per R version, tagged `release` and `oldrel-1`.
-The pull request jobs take the image of `r-version`, so `r-version` must be empty, `release` or `oldrel-1`.
-The `check` matrix runs its oldrel-1 leg in the image.
-Its macOS, Windows and R-devel legs run as before: a job container needs a Linux runner, and no image holds R-devel.
+There is one image per R version, tagged `release`, `oldrel-1` and `devel`.
+The pull request jobs take the image of `r-version`, so `r-version` must be empty, `release`, `oldrel-1` or `devel`.
+The `check` matrix runs its oldrel-1 and R-devel legs in the images of those versions.
+Its macOS and Windows legs run as before, because a job container needs a Linux runner.
+
+P3M has no binaries for R-devel on Ubuntu 26.04, so the image of `devel` builds every R package from source.
+On 20 November 2026, its build job took 20 minutes, against 6 for each of the other two.
+No pull request waits for that build.
+In that image, the R-devel leg builds only what the image lacks.
+So the leg runs at the merge queue again, as it did before [#95](https://github.com/BristolMyersSquibb/blockr.ci/issues/95).
+The leg then checks against R-devel as of the build, which is at most a day old ([#106](https://github.com/BristolMyersSquibb/blockr.ci/issues/106)).
 
 In the image, a job skips `setup-r`, `setup-pandoc` and `setup-r-dependencies`, and the `install-deps` action takes their place:
 
