@@ -1096,7 +1096,9 @@ export default defineConfig({
 The `lcov` reporter writes `coverage/lcov.info`, which Vitest's default reporters do not.
 By default, Vitest reports only the files that the tests import, so `include` names all the sources.
 A file that no test imports then counts as uncovered.
-The package also adds `coverage/` to `.gitignore` and `^coverage$` to `.Rbuildignore`.
+The package also adds `coverage/` to `.gitignore` and to the ignores of its linter, and `^coverage$` to `.Rbuildignore`.
+The `lcov` reporter also writes an HTML report with scripts there.
+After a local `npm test`, a lint of the whole package, such as `eslint .`, would read those scripts.
 
 Like `lint`, the job runs on pull requests only. A caller that turns it
 on adds `ci / typescript` to its required checks; for every other caller
