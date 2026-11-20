@@ -89,7 +89,7 @@
 # A caller that sets `image: true` runs the Ubuntu jobs in the image that
 # image.yaml builds every day.
 # The image holds R, the tools these jobs use, and the system and R
-# packages of the repos it is built for.
+# packages that the repos it is built for depend on.
 # Those jobs then skip setup-r, setup-pandoc and setup-r-dependencies.
 # In their place, the install-deps action installs only what the image
 # lacks, and calls apt only for a system package that is missing.
@@ -182,8 +182,8 @@ on:
       image:
         description: >
           Run the Ubuntu jobs in the image that image.yaml builds, which
-          holds R, their tools, and the system and R packages of the repos
-          it is built for.
+          holds R, their tools, and the system and R packages that the
+          repos it is built for depend on.
           The PR-leg jobs take the image of r-version, and the oldrel-1 and
           R-devel legs of the check matrix the images of oldrel-1 and
           devel.

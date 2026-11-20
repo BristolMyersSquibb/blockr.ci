@@ -1014,7 +1014,7 @@ jobs:
 - **Mechanical release checks** — the checklist half of a release, gated on every push to a labelled release PR instead of ticked by hand: three-component version, no dev-version pins, no `Remotes`, `NEWS.md` shape, real vignette titles, a `\value` on every documented function, and a README current with its source. Reports spelling, URL and `--as-cran` findings alongside without gating on them — see [`release-gate.yaml`](#release-gateyaml--mechanical-release-checks-optional)
 - **pkgdown deploy** — site build + deploy to GitHub Pages on push to `main`, via the `gh-pages` branch or, with `deploy: actions`, straight from Actions
 - **Superseded runs cancelled** — a push to a pull request cancels the `ci`, `release` and `release-gate` runs still checking the commit it replaces, and pkgdown builds take turns so the newest lands last — see [Superseded runs](#superseded-runs)
-- **Prebuilt image** — with `image: true`, the Ubuntu jobs of `ci.yaml`, the legs of `revdep.yaml`, the site build of `pkgdown.yaml`, the checks of `release-gate.yaml` and the `revdeps` job of `release.yaml` run in an image built every day, which holds R, their tools and the system and R packages of the repos it is built for, so that they call apt only for a system package it lacks — see [Prebuilt image](#prebuilt-image)
+- **Prebuilt image** — with `image: true`, the Ubuntu jobs of `ci.yaml`, the legs of `revdep.yaml`, the site build of `pkgdown.yaml`, the checks of `release-gate.yaml` and the `revdeps` job of `release.yaml` run in an image built every day, which holds R, their tools and the system and R packages that the repos it is built for depend on, so that they call apt only for a system package it lacks — see [Prebuilt image](#prebuilt-image)
 - **Pinned Quarto** — jobs that install Quarto (any package holding a `.qmd`) pass an explicit version instead of the action's `release` default, which resolves the version through an unretried `curl` to quarto.org and has twice killed a green run — see [Quarto pin](#quarto-pin)
 - **Hard-dependency resolution on `lint` and `docs`** — neither job runs the suite or builds a site, so both skip the `Suggests` closure and the 125 MB Chromium that a `chromote` / `shinytest2` suggestion drags in — see [Suggests on the lint and docs jobs](#suggests-on-the-lint-and-docs-jobs)
 - **parse-deps** — pin a downstream revdep ref via a `` ```deps `` block in the PR body, read fresh when the merge queue runs revdep
@@ -1103,10 +1103,10 @@ jobs:
 ```
 
 The image holds R, Pandoc, Quarto at the [pinned version](#quarto-pin), Google Chrome, qpdf, ghostscript, devscripts, git, rsync and the GitHub CLI.
-It also holds the R packages of the repos it is built for, together with the packages that the workflows with a job in the image add, and the system packages of all of these.
+It also holds the R packages that the repos it is built for depend on, together with the packages that the workflows with a job in the image add, and the system packages of all of these.
 The build works out both lists each time it runs.
 The repos are the public repos of the organisation whose `js-state` branch holds a DESCRIPTION, so a repo joins with that branch and leaves without it.
-Only public repos count, because the build installs the package of each repo into the image, and the image is public.
+Only public repos count, because the image is public, and it holds what the package of each repo depends on.
 The extra packages are the `any::` refs and the `needs:` values of those workflows, together with pkgdepends, roxygen2 and sessioninfo, which steps of blockr.ci install themselves.
 A workflow counts when one of its `container:` lines names the image, so a workflow that takes the input joins the list without an edit.
 When the build finds no repo, or no such workflow, it fails, and the image of the day before stays.
@@ -1114,6 +1114,17 @@ There is one image per R version, tagged `release`, `oldrel-1` and `devel`.
 The pull request jobs take the image of `r-version`, so `r-version` must be empty, `release`, `oldrel-1` or `devel`.
 The `check` matrix runs its oldrel-1 and R-devel legs in the images of those versions.
 Its macOS and Windows legs run as before, because a job container needs a Linux runner.
+
+The image holds none of the packages of the organisation, not even one that another of them depends on, as blockr.dock depends on blockr.core.
+A package counts as one of the organisation's when a public repo of the organisation has the same name.
+This holds for every public repo, archived or not, and with a `js-state` branch or without.
+The build installs these packages with the rest, and with them what they depend on.
+Then it removes these packages again.
+A copy in the image would be as old as the build, and every job would hold it, whether the job's package needs it or not.
+The package blockr.core runs the plugins of every installed package.
+So a stale copy of blockr.dock in the image failed a vignette of blockr.core.
+The failed vignette got [BristolMyersSquibb/blockr.core#785](https://github.com/BristolMyersSquibb/blockr.core/pull/785) ejected from the merge queue ([#116](https://github.com/BristolMyersSquibb/blockr.ci/issues/116)).
+A job installs the packages of the organisation that its own package needs, through `install-deps`, and holds no others.
 
 P3M has no binaries for R-devel on Ubuntu 26.04, so the image of `devel` builds every R package from source.
 On 20 November 2026, its build job took 20 minutes, against 6 for each of the other two.
@@ -1152,6 +1163,7 @@ In the image, a job skips `setup-r`, `setup-pandoc` and `setup-r-dependencies`, 
 1. It resolves the dependencies with pak, as `setup-r-dependencies` does.
 2. It asks dpkg which of their system packages the image lacks.
 3. It installs the R packages that the image lacks, and a branch that `Remotes` names when it moved since the build.
+   The image holds no package of the organisation, so `install-deps` installs those that the job's package needs.
    Like `setup-r-dependencies`, it keeps the packages already installed, so a job uses the CRAN versions of the image, which are at most a day old.
 
 When no system package is missing, pak installs with its system requirements switched off, and the job never calls apt.

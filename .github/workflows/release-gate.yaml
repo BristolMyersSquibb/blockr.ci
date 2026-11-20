@@ -159,7 +159,7 @@ on:
         description: >
           Run the gate, docs and soft jobs in the image that image.yaml
           builds, which holds R, their tools, and the system and R packages
-          of the repos it is built for.
+          that the repos it is built for depend on.
           The jobs take the image of release, the R version they also run
           on without the image.
           Default false runs every job without the image.

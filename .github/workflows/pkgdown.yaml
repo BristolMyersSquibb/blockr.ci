@@ -67,8 +67,8 @@ on:
       image:
         description: >
           Run the pkgdown job in the image that image.yaml builds, which
-          holds R, its tools, and the system and R packages of the repos
-          it is built for.
+          holds R, its tools, and the system and R packages that the repos
+          it is built for depend on.
           The job takes the image of release, the R version it also runs
           on without the image.
           The deploy job is unaffected.
