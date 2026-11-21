@@ -48,6 +48,8 @@
 # setup-r-dependencies.
 # In their place, the install-deps action installs only what the image
 # lacks, and calls apt only for a system package that is missing.
+# The image holds no Node, so the legs take it from setup-node, as the
+# smoke job of ci.yaml explains.
 # The matrix, revdep-all and report jobs install no R, so they run as
 # before.
 # See image.yaml for why.
@@ -410,6 +412,13 @@ jobs:
             local::../pkg
           working-directory: revdep
           dependencies: 'c("all", "hard")'
+
+      # Node for the tests that need npm, as in the smoke job of ci.yaml.
+      - uses: actions/setup-node@v7
+        if: ${{ inputs.image }}
+        with:
+          node-version: '24'
+          package-manager-cache: false
 
       - uses: r-lib/actions/check-r-package@v2
         with:

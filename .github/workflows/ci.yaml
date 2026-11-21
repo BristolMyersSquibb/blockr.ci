@@ -93,6 +93,8 @@
 # Those jobs then skip setup-r, setup-pandoc and setup-r-dependencies.
 # In their place, the install-deps action installs only what the image
 # lacks, and calls apt only for a system package that is missing.
+# The image holds no Node, so the jobs that run the tests take it from
+# setup-node, as the smoke job explains.
 # The R-devel leg runs in the image as well.
 # It then runs at the merge queue too, as the check job explains.
 # The macOS and Windows legs run as before.
@@ -423,6 +425,23 @@ jobs:
           extra-packages: ${{ steps.deps.outputs.extra-packages }}
           needs: check
 
+      # On the runner, the tests find the Node that the runner image
+      # preinstalls.
+      # The image holds no Node, so a test that needs npm skips there.
+      # The job then passes without running the test, as it did for three
+      # tests of blockr.core (#124).
+      # So in the image, setup-node puts Node on the PATH.
+      # As in the typescript job, it takes Node 24 from the tool cache that
+      # the runner mounts into the container, and downloads nothing.
+      # By default, setup-node turns on a cache of npm when the
+      # package.json names npm as its package manager.
+      # The tests need no such cache, so the step turns it off.
+      - uses: actions/setup-node@v7
+        if: ${{ inputs.image }}
+        with:
+          node-version: '24'
+          package-manager-cache: false
+
       - name: Remove mermaid config for CI
         run: Rscript -e 'unlink("vignettes/_metadata.yml")'
 
@@ -540,6 +559,13 @@ jobs:
         with:
           extra-packages: ${{ steps.deps.outputs.extra-packages }}
           needs: coverage
+
+      # Node for the tests that need npm, as in the smoke job.
+      - uses: actions/setup-node@v7
+        if: ${{ inputs.image }}
+        with:
+          node-version: '24'
+          package-manager-cache: false
 
       - name: Compute, upload and gate coverage
         shell: Rscript {0}
@@ -975,6 +1001,13 @@ jobs:
         with:
           extra-packages: ${{ steps.deps.outputs.extra-packages }}
           needs: check
+
+      # Node for the tests that need npm, as in the smoke job.
+      - uses: actions/setup-node@v7
+        if: env.IN_IMAGE == 'true'
+        with:
+          node-version: '24'
+          package-manager-cache: false
 
       - name: Remove mermaid config for CI
         run: Rscript -e 'unlink("vignettes/_metadata.yml")'

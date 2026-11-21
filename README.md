@@ -1136,6 +1136,7 @@ Node stays on the 24 LTS line, which the `ubuntu-latest` image caches,
 so `setup-node` neither resolves a version over the network nor
 downloads one, for the reason given under [Quarto pin](#quarto-pin).
 Bump it deliberately.
+A bump changes every `setup-node` step in the workflows here, the ones for the [prebuilt image](#prebuilt-image) included.
 
 #### Daily lockfile audit
 
@@ -1246,6 +1247,17 @@ It sets `R_PKG_CACHE_DIR`, so that pak finds the rules in a job, which runs with
 Within a day of the build, pak uses them without a refresh.
 When a refresh fails, pak falls back to them rather than to the older copy that it bundles, which can name a system package that the image lacks.
 The build fails when pak kept no rules.
+
+The image holds no Node, but the runner image preinstalls it.
+On the runner, the tests of a package find that Node.
+In the image, a test that needs npm finds none and skips.
+The job then passes without running the test.
+Three tests of blockr.core call npm through `install_js_types()`, and they skipped that way ([#124](https://github.com/BristolMyersSquibb/blockr.ci/issues/124)).
+So in the image, `setup-node` puts Node 24 on the `PATH` in each job that runs the tests.
+These are `smoke`, `coverage` and the Ubuntu legs of `check` in `ci.yaml`, the legs of `revdep.yaml`, and the `soft` job of `release-gate.yaml`.
+In a container job, `setup-node` takes Node from the tool cache that the runner mounts into the container, so it downloads nothing.
+By default, `setup-node` turns on a cache of npm when the `package.json` names npm as its package manager.
+The tests need no such cache, so the step turns it off.
 
 Before it pushes an image, `image.yaml` resolves the dependencies of each of those repos in that image, and fails when any of their system packages is missing.
 It keeps the six newest untagged builds, so a job can still be pointed at one of them by its digest.

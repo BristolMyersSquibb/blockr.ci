@@ -61,6 +61,8 @@
 # the image that image.yaml builds every day, the one tagged release.
 # They then skip setup-r and setup-pandoc, and the install-deps action
 # takes the place of setup-r-dependencies.
+# The image holds no Node, so the soft job takes it from setup-node for
+# the tests, as the smoke job of ci.yaml explains.
 #
 # BLOCKR_PAT is optional and falls back to github.token, which keeps
 # "needs no secrets" a real property: nbenn/typedjson does not use
@@ -396,6 +398,13 @@ jobs:
         with:
           extra-packages: ${{ steps.deps.outputs.extra-packages }}
           needs: check
+
+      # Node for the tests that need npm, as in the smoke job of ci.yaml.
+      - uses: actions/setup-node@v7
+        if: ${{ inputs.image }}
+        with:
+          node-version: '24'
+          package-manager-cache: false
 
       - uses: $/.github/actions/release-soft
         with:
