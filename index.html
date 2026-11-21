@@ -1038,6 +1038,9 @@
 <strong>TypeScript gates</strong> — an audit of the lockfile, the package’s <code>typecheck</code>, <code>lint</code>, <code>test</code> and <code>build</code> scripts, an upload of the tests’ coverage to Codecov, and a check that the build leaves <code>inst/</code> as committed — PR gate, off unless <code>typescript-dir</code> is set — see <a href="#typescript-gates">TypeScript gates</a>
 </li>
 <li>
+<strong>Daily lockfile audit</strong> — <code>npm audit</code> of the lockfile of each caller that sets <code>typescript-dir</code>, every day, failing on an advisory of high or critical severity — see <a href="#daily-lockfile-audit">Daily lockfile audit</a>
+</li>
+<li>
 <strong>Full check</strong> — 3-platform matrix (macOS, Windows, Ubuntu oldrel) — merge-queue gate, plus Ubuntu devel on every push to a labelled release PR, and at the queue too with <code>image</code> — see <a href="#release-mode">Release mode</a>
 </li>
 <li>
@@ -1104,6 +1107,13 @@
 <p>Istanbul adds its counters only to the files that <code>include</code> names. Vitest’s default provider, V8, counts all the code that runs in the test process. In blockr.core, the slowest build test runs TypeScript’s compiler, and under V8 it took 51.5 s of its 60 s timeout, against 5.2 s without coverage. The <code>lcov</code> reporter writes <code>coverage/lcov.info</code>, which Vitest’s default reporters do not. By default, Vitest reports only the files that the tests import, so <code>include</code> names all the sources. A file that no test imports then counts as uncovered. The package also adds <code>coverage/</code> to <code>.gitignore</code> and to the ignores of its linter, and <code>^coverage$</code> to <code>.Rbuildignore</code>. The <code>lcov</code> reporter also writes an HTML report with scripts there. After a local <code>npm test</code>, a lint of the whole package, such as <code>eslint .</code>, would read those scripts.</p>
 <p>Like <code>lint</code>, the job runs on pull requests only. A caller that turns it on adds <code>ci / typescript</code> to its required checks; for every other caller it reports as skipped, which satisfies a required check.</p>
 <p>Node stays on the 24 LTS line, which the <code>ubuntu-latest</code> image caches, so <code>setup-node</code> neither resolves a version over the network nor downloads one, for the reason given under <a href="#quarto-pin">Quarto pin</a>. Bump it deliberately.</p>
+<div class="section level4">
+<h4 id="daily-lockfile-audit">Daily lockfile audit<a class="anchor" aria-label="anchor" href="#daily-lockfile-audit"></a>
+</h4>
+<p>The <code>audit.yaml</code> workflow audits the lockfile of each caller every day, with <code>npm audit --package-lock-only --audit-level=high</code>. The audit checks the versions in the lockfile against the advisories that the npm registry serves, and installs nothing. An advisory can be published after a version entered a lockfile, and a check that runs with each pull request sees it only at the next one. Dependabot alerts read only the default branch, and the callers hold their lockfiles on <code>js-state</code>.</p>
+<p>The callers are the public repositories of the organisation whose workflows on <code>js-state</code> or <code>main</code> set <code>typescript-dir</code>. So a repository joins the audit when it turns the job on, without an edit to this repository. The lockfile of a caller is the <code>package-lock.json</code> in its <code>typescript-dir</code>. The level is <code>high</code>, because <code>critical</code> would let through the compromised debug 4.4.2, which <a href="https://github.com/advisories/GHSA-4x49-vf9v-38px" class="external-link">its advisory</a> rates high.</p>
+<p>An advisory of high or critical severity fails the run. The job summary lists it with the repository, the branch, the package and its version. A lockfile that the workflow cannot download or audit fails the run too, and so does finding no caller at all. GitHub sends the notification of a failed scheduled run to whoever last changed the workflow’s schedule (<a href="https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule" class="external-link">docs</a>).</p>
+</div>
 </div>
 <div class="section level3">
 <h3 id="prebuilt-image">Prebuilt image<a class="anchor" aria-label="anchor" href="#prebuilt-image"></a>
