@@ -172,9 +172,13 @@ on:
         description: >
           Directory of the package's package.json, relative to the
           repository root (e.g. '.').  Setting it turns on the typescript
-          job, which runs the package's typecheck, lint, test and build
-          scripts and fails where the build leaves inst/ other than
-          committed.  Default '' skips the job.
+          job, which audits the package's lockfile, runs its typecheck,
+          lint, test and build scripts, and fails where the build leaves
+          inst/ other than committed.
+          The tests must write their coverage as LCOV to
+          coverage/lcov.info in that directory, which the job uploads to
+          Codecov.
+          Default '' skips the job.
         type: string
         default: ''
         required: false
@@ -560,8 +564,11 @@ jobs:
           # The covr 3 that a restored package cache can still hold returns
           # the response whatever its status, and only an accepted upload
           # carries uploaded: TRUE.
+          # The flag r sets this upload apart from the coverage that the
+          # typescript job uploads under the flag typescript.
+          # Codecov merges the two into one report for the commit.
           res <- tryCatch(
-            covr::codecov(coverage = cov),
+            covr::codecov(coverage = cov, flags = "r"),
             covr_codecov_error = function(e) {
               message(conditionMessage(e))
               NULL
@@ -734,6 +741,23 @@ jobs:
   # The later steps run npm and the package's scripts,
   # and through them the code of every package in the lockfile.
   # If the job set the token for every step, any of that code could read it.
+  #
+  # The tests write their coverage as LCOV to coverage/lcov.info.
+  # Vitest, Jest and c8 write their reports to coverage/, and their lcov
+  # reporter names the file lcov.info.
+  # Every package that runs this job reports its coverage, so the job
+  # fails when the tests pass without writing the file.
+  # Otherwise it uploads the file to Codecov under the flag typescript.
+  # The coverage job uploads the R coverage under the flag r, and both
+  # uploads name the head commit of the pull request.
+  # So Codecov merges them into one report.
+  #
+  # The Codecov token reaches the upload step alone, through the token
+  # input of the action, since the npm packages run their code in this job.
+  # The action exits 0 when Codecov refuses the upload or is down, unless
+  # fail_ci_if_error is set.
+  # So a failure on Codecov's side leaves the job green, as it does the
+  # coverage job (#67).
 
   typescript:
 
@@ -779,6 +803,19 @@ jobs:
           cache: npm
           cache-dependency-path: ${{ inputs.typescript-dir }}/package-lock.json
 
+      # The audit checks the lockfile against the advisories
+      # that the npm registry serves, and installs nothing.
+      # A version with an advisory rated high or critical fails the job here,
+      # before npm ci installs it.
+      # The later steps all need npm ci, so they are skipped as well.
+      # The level is high rather than critical,
+      # because the advisory for the compromised debug 4.4.2 is rated high.
+      # The install skips the audit that npm ci runs by default.
+      # That audit would repeat this one, and it reports only
+      # after the install, without failing the job.
+      - name: Audit npm dependencies
+        run: npm audit --package-lock-only --audit-level=high
+
       # With --ignore-scripts, npm ci runs no install script, neither one of
       # a dependency nor one of the package itself.
       # An install script runs code that its package ships, and the job
@@ -790,7 +827,7 @@ jobs:
       # such a script, with blockr.core::install_js_types().
       - name: Install npm dependencies
         id: install
-        run: npm ci --ignore-scripts
+        run: npm ci --no-audit --ignore-scripts
 
       - name: Type-check
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
@@ -801,8 +838,30 @@ jobs:
         run: npm run lint
 
       - name: Test
+        id: test
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: npm test
+
+      - name: Find the coverage of the tests
+        id: lcov
+        if: ${{ !cancelled() && steps.test.outcome == 'success' }}
+        run: |
+          if [ -s coverage/lcov.info ]; then
+            echo "The tests wrote their coverage to coverage/lcov.info."
+            exit 0
+          fi
+          echo "::error::The tests passed but wrote no coverage to coverage/lcov.info. Turn on coverage for npm test, with a reporter that writes LCOV to that file, as the TypeScript gates of the blockr.ci README describe."
+          exit 1
+        shell: bash
+
+      - name: Upload coverage to Codecov
+        if: ${{ !cancelled() && steps.lcov.outcome == 'success' }}
+        uses: codecov/codecov-action@v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ${{ inputs.typescript-dir }}/coverage/lcov.info
+          disable_search: true
+          flags: typescript
 
       - name: Build
         id: build

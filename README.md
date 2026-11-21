@@ -929,7 +929,7 @@ release.
 | `coverage-threshold` | number | `0` | Minimum coverage percent for the `coverage` job to pass. `0` disables the gate; coverage is still uploaded to Codecov. |
 | `r-version` | string | `''` | R version for the PR-leg jobs (lint, smoke, pkgdown-dev, coverage, docs, typescript). Default (`''`) runs them on `release`. Set it (e.g. `4.4.2`) for a deploy app pinned to one runtime, so its PR checks — notably the `smoke` R CMD check — exercise the deployment target. The merge-queue `check` matrix is unaffected. Pair with `connect-deploy.yaml`'s `r-version` to gate against the version Connect serves. |
 | `error-on` | string | `''` | R CMD check severity that fails the `smoke` and `check` jobs (passed to `check-r-package`'s `error-on`). Default (`''`) fails on any NOTE (`'"note"'`), holding the 0-errors/0-warnings/0-notes bar. A deploy app that declares unused `Imports` on purpose (so the Connect manifest ships them) sets `'"warning"'` to tolerate the resulting NOTE. |
-| `typescript-dir` | string | `''` | Directory of the package's `package.json`, relative to the repository root, such as `.`. Setting it turns on the `typescript` job; the default (`''`) skips it. See [TypeScript gates](#typescript-gates). |
+| `typescript-dir` | string | `''` | Directory of the package's `package.json`, relative to the repository root, such as `.`. Setting it turns on the `typescript` job; the default (`''`) skips it. The tests must write their coverage to `coverage/lcov.info` in that directory, which the job uploads to Codecov. See [TypeScript gates](#typescript-gates). |
 | `image` | boolean | `false` | Run the Ubuntu jobs in the image that `image.yaml` builds every day, rather than installing R, their tools and their system packages while they run. With it, the R-devel leg of the `check` matrix runs at the merge queue as well. See [Prebuilt image](#prebuilt-image). |
 | `skip-pkgdown` | boolean | `false` | DEPRECATED — pkgdown moved to `pkgdown.yaml`. No-op. |
 | `revdep-packages` | newline-separated list | `''` | DEPRECATED — moved to `revdep.yaml`, where it is now `revdep-strict`. No-op. |
@@ -1005,9 +1005,9 @@ jobs:
 - **Lint** with a canonical lintr config (`object_name_linter = NULL`) — PR gate
 - **Smoke test** — single-platform R CMD check — PR gate
 - **pkgdown-dev** — `pkgdown::build_site(devel = TRUE)`, artifact upload, no deploy — PR gate
-- **Coverage** via `covr::package_coverage()` + codecov, optional threshold — PR gate
+- **Coverage** via `covr::package_coverage()` + codecov, optional threshold — PR gate; Codecov merges it with the TypeScript coverage of the `typescript` job
 - **Docs freshness** — regenerate `man/` + `NAMESPACE` with the roxygen2 version pinned in `DESCRIPTION` (`Config/roxygen2/version`, or legacy `RoxygenNote`) and fail on drift — PR gate
-- **TypeScript gates** — the package's `typecheck`, `lint`, `test` and `build` scripts, and a check that the build leaves `inst/` as committed — PR gate, off unless `typescript-dir` is set — see [TypeScript gates](#typescript-gates)
+- **TypeScript gates** — an audit of the lockfile, the package's `typecheck`, `lint`, `test` and `build` scripts, an upload of the tests' coverage to Codecov, and a check that the build leaves `inst/` as committed — PR gate, off unless `typescript-dir` is set — see [TypeScript gates](#typescript-gates)
 - **Full check** — 3-platform matrix (macOS, Windows, Ubuntu oldrel) — merge-queue gate, plus Ubuntu devel on every push to a labelled release PR, and at the queue too with `image` — see [Release mode](#release-mode)
 - **Reverse-dependency checks** against configurable downstream packages — merge-queue gate, plus an informational tier that reports to the pull request without gating — see [Informational downstreams](#informational-downstreams)
 - **CRAN pre-submission checks** — AddressSanitizer, UndefinedBehaviorSanitizer, valgrind, `rchk` and the Suggests-free build in the R-hub containers, plus a CRAN-style reverse dependency check, on every push to a labelled release PR — see [Release mode](#release-mode)
@@ -1067,20 +1067,61 @@ that directory. The scripts are the package's own, so the job assumes
 their names and nothing of the tools behind them. Each runs once
 `npm ci` has succeeded, so one run reports every gate that fails.
 
-The job runs `npm ci` with `--ignore-scripts`, so no install script runs, neither one of a dependency nor one of the package itself.
+Only the steps that install the R dependencies get the token in `BLOCKR_PAT`.
+The steps that run npm and the package's scripts run code from every package in the lockfile, so they run without it.
+
+Before `npm ci` installs anything, `npm audit --package-lock-only --audit-level=high` checks the lockfile against the advisories that the npm registry serves.
+A version with an advisory rated high or critical fails the job before `npm ci` installs it.
+The package's scripts need `npm ci`, so they do not run either.
+The level is `high` rather than `critical`, because the advisory for the compromised debug 4.4.2 is rated high.
+Advisories rated moderate or low show in the log without failing the job.
+The job then runs `npm ci --no-audit --ignore-scripts`.
+By default, `npm ci` audits the packages as well, but it reports only after the install, and it never fails the job.
+
+An advisory published after the lockfile was committed fails the next pull request, whatever that pull request changes.
+To replace a version that fails the audit, run `npm audit fix --package-lock-only`.
+It updates the lockfile without installing anything.
+
+With `--ignore-scripts`, no install script runs, neither one of a dependency nor one of the package itself.
 An install script runs code that its package ships, and the job needs none.
 The flag also skips a script that the package approves in the `allowScripts` field of its `package.json`.
 A package that needs the install script of a dependency runs it from one of its own scripts, with `npm rebuild <dependency>`.
 Pre- and post-scripts of the scripts that the job runs, such as `pretest`, still run.
-
-Only the steps that install the R dependencies get the token in `BLOCKR_PAT`.
-The steps that run npm and the package's scripts run code from every package in the lockfile, so they run without it.
 
 R CMD check and CRAN run no Node, so a package that builds its modules
 commits what the build writes to `inst/`. The job fails when the build
 leaves `inst/` other than committed, and names the files it changed,
 added or removed. A package that writes its modules in JS has no build
 step and needs no `build` script.
+
+The tests write their coverage as LCOV to `coverage/lcov.info` in that directory.
+Vitest, Jest and c8 write their reports to `coverage/`, and their `lcov` reporter names the file `lcov.info`.
+Every package that runs the job reports its coverage, so the job fails when the tests pass without writing the file.
+Otherwise the job uploads the file to Codecov under the flag `typescript`.
+The `coverage` job uploads the R coverage under the flag `r`, and both uploads name the head commit of the pull request.
+So Codecov merges them into one report, and shows the coverage of each language beside the total.
+As for the `coverage` job, a refusal or an outage at Codecov leaves the job green.
+
+With Vitest, a package adds `@vitest/coverage-v8` to its `devDependencies`, at the version of `vitest`, and turns coverage on in `vitest.config.ts`:
+
+```ts
+export default defineConfig({
+  test: {
+    coverage: {
+      enabled: true,
+      reporter: ["text", "lcov"],
+      include: ["srcts/**/*.{ts,tsx}"],
+    },
+  },
+});
+```
+
+The `lcov` reporter writes `coverage/lcov.info`, which Vitest's default reporters do not.
+By default, Vitest reports only the files that the tests import, so `include` names all the sources.
+A file that no test imports then counts as uncovered.
+The package also adds `coverage/` to `.gitignore` and to the ignores of its linter, and `^coverage$` to `.Rbuildignore`.
+The `lcov` reporter also writes an HTML report with scripts there.
+After a local `npm test`, a lint of the whole package, such as `eslint .`, would read those scripts.
 
 Like `lint`, the job runs on pull requests only. A caller that turns it
 on adds `ci / typescript` to its required checks; for every other caller
