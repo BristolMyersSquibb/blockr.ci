@@ -1071,16 +1071,22 @@ Only the steps that install the R dependencies get the token in `BLOCKR_PAT`.
 The steps that run npm and the package's scripts run code from every package in the lockfile, so they run without it.
 
 Before `npm ci` installs anything, `npm audit --package-lock-only --audit-level=high` checks the lockfile against the advisories that the npm registry serves.
-A version with an advisory rated high or critical fails the job before `npm ci` installs it and runs its install script.
+A version with an advisory rated high or critical fails the job before `npm ci` installs it.
 The package's scripts need `npm ci`, so they do not run either.
 The level is `high` rather than `critical`, because the advisory for the compromised debug 4.4.2 is rated high.
 Advisories rated moderate or low show in the log without failing the job.
-The job then runs `npm ci --no-audit`.
-By default, `npm ci` audits the packages as well, but it reports only after the install scripts have run, and it never fails the job.
+The job then runs `npm ci --no-audit --ignore-scripts`.
+By default, `npm ci` audits the packages as well, but it reports only after the install, and it never fails the job.
 
 An advisory published after the lockfile was committed fails the next pull request, whatever that pull request changes.
 To replace a version that fails the audit, run `npm audit fix --package-lock-only`.
 It updates the lockfile without installing anything.
+
+With `--ignore-scripts`, no install script runs, neither one of a dependency nor one of the package itself.
+An install script runs code that its package ships, and the job needs none.
+The flag also skips a script that the package approves in the `allowScripts` field of its `package.json`.
+A package that needs the install script of a dependency runs it from one of its own scripts, with `npm rebuild <dependency>`.
+Pre- and post-scripts of the scripts that the job runs, such as `pretest`, still run.
 
 R CMD check and CRAN run no Node, so a package that builds its modules
 commits what the build writes to `inst/`. The job fails when the build
