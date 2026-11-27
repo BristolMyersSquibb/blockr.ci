@@ -47,6 +47,17 @@ RUN apt-get update \
       qpdf rsync tzdata unzip xz-utils zip \
  && rm -rf /var/lib/apt/lists/*
 
+# The runner has the locale en_US.UTF-8 as well as C.UTF-8.
+# The base image has only C.UTF-8.
+# Without en_US.UTF-8, withr::local_collate("en_US.UTF-8") only warns,
+# and a test that collates under that locale runs in C's collation instead.
+# So the image generates en_US.UTF-8 as well.
+# Both LANG and LC_ALL stay C.UTF-8, as on the runner.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends locales \
+ && locale-gen en_US.UTF-8 \
+ && rm -rf /var/lib/apt/lists/*
+
 # A job runs as root, while the user of the runner owns the checkout.
 # Then git refuses the repository, unless its directory counts as safe.
 # The checkout action marks it safe only for the duration of its own step,

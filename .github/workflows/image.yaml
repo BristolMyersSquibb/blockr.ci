@@ -213,6 +213,17 @@ jobs:
         env:
           R: ${{ matrix.r }}
 
+      # A test may collate under en_US.UTF-8, as it can on the runner.
+      # The build generates that locale with locale-gen, which exits with
+      # status 0 even when it generates nothing.
+      # So R in the image must be able to set the locale.
+      - name: Check the locale
+        run: |
+          docker run --rm "$IMAGE:$R" \
+            Rscript -e 'stopifnot(nzchar(Sys.setlocale("LC_COLLATE", "en_US.UTF-8")))'
+        env:
+          R: ${{ matrix.r }}
+
       # Each repo resolves the dependencies of its smoke job, as
       # install-deps does, and the image must hold all their system
       # packages.  The install then shows how much a job adds on top.
