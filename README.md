@@ -1259,6 +1259,14 @@ In a container job, `setup-node` takes Node from the tool cache that the runner 
 By default, `setup-node` turns on a cache of npm when the `package.json` names npm as its package manager.
 The tests need no such cache, so the step turns it off.
 
+Ubuntu's base image has only the locale `C.UTF-8`, but the runner has `en_US.UTF-8` as well.
+On the runner, `withr::local_collate("en_US.UTF-8")` sets that locale for a test.
+Without the locale, the call only warns, and the test runs in the collation of C.
+A test of blockr.dock checks the order of a print under `en_US.UTF-8`, and in the image it ran in the collation of C, where it checks nothing ([#128](https://github.com/BristolMyersSquibb/blockr.ci/issues/128)).
+So the image generates `en_US.UTF-8` as well.
+Both `LANG` and `LC_ALL` stay `C.UTF-8`, as on the runner.
+The build fails when R in the image cannot set that locale.
+
 Before it pushes an image, `image.yaml` resolves the dependencies of each of those repos in that image, and fails when any of their system packages is missing.
 It keeps the six newest untagged builds, so a job can still be pointed at one of them by its digest.
 
