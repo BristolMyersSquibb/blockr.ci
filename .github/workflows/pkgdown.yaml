@@ -35,6 +35,16 @@
 # across organisations — the inherited values silently arrive blank in
 # the called job.
 #
+# A package whose package.json has a script docs builds its TypeScript
+# reference with that script, just before the site.
+# After the build, the job checks the links of the site with the
+# package's script linkcheck, and deploys nothing if a link is broken.
+# The pkgdown-dev job of ci.yaml runs the same steps, and explains them.
+# Here the job's token may push to the repository, as the deploy needs.
+# The deploy step takes that token through an input of its own.
+# So, as in pkgdown-dev, only the steps that install the R dependencies
+# get GITHUB_PAT, and the checkout leaves no token in the clone.
+#
 # A caller that sets `image: true` runs the pkgdown job in the image that
 # image.yaml builds every day, the one tagged release.
 # The job then skips setup-pandoc, setup-r and setup-r-dependencies.
@@ -122,9 +132,6 @@ jobs:
       group: blockr-pkgdown
       cancel-in-progress: false
 
-    env:
-      GITHUB_PAT: ${{ secrets.BLOCKR_PAT || github.token }}
-
     steps:
       # A mistyped `deploy` would otherwise be taken for "branch" and fail
       # only at the push, after the whole build.
@@ -141,6 +148,8 @@ jobs:
           esac
 
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - uses: r-lib/actions/setup-pandoc@v2
         if: ${{ !inputs.image }}
@@ -160,6 +169,8 @@ jobs:
 
       - uses: r-lib/actions/setup-r-dependencies@v2
         if: ${{ !inputs.image }}
+        env:
+          GITHUB_PAT: ${{ secrets.BLOCKR_PAT || github.token }}
         with:
           extra-packages: ${{ steps.deps.outputs.extra-packages }}
           needs: website
@@ -167,6 +178,8 @@ jobs:
 
       - uses: $/.github/actions/install-deps
         if: ${{ inputs.image }}
+        env:
+          GITHUB_PAT: ${{ secrets.BLOCKR_PAT || github.token }}
         with:
           extra-packages: ${{ steps.deps.outputs.extra-packages }}
           needs: website
@@ -174,9 +187,47 @@ jobs:
       - name: Remove mermaid config for CI
         run: Rscript -e 'unlink("vignettes/_metadata.yml")'
 
+      # The documentation build, as in ci.yaml's pkgdown-dev job.
+      - name: Find the documentation build
+        id: docs
+        run: |
+          script=""
+          if [ -f package.json ]; then
+            script=$(jq -r '.scripts.docs // empty' package.json)
+          fi
+          if [ -z "$script" ]; then
+            echo "The package.json at the root has no script docs, so the site builds without a TypeScript reference."
+            exit 0
+          fi
+          echo "The script docs of the package.json at the root builds the TypeScript reference."
+          echo "run=true" >> "$GITHUB_OUTPUT"
+        shell: bash
+
+      - uses: actions/setup-node@v7
+        if: steps.docs.outputs.run == 'true'
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Audit npm dependencies
+        if: steps.docs.outputs.run == 'true'
+        run: npm audit --package-lock-only --audit-level=high
+
+      - name: Install npm dependencies
+        if: steps.docs.outputs.run == 'true'
+        run: npm ci --no-audit --ignore-scripts
+
+      - name: Build the TypeScript reference
+        if: steps.docs.outputs.run == 'true'
+        run: npm run docs
+
       - name: Build site
         run: pkgdown::build_site_github_pages(new_process = FALSE, install = FALSE)
         shell: Rscript {0}
+
+      - name: Check the links of the site
+        if: steps.docs.outputs.run == 'true'
+        run: npm run linkcheck
 
       - name: Deploy to GitHub pages
         if: inputs.deploy != 'actions'

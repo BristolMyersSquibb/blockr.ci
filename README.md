@@ -1004,7 +1004,7 @@ jobs:
 
 - **Lint** with a canonical lintr config (`object_name_linter = NULL`) — PR gate
 - **Smoke test** — single-platform R CMD check — PR gate
-- **pkgdown-dev** — `pkgdown::build_site(devel = TRUE)`, artifact upload, no deploy — PR gate
+- **pkgdown-dev** — `pkgdown::build_site(devel = TRUE)`, artifact upload, no deploy — PR gate; for a package with a script `docs`, the site holds its TypeScript reference, and the job checks the site's links — see [TypeScript reference](#typescript-reference)
 - **Coverage** via `covr::package_coverage()` + codecov, optional threshold — PR gate; Codecov merges it with the TypeScript coverage of the `typescript` job
 - **Docs freshness** — regenerate `man/` + `NAMESPACE` with the roxygen2 version pinned in `DESCRIPTION` (`Config/roxygen2/version`, or legacy `RoxygenNote`) and fail on drift — PR gate
 - **TypeScript gates** — an audit of the lockfile, the package's `typecheck`, `lint`, `test` and `build` scripts, an upload of the tests' coverage to Codecov, and a check that the build leaves `inst/` as committed — PR gate, off unless `typescript-dir` is set — see [TypeScript gates](#typescript-gates)
@@ -1070,6 +1070,8 @@ their names and nothing of the tools behind them. Each runs once
 
 Only the steps that install the R dependencies get the token in `BLOCKR_PAT`.
 The steps that run npm and the package's scripts run code from every package in the lockfile, so they run without it.
+For the same reason, the checkout leaves no token in the clone.
+By default, `actions/checkout` writes the job's token into the git config of the clone, where any later step can read it.
 
 Before `npm ci` installs anything, `npm audit --package-lock-only --audit-level=high` checks the lockfile against the advisories that the npm registry serves.
 A version with an advisory rated high or critical fails the job before `npm ci` installs it.
@@ -1154,6 +1156,33 @@ An advisory of high or critical severity fails the run.
 The job summary lists it with the repository, the branch, the package and its version.
 A lockfile that the workflow cannot download or audit fails the run too, and so does finding no caller at all.
 GitHub sends the notification of a failed scheduled run to whoever last changed the workflow's schedule ([docs](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule)).
+
+### TypeScript reference
+
+A package documents its TypeScript on its pkgdown site through two npm scripts of the `package.json` at the root of its repository.
+The script `docs` writes the TypeScript reference as pages under `vignettes/articles/`, and pkgdown builds those pages into articles of the site.
+The script `linkcheck` checks the links of the built site.
+The scripts of blockr.core, from [blockr.core#888](https://github.com/BristolMyersSquibb/blockr.core/issues/888), are the model.
+There, `docs` runs TypeDoc with `typedoc-plugin-markdown`, and `linkcheck` runs linkinator over the articles under `docs/`, anchors included.
+
+The `pkgdown-dev` job of `ci.yaml` and the `pkgdown` job of `pkgdown.yaml` look for the script `docs`.
+With one, they install Node 24 and the npm dependencies, and run `npm run docs` just before pkgdown builds the site.
+After the build, they run `npm run linkcheck`.
+TypeDoc's warnings fail `docs`, and a broken link fails `linkcheck`.
+Either failure fails the job, so `pkgdown.yaml` deploys no site with a broken link.
+The `pkgdown-dev` job checks the links after it uploads the site, so the site of a failed check can be downloaded.
+The jobs build the site of a package without the script `docs` as before.
+
+The scripts run the code of npm packages, TypeDoc and its plugins among them.
+So the two jobs keep the tokens away from them, as the `typescript` job does.
+Only the steps that install the R dependencies get the token in `BLOCKR_PAT`, and the checkout leaves no token in the clone.
+In `pkgdown.yaml`, the job's token may push to the repository, as the deploy needs.
+The deploy step takes that token through an input of its own.
+Before `npm ci --no-audit --ignore-scripts` installs anything, the jobs audit the lockfile as the `typescript` job does.
+The pre-scripts of `docs` and `linkcheck` still run.
+In `predocs`, a package installs the types that it builds against, as it does before its other scripts.
+A package that builds against blockr.core installs core's types there with `blockr.core::install_js_types()`.
+TypeDoc reads those types, as the compiler does.
 
 ### Prebuilt image
 
