@@ -1,8 +1,11 @@
 # pkgdown site build + deploy for blockr.* packages
 #
-# Reserved for `push: branches: main` runs.  PR-side pkgdown sanity
-# checks live in ci.yaml's pkgdown-dev job; this workflow has no gating
-# role and exists only to ship the rendered site to GitHub Pages.
+# Reserved for runs on a push to main or to js-state.
+# A push to main deploys the site, and a push to js-state deploys the
+# site of the new stack under dev/, as described below.
+# PR-side pkgdown sanity checks live in ci.yaml's pkgdown-dev job; this
+# workflow has no gating role and exists only to ship the rendered site
+# to GitHub Pages.
 #
 # Usage — consumer repo .github/workflows/pkgdown.yaml:
 #
@@ -34,6 +37,23 @@
 # Pass secrets by name. `secrets: inherit` does not forward secrets
 # across organisations — the inherited values silently arrive blank in
 # the called job.
+#
+# Until the switch to the new stack, a package also deploys the site
+# that its js-state branch builds, and adds that branch to its trigger:
+#
+#   on:
+#     push:
+#       branches: [main, js-state]
+#
+# On js-state, the job sets pkgdown's development mode through the
+# variable PKGDOWN_DEV_MODE, so that pkgdown writes the site into
+# docs/dev/.
+# The default deploy pushes docs/ to gh-pages without removing what is
+# there.
+# So a deploy from js-state leaves the root of the site alone, and a
+# deploy from main leaves dev/ alone.
+# With `deploy: actions`, each deploy replaces the whole site.
+# So on js-state, the job fails at once in that mode.
 #
 # A package whose package.json has a script docs builds its TypeScript
 # reference with that script, just before the site.
@@ -124,20 +144,32 @@ jobs:
 
     timeout-minutes: 60
 
-    # One group for the whole repository, since every run publishes the
-    # same site — in the default branch mode, by pushing gh-pages from
-    # this job.  Queued like `deploy` below, so the newest build lands
+    # One group per branch, since the runs of a branch publish the same
+    # part of the site: those of main the root, and those of js-state
+    # dev/.
+    # Queued like `deploy` below, so the newest build of a branch lands
     # last.
+    # A group holds one waiting run.
+    # With one group for the whole repository, a push to js-state would
+    # cancel the waiting run of a push to main, and the root of the site
+    # would miss that push.
+    # With a group per branch, the runs of two branches can push gh-pages
+    # at the same time.
+    # So the deploy step below rebases onto a push that came first, rather
+    # than force-pushing over it.
     concurrency:
-      group: blockr-pkgdown
+      group: blockr-pkgdown-${{ github.ref }}
       cancel-in-progress: false
 
     steps:
       # A mistyped `deploy` would otherwise be taken for "branch" and fail
       # only at the push, after the whole build.
+      # On js-state, the mode actions would replace the whole site with
+      # dev/.
       - name: Check deploy input
         env:
           DEPLOY: ${{ inputs.deploy }}
+          REF: ${{ github.ref }}
         run: |
           case "${DEPLOY:-branch}" in
             branch|actions) ;;
@@ -146,6 +178,10 @@ jobs:
               exit 1
               ;;
           esac
+          if [ "$DEPLOY" = actions ] && [ "$REF" = refs/heads/js-state ]; then
+            echo "::error::On js-state, the site deploys under dev/, which needs deploy 'branch'. With 'actions', each deploy replaces the whole site."
+            exit 1
+          fi
 
       - uses: actions/checkout@v5
         with:
@@ -221,7 +257,12 @@ jobs:
         if: steps.docs.outputs.run == 'true'
         run: npm run docs
 
+      # On js-state, pkgdown writes the site into docs/dev/.
+      # Elsewhere the variable is empty, which leaves the mode to
+      # _pkgdown.yml.
       - name: Build site
+        env:
+          PKGDOWN_DEV_MODE: ${{ github.ref == 'refs/heads/js-state' && 'devel' || '' }}
         run: pkgdown::build_site_github_pages(new_process = FALSE, install = FALSE)
         shell: Rscript {0}
 
@@ -229,11 +270,17 @@ jobs:
         if: steps.docs.outputs.run == 'true'
         run: npm run linkcheck
 
+      # Without force, the step retries a push that GitHub rejects because
+      # a run of another branch pushed gh-pages first.
+      # Before it retries, it rebases its commit onto that push.
+      # The two runs change different files, the root and dev/, so the
+      # rebase finds no conflict.
       - name: Deploy to GitHub pages
         if: inputs.deploy != 'actions'
         uses: JamesIves/github-pages-deploy-action@v4.8.0
         with:
           clean: false
+          force: false
           branch: gh-pages
           folder: docs
 
