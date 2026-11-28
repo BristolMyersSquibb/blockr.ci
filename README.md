@@ -76,10 +76,30 @@ The build then uploads `docs/` as a Pages artifact, and a second job
 publishes it with `actions/deploy-pages` in the `github-pages`
 environment. Switch the repository's Pages source to "GitHub Actions"
 (Settings → Pages) before this caller reaches `main`, and delete
-`gh-pages` once the first deploy is live. Each Actions deploy replaces
-the whole site, where the branch deploy keeps files from earlier builds;
-that matters only for a separate development site under `dev/`, which
-pkgdown's default mode doesn't build.
+`gh-pages` once the first deploy is live.
+Each Actions deploy replaces the whole site, where the branch deploy keeps files from earlier builds.
+So the site that `js-state` deploys under `dev/` needs the branch deploy.
+
+#### The site of `js-state` under `dev/`
+
+Until the switch to the new stack, a package also deploys the site that its `js-state` branch builds, under `dev/`.
+The package adds that branch to the trigger of its pkgdown workflow:
+
+```yaml
+on:
+  push:
+    branches: [main, js-state]
+```
+
+On `js-state`, the job sets pkgdown's development mode through the variable `PKGDOWN_DEV_MODE`, so that pkgdown writes the site into `docs/dev/`.
+The branch deploy pushes `docs/` to `gh-pages` without removing what is there.
+So a deploy from `js-state` leaves the root of the site alone, and a deploy from `main` leaves `dev/` alone.
+With `deploy: actions`, each deploy replaces the whole site, so on `js-state` the job fails at once in that mode.
+
+The runs of each branch take turns, as [Superseded runs](#superseded-runs) describes.
+A run of `main` and a run of `js-state` can overlap, though.
+When GitHub rejects a deploy because the other branch pushed `gh-pages` first, the deploy rebases its commit onto that push and pushes again.
+The two branches change different files, so the rebase finds no conflict.
 
 ### `revdep.yaml` — reverse-dependency checks (optional)
 
@@ -739,6 +759,7 @@ bumps the minor version instead.
 | `pull_request` | `lint`, `smoke`, `pkgdown-dev`, `coverage`, `docs`, `typescript` (if configured) — in parallel |
 | `merge_group` | `check` matrix → `check-all`; `revdep` matrix → `revdep-all` (if configured), then `revdep-info` matrix → `report`, gating nothing (if configured) |
 | `push: main` | `pkgdown.yaml` deploy (if configured) |
+| `push: js-state` | `pkgdown.yaml` deploy under `dev/` (if configured) |
 
 PR jobs run in parallel for fast feedback. The expensive multi-platform
 `check` matrix and reverse-dependency checks are reserved for the merge
@@ -864,10 +885,11 @@ The prefixes are spelled out rather than taken from
 caller's name, and a group that caller and called workflow share
 cancels the caller.
 
-The `pkgdown.yaml` build never cancels. Every run publishes the same
-site, so builds run one at a time per repository: a push that arrives
-mid-build waits for it and replaces any older push still waiting, and
-the newest build is the last to land.
+The `pkgdown.yaml` build never cancels.
+The runs of one branch publish the same part of the site, so they run one at a time per branch: a push that arrives mid-build waits for it and replaces any older push of that branch still waiting, and the newest build is the last to land.
+The runs of `main` publish the root of the site and those of `js-state` publish `dev/`, so each branch has a group of its own.
+A group holds one waiting run.
+With one group for both branches, a push to `js-state` would cancel the waiting run of a push to `main`, and the root of the site would miss that push.
 
 ### Reverse dependencies before a CRAN submission
 
@@ -955,7 +977,7 @@ release.
 
 | Input | Type | Default | Purpose |
 |---|---|---|---|
-| `deploy` | string | `branch` | How the built site reaches GitHub Pages. With `branch`, the job pushes `docs/` to the `gh-pages` branch, and the caller grants `contents: write`. With `actions`, a second job publishes `docs/` with `actions/deploy-pages`; the caller grants `contents: read`, `pages: write` and `id-token: write`, and the Pages source must be "GitHub Actions". See [`pkgdown.yaml`](#pkgdownyaml--site-deploy-on-merge-to-main). |
+| `deploy` | string | `branch` | How the built site reaches GitHub Pages. With `branch`, the job pushes `docs/` to the `gh-pages` branch, and the caller grants `contents: write`. With `actions`, a second job publishes `docs/` with `actions/deploy-pages`; the caller grants `contents: read`, `pages: write` and `id-token: write`, and the Pages source must be "GitHub Actions". See [`pkgdown.yaml`](#pkgdownyaml--site-deploy-on-merge-to-main). On `js-state`, the job needs `branch`, as [The site of `js-state` under `dev/`](#the-site-of-js-state-under-dev) explains. |
 | `image` | boolean | `false` | Run the `pkgdown` job in the image that `image.yaml` builds every day, the one tagged `release`, rather than installing R, its tools and its system packages while it runs. The `deploy` job is unaffected. See [Prebuilt image](#prebuilt-image). |
 
 ### `release-gate.yaml`
@@ -1004,7 +1026,7 @@ jobs:
 
 - **Lint** with a canonical lintr config (`object_name_linter = NULL`) — PR gate
 - **Smoke test** — single-platform R CMD check — PR gate
-- **pkgdown-dev** — `pkgdown::build_site(devel = TRUE)`, artifact upload, no deploy — PR gate
+- **pkgdown-dev** — `pkgdown::build_site(devel = TRUE)`, artifact upload, no deploy — PR gate; for a package with a script `docs`, the site holds its TypeScript reference, and the job checks the site's links — see [TypeScript reference](#typescript-reference)
 - **Coverage** via `covr::package_coverage()` + codecov, optional threshold — PR gate; Codecov merges it with the TypeScript coverage of the `typescript` job
 - **Docs freshness** — regenerate `man/` + `NAMESPACE` with the roxygen2 version pinned in `DESCRIPTION` (`Config/roxygen2/version`, or legacy `RoxygenNote`) and fail on drift — PR gate
 - **TypeScript gates** — an audit of the lockfile, the package's `typecheck`, `lint`, `test` and `build` scripts, an upload of the tests' coverage to Codecov, and a check that the build leaves `inst/` as committed — PR gate, off unless `typescript-dir` is set — see [TypeScript gates](#typescript-gates)
@@ -1013,7 +1035,7 @@ jobs:
 - **Reverse-dependency checks** against configurable downstream packages — merge-queue gate, plus an informational tier that reports to the pull request without gating — see [Informational downstreams](#informational-downstreams)
 - **CRAN pre-submission checks** — AddressSanitizer, UndefinedBehaviorSanitizer, valgrind, `rchk` and the Suggests-free build in the R-hub containers, plus a CRAN-style reverse dependency check, on every push to a labelled release PR — see [Release mode](#release-mode)
 - **Mechanical release checks** — the checklist half of a release, gated on every push to a labelled release PR instead of ticked by hand: three-component version, no dev-version pins, no `Remotes`, `NEWS.md` shape, real vignette titles, a `\value` on every documented function, and a README current with its source. Reports spelling, URL and `--as-cran` findings alongside without gating on them — see [`release-gate.yaml`](#release-gateyaml--mechanical-release-checks-optional)
-- **pkgdown deploy** — site build + deploy to GitHub Pages on push to `main`, via the `gh-pages` branch or, with `deploy: actions`, straight from Actions
+- **pkgdown deploy** — site build + deploy to GitHub Pages on push to `main`, via the `gh-pages` branch or, with `deploy: actions`, straight from Actions; on push to `js-state`, deploy under `dev/` via the `gh-pages` branch — see [The site of `js-state` under `dev/`](#the-site-of-js-state-under-dev)
 - **Superseded runs cancelled** — a push to a pull request cancels the `ci`, `release` and `release-gate` runs still checking the commit it replaces, and pkgdown builds take turns so the newest lands last — see [Superseded runs](#superseded-runs)
 - **Prebuilt image** — with `image: true`, the Ubuntu jobs of `ci.yaml`, the legs of `revdep.yaml`, the site build of `pkgdown.yaml`, the checks of `release-gate.yaml` and the `revdeps` job of `release.yaml` run in an image built every day, which holds R, their tools and the system and R packages that the repos it is built for depend on, so that they call apt only for a system package it lacks — see [Prebuilt image](#prebuilt-image)
 - **Pinned Quarto** — jobs that install Quarto (any package holding a `.qmd`) pass an explicit version instead of the action's `release` default, which resolves the version through an unretried `curl` to quarto.org and has twice killed a green run — see [Quarto pin](#quarto-pin)
@@ -1070,6 +1092,8 @@ their names and nothing of the tools behind them. Each runs once
 
 Only the steps that install the R dependencies get the token in `BLOCKR_PAT`.
 The steps that run npm and the package's scripts run code from every package in the lockfile, so they run without it.
+For the same reason, the checkout leaves no token in the clone.
+By default, `actions/checkout` writes the job's token into the git config of the clone, where any later step can read it.
 
 Before `npm ci` installs anything, `npm audit --package-lock-only --audit-level=high` checks the lockfile against the advisories that the npm registry serves.
 A version with an advisory rated high or critical fails the job before `npm ci` installs it.
@@ -1154,6 +1178,33 @@ An advisory of high or critical severity fails the run.
 The job summary lists it with the repository, the branch, the package and its version.
 A lockfile that the workflow cannot download or audit fails the run too, and so does finding no caller at all.
 GitHub sends the notification of a failed scheduled run to whoever last changed the workflow's schedule ([docs](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule)).
+
+### TypeScript reference
+
+A package documents its TypeScript on its pkgdown site through two npm scripts of the `package.json` at the root of its repository.
+The script `docs` writes the TypeScript reference as pages under `vignettes/articles/`, and pkgdown builds those pages into articles of the site.
+The script `linkcheck` checks the links of the built site.
+The scripts of blockr.core, from [blockr.core#888](https://github.com/BristolMyersSquibb/blockr.core/issues/888), are the model.
+There, `docs` runs TypeDoc with `typedoc-plugin-markdown`, and `linkcheck` runs linkinator over the articles under `docs/`, anchors included.
+
+The `pkgdown-dev` job of `ci.yaml` and the `pkgdown` job of `pkgdown.yaml` look for the script `docs`.
+With one, they install Node 24 and the npm dependencies, and run `npm run docs` just before pkgdown builds the site.
+After the build, they run `npm run linkcheck`.
+TypeDoc's warnings fail `docs`, and a broken link fails `linkcheck`.
+Either failure fails the job, so `pkgdown.yaml` deploys no site with a broken link.
+The `pkgdown-dev` job checks the links after it uploads the site, so the site of a failed check can be downloaded.
+The jobs build the site of a package without the script `docs` as before.
+
+The scripts run the code of npm packages, TypeDoc and its plugins among them.
+So the two jobs keep the tokens away from them, as the `typescript` job does.
+Only the steps that install the R dependencies get the token in `BLOCKR_PAT`, and the checkout leaves no token in the clone.
+In `pkgdown.yaml`, the job's token may push to the repository, as the deploy needs.
+The deploy step takes that token through an input of its own.
+Before `npm ci --no-audit --ignore-scripts` installs anything, the jobs audit the lockfile as the `typescript` job does.
+The pre-scripts of `docs` and `linkcheck` still run.
+In `predocs`, a package installs the types that it builds against, as it does before its other scripts.
+A package that builds against blockr.core installs core's types there with `blockr.core::install_js_types()`.
+TypeDoc reads those types, as the compiler does.
 
 ### Prebuilt image
 

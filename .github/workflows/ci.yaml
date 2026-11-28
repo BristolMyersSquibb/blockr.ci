@@ -451,6 +451,32 @@ jobs:
           error-on: ${{ inputs.error-on || '"note"' }}
 
   # ── pkgdown dev build (PR gate, no deploy) ───────────────────────────
+  #
+  # A package can document its TypeScript on its site.
+  # The package.json at the root of its repository then has a script docs.
+  # That script writes the TypeScript reference as pages under
+  # vignettes/articles/, and pkgdown builds those pages into articles.
+  # The job runs the script just before pkgdown builds the site.
+  # After the build, it runs the package's script linkcheck, which checks
+  # the links of the built site.
+  # TypeDoc's warnings fail the script docs, and a broken link fails the
+  # script linkcheck.
+  # The job builds the site of a package without a script docs as before.
+  # The pkgdown workflow runs the same steps before it deploys the site.
+  #
+  # The two scripts run the code of npm packages, TypeDoc and its plugins
+  # among them.
+  # So only the steps that install the R dependencies get GITHUB_PAT, as
+  # in the typescript job.
+  # The checkout leaves no token in the clone either.
+  # By default, actions/checkout writes the job's token into the git
+  # config of the clone, where any later step can read it.
+  # As in the typescript job, the lockfile is audited before npm ci
+  # installs anything, npm ci runs no install script, and Node is 24.
+  # The pre-scripts of the two scripts still run.
+  # In its script predocs, a package installs the types that it builds
+  # against, such as blockr.core's.
+  # TypeDoc reads those types, as the compiler does.
 
   pkgdown-dev:
 
@@ -462,11 +488,10 @@ jobs:
 
     timeout-minutes: 60
 
-    env:
-      GITHUB_PAT: ${{ secrets.BLOCKR_PAT || github.token }}
-
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - uses: r-lib/actions/setup-pandoc@v2
         if: ${{ !inputs.image }}
@@ -489,6 +514,8 @@ jobs:
 
       - uses: r-lib/actions/setup-r-dependencies@v2
         if: ${{ !inputs.image }}
+        env:
+          GITHUB_PAT: ${{ secrets.BLOCKR_PAT || github.token }}
         with:
           extra-packages: ${{ steps.deps.outputs.extra-packages }}
           needs: website
@@ -496,12 +523,49 @@ jobs:
 
       - uses: $/.github/actions/install-deps
         if: ${{ inputs.image }}
+        env:
+          GITHUB_PAT: ${{ secrets.BLOCKR_PAT || github.token }}
         with:
           extra-packages: ${{ steps.deps.outputs.extra-packages }}
           needs: website
 
       - name: Remove mermaid config for CI
         run: Rscript -e 'unlink("vignettes/_metadata.yml")'
+
+      # A package.json that jq cannot read fails the step.
+      # Otherwise it would read as one without the script.
+      - name: Find the documentation build
+        id: docs
+        run: |
+          script=""
+          if [ -f package.json ]; then
+            script=$(jq -r '.scripts.docs // empty' package.json)
+          fi
+          if [ -z "$script" ]; then
+            echo "The package.json at the root has no script docs, so the site builds without a TypeScript reference."
+            exit 0
+          fi
+          echo "The script docs of the package.json at the root builds the TypeScript reference."
+          echo "run=true" >> "$GITHUB_OUTPUT"
+        shell: bash
+
+      - uses: actions/setup-node@v7
+        if: steps.docs.outputs.run == 'true'
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Audit npm dependencies
+        if: steps.docs.outputs.run == 'true'
+        run: npm audit --package-lock-only --audit-level=high
+
+      - name: Install npm dependencies
+        if: steps.docs.outputs.run == 'true'
+        run: npm ci --no-audit --ignore-scripts
+
+      - name: Build the TypeScript reference
+        if: steps.docs.outputs.run == 'true'
+        run: npm run docs
 
       - name: Build site (devel)
         run: pkgdown::build_site(devel = TRUE, new_process = FALSE, install = FALSE)
@@ -513,6 +577,12 @@ jobs:
           name: pkgdown-site
           path: docs/
           if-no-files-found: error
+
+      # The check comes after the upload, so that the site of a failed
+      # check can be downloaded.
+      - name: Check the links of the site
+        if: steps.docs.outputs.run == 'true'
+        run: npm run linkcheck
 
   # ── Test coverage (PR gate, optional threshold) ──────────────────────
 
@@ -767,6 +837,9 @@ jobs:
   # The later steps run npm and the package's scripts,
   # and through them the code of every package in the lockfile.
   # If the job set the token for every step, any of that code could read it.
+  # For the same reason, the checkout leaves no token in the clone.
+  # By default, actions/checkout writes the job's token into the git
+  # config of the clone.
   #
   # The tests write their coverage as LCOV to coverage/lcov.info.
   # Vitest, Jest and c8 write their reports to coverage/, and their lcov
@@ -801,6 +874,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - uses: r-lib/actions/setup-r@v2
         if: ${{ !inputs.image }}
